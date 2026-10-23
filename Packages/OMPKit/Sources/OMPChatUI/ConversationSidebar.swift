@@ -31,6 +31,7 @@ public struct ConversationSidebar: View {
                 searchField
             }
             list
+            usageAlert
         }
         .background(sidebarBackground)
         .alert("重命名对话", isPresented: Binding(
@@ -196,6 +197,46 @@ public struct ConversationSidebar: View {
         .padding(.bottom, 8)
     }
 
+    /// Sidebar usage alert strip (ChatGPT `sidebarElectron.usageAlert`):
+    /// progress bar + window remaining, shown once context passes 85%.
+    @ViewBuilder
+    private var usageAlert: some View {
+        if let conversation = model.selectedConversation,
+           let usage = model.contextUsage(conversation),
+           usage.limit > 0 {
+            let ratio = Double(usage.used) / Double(usage.limit)
+            if ratio >= 0.85 {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(ratio >= 0.95 ? .red : .orange)
+                        Text(ratio >= 0.95 ? "上下文即将用尽" : "上下文空间偏低")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Spacer()
+                        Text("剩余 \(TokenFormat.compact(max(0, usage.limit - usage.used)))")
+                            .font(.system(size: 9.5).monospacedDigit())
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.ompFill)
+                            Capsule()
+                                .fill(ratio >= 0.95 ? Color.red : Color.orange)
+                                .frame(width: max(3, proxy.size.width * min(1, ratio)))
+                        }
+                    }
+                    .frame(height: 3)
+                    Text("新对话以获得完整上下文窗口")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.ompFill.opacity(0.6))
+            }
+        }
+    }
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
