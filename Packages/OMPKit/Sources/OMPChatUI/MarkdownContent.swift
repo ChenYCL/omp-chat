@@ -224,18 +224,19 @@ public struct CodeBlockView: View {
                 .foregroundStyle(.secondary)
                 Button {
                     copyToPasteboard(code)
+                    AudioFeedback.playSend(enabled: true)
                     copied = true
                     Task {
                         try? await Task.sleep(for: .seconds(1.2))
                         copied = false
                     }
                 } label: {
-                    Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.caption2)
+                        .foregroundStyle(copied ? Color.green : Color.secondary)
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
                 if isRenderable {
                     Button {
                         showingPreview = true
