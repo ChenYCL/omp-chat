@@ -427,7 +427,7 @@ public struct PaseoChatScreen: View {
             VStack(spacing: 8) {
                 // Scroll to bottom floating chevron
                 Button {
-                    // scroll action
+                    NotificationCenter.default.post(name: .ompScrollToBottom, object: nil)
                 } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .bold))
@@ -543,19 +543,37 @@ public struct PaseoChatScreen: View {
 struct PaseoComposerBar: View {
     @Environment(ChatAppModel.self) private var model
     @State private var showVoiceSheet = false
+    @State private var showImageSheet = false
+
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 8) {
-            // Left + button
-            Button {
-                // attach action
+            // Left + menu (Paseo attachments & generation)
+            Menu {
+                if !model.imageModels.isEmpty {
+                    Button {
+                        showImageSheet = true
+                    } label: {
+                        Label("生成图片", systemImage: "photo.badge.plus")
+                    }
+                }
+                Menu("提示词模板") {
+                    Button("代码审查") {
+                        model.draft = "请全面审查以下代码，指出潜在 bug、边界条件、性能瓶颈与六个月可维护性风险：\n\n```\n\n```"
+                    }
+                    Button("错误排查") {
+                        model.draft = "这段代码在运行时报错，请分析根本原因并给出最小改动的修复方案：\n\n```\n\n```"
+                    }
+                    Button("单元测试") {
+                        model.draft = "请为以下模块编写严谨的单元测试，覆盖正常路径、边界值与错误分支：\n\n```\n\n```"
+                    }
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Color.ompText)
                     .frame(width: 30, height: 30)
             }
-            .buttonStyle(.plain)
 
             // Text input
             TextField("发送消息", text: $model.draft, axis: .vertical)
@@ -618,6 +636,10 @@ struct PaseoComposerBar: View {
         .padding(.horizontal, 16)
         .sheet(isPresented: $showVoiceSheet) {
             VoiceModeSheet()
+                .environment(model)
+        }
+        .sheet(isPresented: $showImageSheet) {
+            ImageGenerationSheet()
                 .environment(model)
         }
     }

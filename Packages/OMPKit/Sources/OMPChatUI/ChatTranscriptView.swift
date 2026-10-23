@@ -46,6 +46,11 @@ public struct ChatTranscriptView: View {
             .onChange(of: model.selectedConversationID) { _, _ in
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .ompScrollToBottom)) { _ in
+                withAnimation(Theme.Motion.quick) {
+                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                }
+            }
         }
         .background(Color.ompCanvas)
     }
