@@ -43,6 +43,7 @@ public struct MessageRow: View {
     @State private var editing = false
     @State private var editText = ""
     @State private var copied = false
+    @State private var showUsagePopover = false
 
     public init(message: ChatMessage, mediaLibrary: MediaLibrary, actions: Actions) {
         self.message = message
@@ -320,17 +321,61 @@ public struct MessageRow: View {
     @ViewBuilder
     private var metaRow: some View {
         if let usage = message.usage, usage.totalTokens > 0 {
-            HStack(spacing: 4) {
-                Label(TokenFormat.compact(usage.inputTokens), systemImage: "arrow.up")
-                    .foregroundStyle(Color.green)
-                Label(TokenFormat.compact(usage.outputTokens), systemImage: "arrow.down")
-                    .foregroundStyle(Color.accentColor)
+            Button {
+                showUsagePopover.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Label(TokenFormat.compact(usage.inputTokens), systemImage: "arrow.up")
+                        .foregroundStyle(Color.green)
+                    Label(TokenFormat.compact(usage.outputTokens), systemImage: "arrow.down")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.ompFill, in: Capsule())
             }
-            .font(.system(size: 10, weight: .medium).monospacedDigit())
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color.ompFill, in: Capsule())
+            .buttonStyle(.plain)
+            .help("点击查看 Token 详细用量")
+            .popover(isPresented: $showUsagePopover) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Token 用量明细")
+                        .font(.system(size: 12, weight: .semibold))
+                    Divider()
+                    HStack {
+                        Text("输入 (Prompt):")
+                        Spacer()
+                        Text("\(usage.inputTokens)")
+                            .font(.system(size: 11.5).monospacedDigit())
+                    }
+                    HStack {
+                        Text("输出 (Completion):")
+                        Spacer()
+                        Text("\(usage.outputTokens)")
+                            .font(.system(size: 11.5).monospacedDigit())
+                    }
+                    if usage.reasoningTokens > 0 {
+                        HStack {
+                            Text("思考 (Thinking):")
+                            Spacer()
+                            Text("\(usage.reasoningTokens)")
+                                .font(.system(size: 11.5).monospacedDigit())
+                        }
+                    }
+                    Divider()
+                    HStack {
+                        Text("总计:")
+                            .fontWeight(.medium)
+                        Spacer()
+                        Text("\(usage.totalTokens)")
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    }
+                }
+                .font(.system(size: 11.5))
+                .padding(12)
+                .frame(width: 200)
+            }
             Text(message.createdAt, format: .dateTime.hour().minute())
                 .font(.system(size: 9.5).monospacedDigit())
                 .foregroundStyle(Color.ompTextTertiary)
