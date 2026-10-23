@@ -22,6 +22,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     public var createdAt: Date
     public var errorText: String?
     public var usage: TokenUsage?
+    /// User feedback on an assistant reply: +1 like, -1 dislike, nil none.
+    public var feedback: Int?
 
     public init(
         id: UUID = UUID(),
@@ -30,7 +32,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         status: MessageStatus = .complete,
         createdAt: Date = Date(),
         errorText: String? = nil,
-        usage: TokenUsage? = nil
+        usage: TokenUsage? = nil,
+        feedback: Int? = nil
     ) {
         self.id = id
         self.role = role
@@ -39,6 +42,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.createdAt = createdAt
         self.errorText = errorText
         self.usage = usage
+        self.feedback = feedback
     }
 
     /// Visible answer text only. Thinking lives in `thinkingText`.

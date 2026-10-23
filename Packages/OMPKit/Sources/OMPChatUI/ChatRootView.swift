@@ -197,6 +197,14 @@ public struct ChatDetailView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.ompText)
                 .lineLimit(1)
+            if model.selectedConversation?.isTemporary == true {
+                Text("临时")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.12), in: Capsule())
+            }
 
             if let conversation = model.selectedConversation,
                let usage = model.contextUsage(conversation) {

@@ -9,19 +9,22 @@ public struct MessageRow: View {
         public var branch: (() -> Void)?
         public var delete: (() -> Void)?
         public var regenerate: (() -> Void)?
+        public var feedback: ((Int) -> Void)?
 
         public init(
             copy: @escaping () -> Void,
             edit: ((String) -> Void)? = nil,
             branch: (() -> Void)? = nil,
             delete: (() -> Void)? = nil,
-            regenerate: (() -> Void)? = nil
+            regenerate: (() -> Void)? = nil,
+            feedback: ((Int) -> Void)? = nil
         ) {
             self.copy = copy
             self.edit = edit
             self.branch = branch
             self.delete = delete
             self.regenerate = regenerate
+            self.feedback = feedback
         }
     }
 
@@ -273,6 +276,15 @@ public struct MessageRow: View {
 
             if let branch = actions.branch {
                 iconButton("arrow.triangle.branch", help: "从这里分支") { branch() }
+            }
+
+            if message.role == .assistant, let feedback = actions.feedback {
+                iconButton(message.feedback == 1 ? "hand.thumbsup.fill" : "hand.thumbsup", help: "赞") {
+                    feedback(1)
+                }
+                iconButton(message.feedback == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown", help: "踩") {
+                    feedback(-1)
+                }
             }
 
             if message.role == .assistant, let regenerate = actions.regenerate {

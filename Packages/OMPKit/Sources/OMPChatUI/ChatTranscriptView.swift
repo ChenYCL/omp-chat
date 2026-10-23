@@ -57,7 +57,10 @@ public struct ChatTranscriptView: View {
             } : nil,
             branch: { _ = model.branch(from: message.id) },
             delete: { model.deleteMessage(message.id) },
-            regenerate: message.role == .assistant ? { model.regenerateLast() } : nil
+            regenerate: message.role == .assistant ? { model.regenerateLast() } : nil,
+            feedback: message.role == .assistant ? { value in
+                model.setFeedback(message.id, value: value)
+            } : nil
         )
     }
 

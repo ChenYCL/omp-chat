@@ -56,7 +56,7 @@ public final class ChatAppModel {
 
     public var sortedConversations: [Conversation] {
         conversations
-            .filter { !$0.isLocked }
+            .filter { !$0.isLocked && !$0.isTemporary }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 return lhs.updatedAt > rhs.updatedAt
@@ -219,6 +219,27 @@ public final class ChatAppModel {
         let store = self.store
         let snapshot = projects
         Task { try? await store.saveProjects(snapshot) }
+    }
+
+    @discardableResult
+    public func newTemporaryConversation() -> Conversation {
+        var conversation = newConversation()
+        conversation.isTemporary = true
+        conversation.title = "临时对话"
+        replace(conversation)
+        return conversation
+    }
+
+    /// Drops every temporary conversation. Called when the window closes.
+    public func discardTemporaryConversations() {
+        let ids = conversations.filter(\.isTemporary).map(\.id)
+        conversations.removeAll { $0.isTemporary }
+        for id in ids {
+            Task { try? await store.delete(id: id) }
+        }
+        if let selected = selectedConversationID, ids.contains(selected) {
+            selectedConversationID = sortedConversations.first?.id
+        }
     }
 
     public func toggleLock(_ id: UUID) {
@@ -658,6 +679,15 @@ public final class ChatAppModel {
         conversations[index] = conversation
     }
 
+    /// Toggles like (+1) / dislike (-1). Passing the current value clears it.
+    public func setFeedback(_ messageID: UUID, value: Int) {
+        guard var conversation = selectedConversation,
+              let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else { return }
+        conversation.messages[index].feedback = conversation.messages[index].feedback == value ? nil : value
+        replace(conversation)
+        persist(conversation)
+    }
+
     private func updateMessage(conversationID: UUID, messageID: UUID, _ body: (inout ChatMessage) -> Void) {
         guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         guard let messageIndex = conversations[conversationIndex].messages.firstIndex(where: { $0.id == messageID }) else { return }
@@ -666,6 +696,7 @@ public final class ChatAppModel {
     }
 
     private func persist(_ conversation: Conversation) {
+        guard !conversation.isTemporary else { return }
         let store = self.store
         Task { try? await store.save(conversation) }
     }

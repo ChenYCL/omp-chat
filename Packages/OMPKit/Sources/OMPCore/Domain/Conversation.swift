@@ -16,6 +16,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// Locked chats stay in the account but are hidden from history, pinned
     /// lists and search until unlocked (ChatGPT locked chats, Oct 2026).
     public var isLocked: Bool
+    /// Temporary chats are not saved to history and vanish on close.
+    public var isTemporary: Bool
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +31,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isPinned: Bool = false,
         isArchived: Bool = false,
         projectID: UUID? = nil,
-        isLocked: Bool = false
+        isLocked: Bool = false,
+        isTemporary: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -43,6 +46,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.isArchived = isArchived
         self.projectID = projectID
         self.isLocked = isLocked
+        self.isTemporary = isTemporary
     }
 
     public var lastMessagePreview: String {

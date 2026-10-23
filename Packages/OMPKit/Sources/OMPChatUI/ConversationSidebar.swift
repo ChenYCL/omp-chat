@@ -104,6 +104,17 @@ public struct ConversationSidebar: View {
             .buttonStyle(.plain)
             .help("新建项目")
             Button {
+                _ = model.newTemporaryConversation()
+            } label: {
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color.ompHover, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("临时对话（不保存）")
+            Button {
                 model.newConversation()
             } label: {
                 Image(systemName: "square.and.pencil")
