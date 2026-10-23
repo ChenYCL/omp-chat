@@ -466,19 +466,55 @@ public final class ChatAppModel {
               let index = conversation.messages.firstIndex(where: { $0.id == messageID }),
               conversation.messages[index].role == .user else { return }
 
-        let attachments = conversation.messages[index].parts.compactMap { part -> MediaRef? in
+        let oldMessage = conversation.messages[index]
+        let attachments = oldMessage.parts.compactMap { part -> MediaRef? in
             if case .media(let ref) = part { ref } else { nil }
         }
         var parts: [ContentPart] = []
         if !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(newText)) }
         parts.append(contentsOf: attachments.map { .media($0) })
 
+        var versions = oldMessage.alternativeVersions
+        if !versions.contains(oldMessage.concatenatedText) {
+            versions.append(oldMessage.concatenatedText)
+        }
+        let newMessage = ChatMessage(
+            role: .user,
+            parts: parts,
+            alternativeVersions: versions,
+            currentVersionIndex: versions.count
+        )
+
         conversation.messages = Array(conversation.messages.prefix(index))
-        conversation.messages.append(ChatMessage(role: .user, parts: parts))
+        conversation.messages.append(newMessage)
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
         Task { await startReply(conversationID: conversation.id) }
+    }
+
+    public func switchUserPromptVersion(_ messageID: UUID, delta: Int) {
+        guard var conversation = selectedConversation,
+              let index = conversation.messages.firstIndex(where: { $0.id == messageID }),
+              conversation.messages[index].role == .user else { return }
+
+        var message = conversation.messages[index]
+        let allVersions = message.alternativeVersions + [message.concatenatedText]
+        let newIndex = message.currentVersionIndex + delta
+        guard newIndex >= 0 && newIndex < allVersions.count else { return }
+
+        let newText = allVersions[newIndex]
+        let attachments = message.parts.compactMap { part -> MediaRef? in
+            if case .media(let ref) = part { ref } else { nil }
+        }
+        var newParts: [ContentPart] = [.text(newText)]
+        newParts.append(contentsOf: attachments.map { .media($0) })
+        message.parts = newParts
+        message.currentVersionIndex = newIndex
+
+        conversation.messages[index] = message
+        replace(conversation)
+        persist(conversation)
     }
 
     /// Forks the conversation at `messageID` into a new chat.

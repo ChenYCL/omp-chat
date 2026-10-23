@@ -81,7 +81,12 @@ public struct MessageRow: View {
                 } else {
                     bubble
                 }
-                actionBar(alignment: .trailing)
+                HStack(spacing: 8) {
+                    if !message.alternativeVersions.isEmpty {
+                        userVersionPicker
+                    }
+                    actionBar(alignment: .trailing)
+                }
             }
         }
         .padding(.leading, 40)
@@ -135,6 +140,38 @@ public struct MessageRow: View {
                 .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+    }
+
+    private var userVersionPicker: some View {
+        let allVersions = message.alternativeVersions + [message.concatenatedText]
+        let total = allVersions.count
+        let current = message.currentVersionIndex + 1
+        return HStack(spacing: 4) {
+            Button {
+                model.switchUserPromptVersion(message.id, delta: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .disabled(current <= 1)
+
+            Text("\(current)/\(total)")
+                .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.ompTextTertiary)
+
+            Button {
+                model.switchUserPromptVersion(message.id, delta: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .disabled(current >= total)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.ompFill.opacity(0.8), in: Capsule())
     }
 
     // MARK: Assistant

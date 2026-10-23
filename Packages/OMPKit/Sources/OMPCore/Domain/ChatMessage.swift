@@ -26,7 +26,9 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     public var feedback: Int?
     /// The message this one quotes, when sent as a reply.
     public var replyToID: UUID?
-
+    /// Earlier versions of this prompt if it was edited.
+    public var alternativeVersions: [String] = []
+    public var currentVersionIndex: Int = 0
     public init(
         id: UUID = UUID(),
         role: MessageRole,
@@ -36,7 +38,9 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         errorText: String? = nil,
         usage: TokenUsage? = nil,
         feedback: Int? = nil,
-        replyToID: UUID? = nil
+        replyToID: UUID? = nil,
+        alternativeVersions: [String] = [],
+        currentVersionIndex: Int = 0
     ) {
         self.id = id
         self.role = role
@@ -47,6 +51,28 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.usage = usage
         self.feedback = feedback
         self.replyToID = replyToID
+        self.alternativeVersions = alternativeVersions
+        self.currentVersionIndex = currentVersionIndex
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, parts, status, createdAt, errorText, usage, feedback, replyToID
+        case alternativeVersions, currentVersionIndex
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.role = try container.decode(MessageRole.self, forKey: .role)
+        self.parts = try container.decode([ContentPart].self, forKey: .parts)
+        self.status = (try? container.decodeIfPresent(MessageStatus.self, forKey: .status)) ?? .complete
+        self.createdAt = (try? container.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
+        self.errorText = try container.decodeIfPresent(String.self, forKey: .errorText)
+        self.usage = try container.decodeIfPresent(TokenUsage.self, forKey: .usage)
+        self.feedback = try container.decodeIfPresent(Int.self, forKey: .feedback)
+        self.replyToID = try container.decodeIfPresent(UUID.self, forKey: .replyToID)
+        self.alternativeVersions = (try? container.decodeIfPresent([String].self, forKey: .alternativeVersions)) ?? []
+        self.currentVersionIndex = (try? container.decodeIfPresent(Int.self, forKey: .currentVersionIndex)) ?? 0
     }
 
     /// Visible answer text only. Thinking lives in `thinkingText`.
