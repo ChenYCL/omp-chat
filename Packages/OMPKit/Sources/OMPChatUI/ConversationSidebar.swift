@@ -233,12 +233,45 @@ public struct ConversationSidebar: View {
         }
     }
 
+    enum DateBucket: String, CaseIterable {
+        case today = "今天"
+        case yesterday = "昨天"
+        case previous7Days = "前 7 天"
+        case previous30Days = "前 30 天"
+        case earlier = "更早"
+    }
+
+    private static func bucket(for date: Date) -> DateBucket {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return .today }
+        if cal.isDateInYesterday(date) { return .yesterday }
+        let days = cal.dateComponents([.day], from: date, to: Date()).day ?? 0
+        if days < 7 { return .previous7Days }
+        if days < 30 { return .previous30Days }
+        return .earlier
+    }
+
     private var ungroupedSection: some View {
         let items = model.conversations(in: nil).filter { !$0.isPinned }
+        var groups: [DateBucket: [Conversation]] = [:]
+        for c in items {
+            let b = Self.bucket(for: c.updatedAt)
+            groups[b, default: []].append(c)
+        }
+
         return Group {
             if !items.isEmpty {
-                sectionHeader(model.projects.isEmpty ? "最近" : "未分组")
-                ForEach(items) { row($0) }
+                if model.projects.isEmpty {
+                    ForEach(DateBucket.allCases, id: \.self) { b in
+                        if let bucketItems = groups[b], !bucketItems.isEmpty {
+                            sectionHeader(b.rawValue)
+                            ForEach(bucketItems) { row($0) }
+                        }
+                    }
+                } else {
+                    sectionHeader("未分组")
+                    ForEach(items) { row($0) }
+                }
             }
         }
     }
