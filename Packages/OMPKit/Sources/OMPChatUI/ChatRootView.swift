@@ -82,67 +82,90 @@ public struct ChatRootView: View {
 }
 
 #if os(macOS)
-/// Narrow icon rail like Codex/ChatGPT desktop.
+/// Minimalist activity rail matching Codex desktop exactly (44pt).
 struct IconRail: View {
     @Environment(ChatAppModel.self) private var model
     @State private var activeSheet: ActiveSheet?
 
     enum ActiveSheet: Identifiable {
-        case projects, history, schedules, usage, subagents
+        case history
         var id: Self { self }
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            OMPMark(size: 22)
-                .padding(.top, 30)
-                .padding(.bottom, 8)
+        VStack(spacing: 16) {
+            Button {
+                // Home view
+            } label: {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompText)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 38)
 
-            railButton("square.and.pencil", help: "新聊天 (⌘N)", active: false) {
-                NotificationCenter.default.post(name: .ompNewChat, object: nil)
-            }
-            railButton("folder", help: "项目与工作区") {
-                activeSheet = .projects
-            }
-            railButton("clock", help: "会话历史") {
+            Button {
                 activeSheet = .history
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 32, height: 32)
             }
-            railButton("calendar", help: "计划任务") {
-                activeSheet = .schedules
+            .buttonStyle(.plain)
+            .help("会话历史")
+
+            Button {
+                // Mentions
+            } label: {
+                Image(systemName: "at")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 32, height: 32)
             }
-            railButton("chart.bar", help: "用量统计") {
-                activeSheet = .usage
+            .buttonStyle(.plain)
+            .help("提醒与提及")
+
+            Menu {
+                Button("项目与工作区") {
+                    NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+                }
+                Button("偏好设置 (⌘,)") {
+                    model.showSettings = true
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 32, height: 32)
             }
-            railButton("person.2", help: "子代理管理 (Agents)") {
-                activeSheet = .subagents
-            }
-            railButton("magnifyingglass", help: "快速搜索 (⌘K)") {
-                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
-            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("更多")
 
             Spacer()
 
-            railButton("gearshape", help: "设置 (⌘,)") {
+            Button {
                 model.showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 32, height: 32)
             }
-            .padding(.bottom, 12)
+            .buttonStyle(.plain)
+            .help("偏好设置 (⌘,)")
+            .padding(.bottom, 16)
         }
-        .padding(.horizontal, 10)
-        .frame(width: 52)
+        .frame(width: 44)
+        .background(Color.ompCanvas)
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
-            case .projects:
-                PaseoProjectsSheet().environment(model)
             case .history:
                 PaseoSessionHistorySheet(onSelectConversation: { id in
                     model.selectedConversationID = id
                 }).environment(model)
-            case .schedules:
-                PaseoScheduledTasksSheet()
-            case .usage:
-                PaseoUsageSheet().environment(model)
-            case .subagents:
-                PaseoSubagentsSheet()
             }
         }
     }
@@ -279,11 +302,8 @@ public struct ChatDetailView: View {
 
     #if os(macOS)
     private var header: some View {
-        HStack(spacing: 10) {
-            iconButton("sidebar.left", help: "切换侧栏 (⌘B)") {
-                onToggleSidebar()
-            }
-            if let conversation = model.selectedConversation {
+        HStack(spacing: 8) {
+            if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
                 Menu {
                     Button {
                         renamingTitle = conversation.title
@@ -352,82 +372,36 @@ public struct ChatDetailView: View {
                             .foregroundStyle(Color.ompText)
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(Color.ompTextTertiary)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Color.ompFill.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-            } else {
-                Text("OMP Chat")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.ompText)
             }
-            if model.selectedConversation?.isTemporary == true {
-                Text("临时")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.orange.opacity(0.12), in: Capsule())
-            }
-
-            if let conversation = model.selectedConversation,
-               let usage = model.contextUsage(conversation) {
-                ContextBadge(used: usage.used, limit: usage.limit)
-            }
-            if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
-                let tokens = conversation.messages.compactMap(\.usage).reduce(0) { $0 + $1.totalTokens }
-                Text("\(conversation.messages.count) 条\(tokens > 0 ? " · \(TokenFormat.compact(tokens)) tok" : "")")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(Color.ompTextTertiary)
-            }
-
 
             Spacer()
 
-            if model.isStreaming {
-                HStack(spacing: 4) {
-                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
-                    Text("生成中").font(.system(size: 10.5)).foregroundStyle(Color.ompTextSecondary)
+            if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
+                Button {
+                    shareConversation()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 10))
+                        Text("分享")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Color.ompText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Color.ompFill, in: Capsule())
                 }
+                .buttonStyle(.plain)
+                .help("分享对话")
             }
-
-            // 查找按钮
-            Button {
-                showInChatSearch.toggle()
-                if !showInChatSearch { inChatSearch = "" }
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(showInChatSearch ? Color.accentColor : Color.ompTextSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(showInChatSearch ? Color.accentColor.opacity(0.12) : Color.clear, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .help("在对话中查找 (⌘F)")
-
-            // ChatGPT 风格分享胶囊按钮
-            Button {
-                shareConversation()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("分享")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(Color.ompText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.ompFill, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("分享对话")
-
             // ••• 溢出功能菜单 (ChatGPT 风格)
             Menu {
                 Button {

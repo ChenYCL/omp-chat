@@ -30,12 +30,12 @@ public struct ComposerBar: View {
 
     public var body: some View {
         @Bindable var model = model
-        VStack(spacing: 6) {
+        VStack(spacing: 0) {
             if showTemplates {
                 templateList
             }
+            contextStrip
             VStack(alignment: .leading, spacing: 8) {
-                contextStrip
                 if let quoted = model.replyingTo {
                     replyPreview(quoted)
                 }
@@ -43,12 +43,13 @@ public struct ComposerBar: View {
                     attachmentStrip
                 }
 
-                TextField("发消息…", text: $model.draft, axis: .vertical)
+                TextField("随心输入", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 15))
+                    .font(.system(size: 14.5))
                     .lineSpacing(3)
                     .lineLimit(1...10)
                     .focused($focused)
+                    .focusEffectDisabled()
                     .onKeyPress(phases: .down) { press in
                         guard press.key == .return, !press.modifiers.contains(.shift) else { return .ignored }
                         guard model.settings.sendOnReturn else { return .ignored }
@@ -195,7 +196,7 @@ public struct ComposerBar: View {
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(canSend ? Color.white : Color.ompTextTertiary)
                                 .frame(width: 30, height: 30)
-                                .background(canSend ? Color.accentColor : Color.ompFill, in: Circle())
+                                .background(canSend ? Color(red: 0.22, green: 0.22, blue: 0.23) : Color.ompFill, in: Circle())
                         }
                         .buttonStyle(.plain)
                         .disabled(!canSend)
@@ -203,17 +204,14 @@ public struct ComposerBar: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color.ompCard, in: RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous))
+            .background(Color.white, in: UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16))
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
-                    .strokeBorder(
-                        focused ? Color.accentColor.opacity(0.45) : Color.ompBorder,
-                        lineWidth: 1
-                    )
+                UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16)
+                    .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
             )
-            .shadow(color: Theme.Shadow.composerColor, radius: Theme.Shadow.composerRadius, y: Theme.Shadow.composerY)
+            .shadow(color: Color.black.opacity(0.06), radius: 14, y: 4)
         }
         .padding(.horizontal, Theme.Layout.transcriptPadding)
         .padding(.top, 6)
@@ -270,45 +268,33 @@ public struct ComposerBar: View {
     }
 
     private var contextStrip: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 12) {
             HStack(spacing: 4) {
                 Image(systemName: "folder")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                 Text(projectName)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(Color.ompTextSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color.ompFill, in: Capsule())
-
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                 Text("本地")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(Color.ompTextSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color.ompFill, in: Capsule())
-
             if let branch = currentBranch {
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 8))
+                        .font(.system(size: 9))
                     Text(branch)
-                        .font(.system(size: 10).monospaced())
+                        .font(.system(size: 10.5, design: .monospaced))
                 }
-                .foregroundStyle(Color.ompTextSecondary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.ompFill, in: Capsule())
             }
-
             Spacer()
         }
-        .padding(.bottom, 2)
+        .foregroundStyle(Color.ompTextSecondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color.ompFill.opacity(0.7), in: UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
     }
 
     private var projectName: String {

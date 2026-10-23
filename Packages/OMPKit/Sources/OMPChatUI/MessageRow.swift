@@ -56,12 +56,7 @@ public struct MessageRow: View {
             if message.role == .user {
                 userRow
             } else if message.role == .assistant {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let duration = calculateDurationText() {
-                        durationDivider(duration)
-                    }
-                    assistantRow
-                }
+                assistantRow
             } else {
                 systemRow
             }
@@ -178,27 +173,22 @@ public struct MessageRow: View {
 
     @ViewBuilder
     private var assistantRow: some View {
-        HStack(alignment: .top, spacing: 10) {
-            OMPMark(size: 26)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: Theme.Spacing.s) {
-                thinkingSection
-                operationSection
-                replyVersionPicker
-                ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
-                    partView(part)
-                }
-                if message.status == .streaming {
-                    StreamingCaret()
-                }
-                if let error = message.errorText, !error.isEmpty {
-                    errorView(error)
-                }
-                metaRow
-                actionBar(alignment: .leading)
+        VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+            thinkingSection
+            operationSection
+            replyVersionPicker
+            ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
+                partView(part)
             }
-            Spacer(minLength: 24)
+            if message.status == .streaming {
+                StreamingCaret()
+            }
+            if let error = message.errorText, !error.isEmpty {
+                errorView(error)
+            }
+            actionBar(alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 24)
     }
 
@@ -476,6 +466,10 @@ public struct MessageRow: View {
 
             if message.role == .assistant, let regenerate = actions.regenerate {
                 iconButton("arrow.clockwise", help: "重新生成") { regenerate() }
+            }
+
+            if message.role == .assistant {
+                metaRow
             }
 
             if let select = actions.select {

@@ -6,6 +6,7 @@ import LocalAuthentication
 public struct ConversationSidebar: View {
     @Environment(ChatAppModel.self) private var model
     @State private var search = ""
+    @State private var showSearch = false
     @State private var renamingID: UUID?
     @State private var renameText = ""
     @State private var deletingID: UUID?
@@ -23,10 +24,10 @@ public struct ConversationSidebar: View {
         VStack(spacing: 0) {
             header
             newChatButton
-            searchField
+            if showSearch {
+                searchField
+            }
             list
-            Divider().opacity(0.6)
-            footer
         }
         .background(sidebarBackground)
         .alert("重命名对话", isPresented: Binding(
@@ -86,53 +87,51 @@ public struct ConversationSidebar: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            OMPMark(size: 20)
-            Text("OMP Chat")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.ompText)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Color.ompTextTertiary)
+        HStack(spacing: 6) {
+            Menu {
+                Button("新建项目") {
+                    newProjectName = ""
+                    creatingProject = true
+                }
+                Button("新建临时对话") {
+                    _ = model.newTemporaryConversation()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Codex")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+
             Spacer()
+
             Button {
-                newProjectName = ""
-                creatingProject = true
+                // Notifications
             } label: {
-                Image(systemName: "folder.badge.plus")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .frame(width: 26, height: 26)
-                    .background(Color.ompHover, in: Circle())
+                Image(systemName: "bell")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextTertiary)
             }
             .buttonStyle(.plain)
-            .help("新建项目")
+
             Button {
-                _ = model.newTemporaryConversation()
+                withAnimation(Theme.Motion.quick) { showSearch.toggle() }
             } label: {
-                Image(systemName: "eye.slash")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .frame(width: 26, height: 26)
-                    .background(Color.ompHover, in: Circle())
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(showSearch ? Color.accentColor : Color.ompTextTertiary)
             }
             .buttonStyle(.plain)
-            .help("临时对话（不保存）")
-            Button {
-                model.newConversation()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .frame(width: 26, height: 26)
-                    .background(Color.ompHover, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .help("新建对话 (⌘N)")
         }
         .padding(.horizontal, 14)
-        .padding(.top, 30)
-        .padding(.bottom, 6)
+        .padding(.top, 38)
+        .padding(.bottom, 10)
     }
 
     private var newChatButton: some View {
@@ -140,28 +139,20 @@ public struct ConversationSidebar: View {
             model.newConversation()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 13, weight: .medium))
                 Text("新聊天")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                 Spacer()
-                Text("⌘N")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Color.ompTextTertiary)
             }
             .foregroundStyle(Color.ompText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.ompBorder.opacity(0.8), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.04), radius: 3, y: 1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
     }
 
     private var searchField: some View {
@@ -465,53 +456,7 @@ public struct ConversationSidebar: View {
         }
     }
 
-    private var footer: some View {
-        VStack(spacing: 0) {
-            Button {
-                model.showSettings = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11.5))
-                    Text("设置")
-                        .font(.system(size: 12.5))
-                    Spacer()
-                    if let provider = model.activeProvider {
-                        Text(provider.name)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Color.ompTextTertiary)
-                            .lineLimit(1)
-                    }
-                }
-                .foregroundStyle(Color.ompTextSecondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if let descriptor = model.activeModel {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.green.opacity(0.8))
-                        .frame(width: 5, height: 5)
-                    Text(descriptor.displayName)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Color.ompTextTertiary)
-                        .lineLimit(1)
-                    Spacer()
-                    if let conversation = model.selectedConversation,
-                       let usage = model.contextUsage(conversation) {
-                        Text("\(TokenFormat.compact(usage.used))/\(TokenFormat.compact(usage.limit))")
-                            .font(.system(size: 9.5).monospacedDigit())
-                            .foregroundStyle(Color.ompTextTertiary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-            }
-        }
-    }
 
     private var filtered: [Conversation] {
         let sorted = model.sortedConversations
