@@ -13,6 +13,8 @@ public struct ComposerBar: View {
     @State private var showModelPicker = false
     @State private var webSearchEnabled = false
     @State private var hoveringSend = false
+    @State private var promptHistoryIndex = 0
+    @State private var originalDraft = ""
     @FocusState private var focused: Bool
     public init() {}
 
@@ -54,10 +56,25 @@ public struct ComposerBar: View {
                         return .handled
                     }
                     .onKeyPress(phases: .down) { press in
-                        guard press.key == .upArrow, model.draft.isEmpty else { return .ignored }
-                        if let last = model.selectedConversation?.messages.last(where: { $0.role == .user }) {
-                            model.draft = last.concatenatedText
-                            return .handled
+                        if press.key == .upArrow && (model.draft.isEmpty || promptHistoryIndex > 0) {
+                            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
+                                if promptHistoryIndex == 0 { originalDraft = model.draft }
+                                if promptHistoryIndex < prompts.count {
+                                    promptHistoryIndex += 1
+                                    model.draft = prompts[prompts.count - promptHistoryIndex]
+                                    return .handled
+                                }
+                            }
+                        } else if press.key == .downArrow && promptHistoryIndex > 0 {
+                            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
+                                promptHistoryIndex -= 1
+                                if promptHistoryIndex == 0 {
+                                    model.draft = originalDraft
+                                } else {
+                                    model.draft = prompts[prompts.count - promptHistoryIndex]
+                                }
+                                return .handled
+                            }
                         }
                         return .ignored
                     }
@@ -226,6 +243,8 @@ public struct ComposerBar: View {
             focused = true
         }
         .onChange(of: model.selectedConversationID) { _, _ in
+            promptHistoryIndex = 0
+            originalDraft = ""
             focused = true
         }
         .onAppear {

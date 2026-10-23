@@ -545,6 +545,11 @@ public struct ConversationSidebar: View {
         } label: {
             Label("重命名", systemImage: "pencil")
         }
+        Button {
+            model.duplicateConversation(conversation.id)
+        } label: {
+            Label("复制为新分支", systemImage: "arrow.triangle.branch")
+        }
         if !model.projects.isEmpty {
             Menu("移动到项目") {
                 if conversation.projectID != nil {

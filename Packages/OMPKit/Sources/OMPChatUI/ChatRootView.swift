@@ -332,6 +332,12 @@ public struct ChatDetailView: View {
                         Label(conversation.isArchived ? "取消归档" : "归档对话", systemImage: "archivebox")
                     }
 
+                    Button {
+                        model.duplicateConversation(conversation.id)
+                    } label: {
+                        Label("复制为新分支", systemImage: "arrow.triangle.branch")
+                    }
+
                     Divider()
 
                     Button(role: .destructive) {

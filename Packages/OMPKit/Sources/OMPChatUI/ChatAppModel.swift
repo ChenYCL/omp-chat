@@ -180,6 +180,22 @@ public final class ChatAppModel {
         return conversation
     }
 
+    @discardableResult
+    public func duplicateConversation(_ id: UUID) -> Conversation? {
+        guard let original = conversation(id) else { return nil }
+        var copy = original
+        copy.id = UUID()
+        copy.title = "\(original.title) (副本)"
+        copy.createdAt = Date()
+        copy.updatedAt = Date()
+        copy.isPinned = false
+        copy.hasUnread = false
+        conversations.insert(copy, at: 0)
+        selectedConversationID = copy.id
+        persist(copy)
+        return copy
+    }
+
     public func deleteConversation(_ id: UUID) {
         conversations.removeAll { $0.id == id }
         Task { try? await store.delete(id: id) }
