@@ -253,6 +253,21 @@ public struct ProviderSettingsView: View {
         }
     }
 
+    private var sortingSection: some View {
+        Section {
+            Picker("排序方式", selection: $draft.conversationSort) {
+                Text("最近更新").tag("updated")
+                Text("创建时间").tag("created")
+                Text("手动排序").tag("manual")
+            }
+            .pickerStyle(.inline)
+        } header: {
+            Text("侧栏会话排序")
+        } footer: {
+            Text("手动排序时，拖拽会话行调整的顺序会被保留；置顶会话始终排在最前。")
+        }
+    }
+
     private func shortcutRow(_ name: String, _ keys: String) -> some View {
         HStack {
             Text(name)
