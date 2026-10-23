@@ -362,39 +362,34 @@ public struct ConversationSidebar: View {
     }
     private func projectHeader(_ project: Project) -> some View {
         let collapsed = collapsedProjects.contains(project.id)
-        return HStack(spacing: 4) {
-            Button {
-                if collapsed { collapsedProjects.remove(project.id) } else { collapsedProjects.insert(project.id) }
-            } label: {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+        return Button {
+            if collapsed { collapsedProjects.remove(project.id) } else { collapsedProjects.insert(project.id) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextSecondary)
+                Text(project.name)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Color.ompText)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 14)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
             }
-            .buttonStyle(.plain)
-            Image(systemName: "folder")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.ompTextSecondary)
-            Text(project.name)
-                .font(Theme.Typography.sectionHeader)
-                .foregroundStyle(Color.ompTextSecondary)
-                .lineLimit(1)
-            Spacer()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
             Button {
                 _ = model.newConversation(in: project.id)
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 16, height: 16)
+                Label("在项目中新建对话", systemImage: "plus")
             }
-            .buttonStyle(.plain)
-            .help("在项目中新建对话")
-        }
-        .padding(.horizontal, 6)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
-        .contextMenu {
             Button {
                 newProjectName = project.name
                 renamingProjectID = project.id
