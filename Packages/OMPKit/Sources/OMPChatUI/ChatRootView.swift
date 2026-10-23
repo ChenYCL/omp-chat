@@ -142,6 +142,7 @@ public struct ChatDetailView: View {
 
     @State private var showExporter = false
     @State private var exportDocument: MarkdownDocument?
+    @State private var showOptions = false
 
     public init(onQuickSwitch: @escaping () -> Void = {}) {
         self.onQuickSwitch = onQuickSwitch
@@ -178,6 +179,10 @@ public struct ChatDetailView: View {
         .navigationTitle(model.selectedConversation?.title ?? "OMP Chat")
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .sheet(isPresented: $showOptions) {
+            ConversationOptionsSheet()
+                .environment(model)
+        }
         .fileExporter(
             isPresented: $showExporter,
             document: exportDocument,
@@ -226,6 +231,9 @@ public struct ChatDetailView: View {
             }
             iconButton("square.and.arrow.up", help: "导出 Markdown") {
                 prepareExport()
+            }
+            iconButton("slider.horizontal.3", help: "对话设置") {
+                showOptions = true
             }
             iconButton("gearshape", help: "设置 (⌘,)") {
                 model.showSettings = true

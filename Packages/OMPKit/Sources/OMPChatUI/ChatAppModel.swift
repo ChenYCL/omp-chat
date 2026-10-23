@@ -334,7 +334,9 @@ public final class ChatAppModel {
             maxOutputTokens: settings.maxOutputTokens ?? model.limits.maxOutputTokens
         )
         if model.capabilities.thinking, let budget = request.maxOutputTokens {
-            request.thinkingBudgetTokens = min(2048, max(1024, budget / 4))
+            let effort = conversation.reasoningEffort ?? "medium"
+            let fraction: Int = effort == "high" ? 2 : (effort == "low" ? 8 : 4)
+            request.thinkingBudgetTokens = min(4096, max(512, budget / fraction))
         }
 
         let adapter = ProviderFactory.makeProvider(
@@ -677,6 +679,21 @@ public final class ChatAppModel {
             return
         }
         conversations[index] = conversation
+    }
+
+    public func setConversationPrompt(_ text: String) {
+        guard var conversation = selectedConversation else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        conversation.systemPrompt = trimmed.isEmpty ? nil : trimmed
+        replace(conversation)
+        persist(conversation)
+    }
+
+    public func setReasoningEffort(_ effort: String?) {
+        guard var conversation = selectedConversation else { return }
+        conversation.reasoningEffort = effort
+        replace(conversation)
+        persist(conversation)
     }
 
     /// Toggles like (+1) / dislike (-1). Passing the current value clears it.

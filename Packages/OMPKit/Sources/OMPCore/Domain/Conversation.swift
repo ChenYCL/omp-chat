@@ -18,6 +18,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var isLocked: Bool
     /// Temporary chats are not saved to history and vanish on close.
     public var isTemporary: Bool
+    /// Per-conversation reasoning effort override: low / medium / high.
+    public var reasoningEffort: String?
 
     public init(
         id: UUID = UUID(),
@@ -32,7 +34,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isArchived: Bool = false,
         projectID: UUID? = nil,
         isLocked: Bool = false,
-        isTemporary: Bool = false
+        isTemporary: Bool = false,
+        reasoningEffort: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -47,6 +50,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.projectID = projectID
         self.isLocked = isLocked
         self.isTemporary = isTemporary
+        self.reasoningEffort = reasoningEffort
     }
 
     public var lastMessagePreview: String {
