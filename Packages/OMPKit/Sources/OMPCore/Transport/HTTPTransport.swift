@@ -63,11 +63,11 @@ public struct URLSessionTransport: HTTPTransport {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 var chunk = Data()
-                chunk.reserveCapacity(8192)
+                chunk.reserveCapacity(512)
                 do {
                     for try await byte in bytes {
                         chunk.append(byte)
-                        if chunk.count >= 8192 {
+                        if byte == 0x0A || chunk.count >= 256 {
                             continuation.yield(chunk)
                             chunk.removeAll(keepingCapacity: true)
                         }

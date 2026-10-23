@@ -49,8 +49,8 @@ public struct MarkdownText: View {
         )
     }
 
-    struct Segment: Identifiable {
-        enum Kind {
+    struct Segment: Identifiable, Equatable {
+        enum Kind: Equatable {
             case text(String)
             case code(language: String?, code: String)
         }
