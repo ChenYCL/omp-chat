@@ -337,6 +337,13 @@ public final class ChatAppModel {
         persist(conversation)
     }
 
+    public func setUnread(_ id: UUID, unread: Bool) {
+        guard var conversation = conversation(id) else { return }
+        conversation.hasUnread = unread
+        replace(conversation)
+        persist(conversation)
+    }
+
     public func setModel(_ model: ModelDescriptor) {
         guard var conversation = selectedConversation else { return }
         conversation.modelID = model.id

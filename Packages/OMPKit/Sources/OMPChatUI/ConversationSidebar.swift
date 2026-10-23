@@ -470,6 +470,11 @@ public struct ConversationSidebar: View {
             Label(conversation.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
         }
         Button {
+            model.setUnread(conversation.id, unread: !conversation.hasUnread)
+        } label: {
+            Label(conversation.hasUnread ? "标记为已读" : "标记为未读", systemImage: conversation.hasUnread ? "envelope.open" : "envelope.badge")
+        }
+        Button {
             model.toggleArchive(conversation.id)
         } label: {
             Label(conversation.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
