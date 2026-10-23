@@ -194,6 +194,8 @@ public struct ChatDetailView: View {
     @State private var showInChatSearch = false
     @State private var showRenameAlert = false
     @State private var renamingTitle = ""
+    @ObservedObject private var network = NetworkMonitor.shared
+
     public init(onQuickSwitch: @escaping () -> Void = {}, onToggleSidebar: @escaping () -> Void = {}) {
         self.onQuickSwitch = onQuickSwitch
         self.onToggleSidebar = onToggleSidebar
@@ -213,6 +215,19 @@ public struct ChatDetailView: View {
             }
             if let status = model.statusMessage {
                 StatusToast(message: status) { model.dismissStatus() }
+            }
+            if !network.isConnected {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("网络连接已断开，请检查网络设置")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.9), in: Capsule())
+                .padding(.vertical, 4)
             }
 
             if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {

@@ -225,6 +225,12 @@ public struct ComposerBar: View {
         .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in
             focused = true
         }
+        .onChange(of: model.selectedConversationID) { _, _ in
+            focused = true
+        }
+        .onAppear {
+            focused = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ompVoiceMode)) { _ in
             showVoiceSheet = true
         }
