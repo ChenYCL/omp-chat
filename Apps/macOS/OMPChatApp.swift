@@ -21,6 +21,11 @@ struct OMPChatApp: App {
                     model.newConversation()
                 }
                 .keyboardShortcut("n", modifiers: .command)
+
+                Button("新建临时对话") {
+                    _ = model.newTemporaryConversation()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             }
             CommandMenu("对话") {
                 Button("重新生成") {
@@ -34,6 +39,11 @@ struct OMPChatApp: App {
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!model.isStreaming)
+
+                Button("语音模式") {
+                    NotificationCenter.default.post(name: .ompVoiceMode, object: nil)
+                }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
 
                 Divider()
 

@@ -224,6 +224,9 @@ public struct ComposerBar: View {
         .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in
             focused = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ompVoiceMode)) { _ in
+            showVoiceSheet = true
+        }
         .sheet(isPresented: $showImageSheet) {
             ImageGenerationSheet()
                 .environment(model)

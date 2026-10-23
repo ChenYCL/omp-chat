@@ -11,6 +11,7 @@ public extension Notification.Name {
     static let ompNewChat = Notification.Name("omp.newChat")
     static let ompFindInChat = Notification.Name("omp.findInChat")
     static let ompToggleSidebar = Notification.Name("omp.toggleSidebar")
+    static let ompVoiceMode = Notification.Name("omp.voiceMode")
 }
 
 public struct ChatRootView: View {
