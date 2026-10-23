@@ -10,7 +10,7 @@ public struct ProviderSettingsView: View {
     @State private var loaded = false
     @State private var editing: ProviderDraft?
     @State private var deleting: ProviderProfile?
-
+    @State private var showingClearConfirmation = false
     public init() {}
 
     public var body: some View {
@@ -20,6 +20,7 @@ public struct ProviderSettingsView: View {
                 defaultModelSection
                 generationSection
                 appearanceSection
+                speechSection
                 aboutSection
             }
             .formStyle(.grouped)
@@ -219,16 +220,45 @@ public struct ProviderSettingsView: View {
         }
     }
 
+    private var speechSection: some View {
+        Section("语音与朗读") {
+            Picker("朗读语速", selection: $draft.speechRateMultiplier) {
+                Text("0.8x 稍慢").tag(0.8)
+                Text("1.0x 正常").tag(1.0)
+                Text("1.2x 稍快").tag(1.2)
+                Text("1.5x 极速").tag(1.5)
+            }
+            Picker("朗读声音语言", selection: $draft.speechVoiceLanguage) {
+                Text("中文普通话 (zh-CN)").tag("zh-CN")
+                Text("英语 (en-US)").tag("en-US")
+                Text("粤语 (zh-HK)").tag("zh-HK")
+                Text("日语 (ja-JP)").tag("ja-JP")
+            }
+        }
+    }
+
     private var aboutSection: some View {
         Section("关于") {
             LabeledContent("版本", value: AppInfo.version)
             LabeledContent("存储", value: "Application Support/OMPChat")
             Button("清除全部对话") {
-                for conversation in model.sortedConversations {
-                    model.deleteConversation(conversation.id)
-                }
+                showingClearConfirmation = true
             }
             .foregroundStyle(.red)
+            .confirmationDialog(
+                "确定要清除全部对话吗？",
+                isPresented: $showingClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("清除全部对话", role: .destructive) {
+                    for conversation in model.sortedConversations {
+                        model.deleteConversation(conversation.id)
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此操作将永久删除全部历史对话，无法撤销。")
+            }
         }
     }
 

@@ -14,7 +14,12 @@ public final class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesize
         synthesizer.delegate = self
     }
 
-    public func speak(_ text: String, messageID: UUID? = nil) {
+    public func speak(
+        _ text: String,
+        messageID: UUID? = nil,
+        rateMultiplier: Double = 1.0,
+        language: String = "zh-CN"
+    ) {
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
             if speakingMessageID == messageID && messageID != nil {
@@ -29,9 +34,11 @@ public final class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesize
         }
         speakingMessageID = messageID
         let utterance = AVSpeechUtterance(string: String(trimmed.prefix(4000)))
-        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.voice = AVSpeechSynthesisVoice(language: language)
+            ?? AVSpeechSynthesisVoice(language: "zh-CN")
             ?? AVSpeechSynthesisVoice(language: Locale.current.language.languageCode?.identifier ?? "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        let baseRate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, baseRate * Float(rateMultiplier)))
         synthesizer.speak(utterance)
     }
 
@@ -49,8 +56,13 @@ public final class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesize
 
 public enum Speech {
     @MainActor
-    public static func speak(_ text: String, messageID: UUID? = nil) {
-        SpeechManager.shared.speak(text, messageID: messageID)
+    public static func speak(
+        _ text: String,
+        messageID: UUID? = nil,
+        rateMultiplier: Double = 1.0,
+        language: String = "zh-CN"
+    ) {
+        SpeechManager.shared.speak(text, messageID: messageID, rateMultiplier: rateMultiplier, language: language)
     }
 
     @MainActor

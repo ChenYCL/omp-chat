@@ -432,7 +432,12 @@ public struct MessageRow: View {
                     speaking ? "stop.circle.fill" : "speaker.wave.2",
                     help: speaking ? "停止朗读" : "朗读"
                 ) {
-                    Speech.speak(message.concatenatedText, messageID: message.id)
+                    Speech.speak(
+                        message.concatenatedText,
+                        messageID: message.id,
+                        rateMultiplier: model.settings.speechRateMultiplier,
+                        language: model.settings.speechVoiceLanguage
+                    )
                 }
                 .foregroundStyle(speaking ? Color.accentColor : Color.secondary)
             }
@@ -514,7 +519,12 @@ public struct MessageRow: View {
         if message.role == .assistant, !message.concatenatedText.isEmpty {
             let speaking = speech.speakingMessageID == message.id
             Button {
-                Speech.speak(message.concatenatedText, messageID: message.id)
+                Speech.speak(
+                    message.concatenatedText,
+                    messageID: message.id,
+                    rateMultiplier: model.settings.speechRateMultiplier,
+                    language: model.settings.speechVoiceLanguage
+                )
             } label: {
                 Label(speaking ? "停止朗读" : "朗读此条", systemImage: speaking ? "stop.circle" : "speaker.wave.2")
             }

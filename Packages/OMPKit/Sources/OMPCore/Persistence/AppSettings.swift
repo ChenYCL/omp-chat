@@ -32,6 +32,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var soundEffects: Bool
     public var showLineNumbers: Bool
     public var codeFontName: String
+    public var speechRateMultiplier: Double
+    public var speechVoiceLanguage: String
     public init(
         version: Int = 1,
         defaultProviderID: UUID? = nil,
@@ -44,7 +46,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         fontSize: Double = 15,
         soundEffects: Bool = true,
         showLineNumbers: Bool = true,
-        codeFontName: String = "SF Mono"
+        codeFontName: String = "SF Mono",
+        speechRateMultiplier: Double = 1.0,
+        speechVoiceLanguage: String = "zh-CN"
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -58,6 +62,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.soundEffects = soundEffects
         self.showLineNumbers = showLineNumbers
         self.codeFontName = codeFontName
+        self.speechRateMultiplier = speechRateMultiplier
+        self.speechVoiceLanguage = speechVoiceLanguage
     }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -73,5 +79,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         soundEffects = try container.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? true
         showLineNumbers = try container.decodeIfPresent(Bool.self, forKey: .showLineNumbers) ?? true
         codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName) ?? "SF Mono"
+        speechRateMultiplier = try container.decodeIfPresent(Double.self, forKey: .speechRateMultiplier) ?? 1.0
+        speechVoiceLanguage = try container.decodeIfPresent(String.self, forKey: .speechVoiceLanguage) ?? "zh-CN"
     }
 }
