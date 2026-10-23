@@ -13,6 +13,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var isArchived: Bool
     /// Project this conversation belongs to; nil means ungrouped.
     public var projectID: UUID?
+    /// Locked chats stay in the account but are hidden from history, pinned
+    /// lists and search until unlocked (ChatGPT locked chats, Oct 2026).
+    public var isLocked: Bool
 
     public init(
         id: UUID = UUID(),
@@ -25,7 +28,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         updatedAt: Date = Date(),
         isPinned: Bool = false,
         isArchived: Bool = false,
-        projectID: UUID? = nil
+        projectID: UUID? = nil,
+        isLocked: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -38,6 +42,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.isPinned = isPinned
         self.isArchived = isArchived
         self.projectID = projectID
+        self.isLocked = isLocked
     }
 
     public var lastMessagePreview: String {

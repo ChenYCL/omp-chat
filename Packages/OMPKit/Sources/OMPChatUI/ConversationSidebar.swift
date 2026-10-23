@@ -12,6 +12,7 @@ public struct ConversationSidebar: View {
     @State private var creatingProject = false
     @State private var newProjectName = ""
     @State private var renamingProjectID: UUID?
+    @State private var showLocked = false
 
     public init() {}
 
@@ -154,6 +155,7 @@ public struct ConversationSidebar: View {
                 } else {
                     projectSections
                     ungroupedSection
+                    lockedSection
                     if model.conversations.isEmpty { emptyHint }
                 }
             }
@@ -181,6 +183,35 @@ public struct ConversationSidebar: View {
             if !items.isEmpty {
                 sectionHeader(model.projects.isEmpty ? "最近" : "未分组")
                 ForEach(items) { row($0) }
+            }
+        }
+    }
+
+    private var lockedSection: some View {
+        Group {
+            if !model.lockedConversations.isEmpty {
+                Button {
+                    showLocked.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showLocked ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                        Text("已锁定")
+                            .font(Theme.Typography.sectionHeader)
+                        Text("\(model.lockedConversations.count)")
+                            .font(.system(size: 9.5).monospacedDigit())
+                    }
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                }
+                .buttonStyle(.plain)
+                if showLocked {
+                    ForEach(model.lockedConversations) { row($0) }
+                }
             }
         }
     }
@@ -331,6 +362,11 @@ public struct ConversationSidebar: View {
             model.togglePin(conversation.id)
         } label: {
             Label(conversation.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
+        }
+        Button {
+            model.toggleLock(conversation.id)
+        } label: {
+            Label(conversation.isLocked ? "解锁对话" : "锁定对话", systemImage: conversation.isLocked ? "lock.open" : "lock")
         }
         Button {
             renameText = conversation.title

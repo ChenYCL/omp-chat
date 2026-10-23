@@ -55,10 +55,16 @@ public final class ChatAppModel {
     }
 
     public var sortedConversations: [Conversation] {
-        conversations.sorted { lhs, rhs in
-            if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-            return lhs.updatedAt > rhs.updatedAt
-        }
+        conversations
+            .filter { !$0.isLocked }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return lhs.updatedAt > rhs.updatedAt
+            }
+    }
+
+    public var lockedConversations: [Conversation] {
+        conversations.filter(\.isLocked).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public var activeProvider: ProviderProfile? {
@@ -213,6 +219,16 @@ public final class ChatAppModel {
         let store = self.store
         let snapshot = projects
         Task { try? await store.saveProjects(snapshot) }
+    }
+
+    public func toggleLock(_ id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        conversation.isLocked.toggle()
+        replace(conversation)
+        persist(conversation)
+        if conversation.isLocked, selectedConversationID == id {
+            selectedConversationID = sortedConversations.first?.id
+        }
     }
 
     public func togglePin(_ id: UUID) {
