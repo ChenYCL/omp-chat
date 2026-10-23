@@ -207,12 +207,14 @@ public struct ChatDetailView: View {
             }
 
             if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {
-                // Codex-style empty state: the composer sits in the middle of
-                // the canvas instead of pinned to the bottom.
-                Spacer()
-                ChatTranscriptView()
-                ComposerBar()
-                Spacer()
+                // Codex-style empty state: headline + composer vertically centered
+                Spacer(minLength: 40)
+                VStack(spacing: 18) {
+                    ChatEmptyStateView()
+                    ComposerBar()
+                }
+                .frame(maxWidth: Theme.Layout.transcriptMax + Theme.Layout.transcriptPadding * 2)
+                Spacer(minLength: 40)
             } else {
                 ChatTranscriptView()
                 ComposerBar()
@@ -282,25 +284,75 @@ public struct ChatDetailView: View {
                 }
             }
 
-            iconButton("magnifyingglass", help: "在对话中查找 (⌘F)") {
+            // 查找按钮
+            Button {
                 showInChatSearch.toggle()
                 if !showInChatSearch { inChatSearch = "" }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(showInChatSearch ? Color.accentColor : Color.ompTextSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(showInChatSearch ? Color.accentColor.opacity(0.12) : Color.clear, in: Circle())
             }
-            iconButton("arrow.clockwise", help: "重新生成 (⇧⌘R)") {
-                model.regenerateLast()
-            }
-            iconButton("square.and.arrow.up", help: "分享对话") {
+            .buttonStyle(.plain)
+            .help("在对话中查找 (⌘F)")
+
+            // ChatGPT 风格分享胶囊按钮
+            Button {
                 shareConversation()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("分享")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Color.ompText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.ompFill, in: Capsule())
             }
-            iconButton("arrow.down.doc", help: "导出 Markdown") {
-                prepareExport()
+            .buttonStyle(.plain)
+            .help("分享对话")
+
+            // ••• 溢出功能菜单 (ChatGPT 风格)
+            Menu {
+                Button {
+                    model.regenerateLast()
+                } label: {
+                    Label("重新生成 (⇧⌘R)", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isStreaming || model.selectedConversation?.messages.isEmpty != false)
+
+                Button {
+                    showOptions = true
+                } label: {
+                    Label("对话设置 (自定义指令)", systemImage: "slider.horizontal.3")
+                }
+
+                Button {
+                    prepareExport()
+                } label: {
+                    Label("导出 Markdown", systemImage: "arrow.down.doc")
+                }
+
+                Divider()
+
+                Button {
+                    model.showSettings = true
+                } label: {
+                    Label("偏好设置 (⌘,)", systemImage: "gearshape")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color.ompFill, in: Circle())
             }
-            iconButton("slider.horizontal.3", help: "对话设置") {
-                showOptions = true
-            }
-            iconButton("gearshape", help: "设置 (⌘,)") {
-                model.showSettings = true
-            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
         }
         .padding(.horizontal, 18)
         .padding(.top, 28)
@@ -382,6 +434,37 @@ public struct ChatDetailView: View {
         showExporter = true
     }
 }
+
+/// Empty-state headline matching Codex/ChatGPT desktop reference
+struct ChatEmptyStateView: View {
+    @Environment(ChatAppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(Color.accentColor)
+
+            (Text("你想让我们在 ")
+                + Text(currentProjectName).underline()
+                + Text(" 中构建什么？"))
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.ompText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var currentProjectName: String {
+        if let id = model.selectedConversation?.projectID,
+           let project = model.projects.first(where: { $0.id == id }) {
+            return project.name
+        }
+        return "默认工作区"
+    }
+}
+
 
 
 enum TokenFormat {

@@ -20,6 +20,7 @@ public struct ConversationSidebar: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
+            newChatButton
             searchField
             list
             Divider().opacity(0.6)
@@ -129,6 +130,35 @@ public struct ConversationSidebar: View {
         }
         .padding(.horizontal, 14)
         .padding(.top, 30)
+        .padding(.bottom, 6)
+    }
+
+    private var newChatButton: some View {
+        Button {
+            model.newConversation()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                Text("新聊天")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("⌘N")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
+            .foregroundStyle(Color.ompText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.ompBorder.opacity(0.8), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.04), radius: 3, y: 1)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
         .padding(.bottom, 6)
     }
 
@@ -333,7 +363,8 @@ public struct ConversationSidebar: View {
     private func row(_ conversation: Conversation) -> some View {
         ConversationRow(
             conversation: conversation,
-            isSelected: model.selectedConversationID == conversation.id
+            isSelected: model.selectedConversationID == conversation.id,
+            menuContent: { AnyView(menu(for: conversation)) }
         )
         .onTapGesture {
             model.selectedConversationID = conversation.id
@@ -464,8 +495,8 @@ public struct ConversationSidebar: View {
 private struct ConversationRow: View {
     let conversation: Conversation
     let isSelected: Bool
+    var menuContent: (() -> AnyView)? = nil
     @State private var hovering = false
-
     var body: some View {
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
@@ -480,9 +511,23 @@ private struct ConversationRow: View {
                         .foregroundStyle(Color.ompText)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(Self.relativeTime(conversation.updatedAt))
-                        .font(.system(size: 9.5).monospacedDigit())
-                        .foregroundStyle(Color.ompTextTertiary)
+                    if hovering, let menuContent {
+                        Menu {
+                            menuContent()
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.ompTextSecondary)
+                                .frame(width: 18, height: 16)
+                                .background(Color.ompCard.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                    } else {
+                        Text(Self.relativeTime(conversation.updatedAt))
+                            .font(.system(size: 9.5).monospacedDigit())
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
                 }
                 Text(conversation.lastMessagePreview)
                     .font(Theme.Typography.sidebarPreview)
