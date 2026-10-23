@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.build-*/
+DerivedData/
+.artifacts/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+.env
+.env.*
+!.env.example

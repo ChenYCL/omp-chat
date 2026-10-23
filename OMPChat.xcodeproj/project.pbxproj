@@ -1,0 +1,584 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		133E9B06146BB48356845D06 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FC10A98B20FF37D0174B36AB /* OMPDesign */; };
+		50F968C61F4012EB0E471103 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0FF631BA1332E6394354C5A7 /* OMPCore */; };
+		5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 9F83DF7DC8DC788D829018A6 /* OMPDesign */; };
+		6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 71C378D712852DA4990BE826 /* OMPDesign */; };
+		6A0A4F0477F5895F0D5B3037 /* OMPChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A28AFEA8439E281774F3A040 /* OMPChatApp.swift */; };
+		90CA8714BE45F88765ABAF5B /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3C954699D33223A1C904DD /* SmokeTests.swift */; };
+		979E72E7690ACF24609BEDC1 /* OMPChatiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */; };
+		F87C63434CEFB4FCEA42EE48 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 15AFBE83C4C7E348CCC85E43 /* OMPCore */; };
+		FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC29DA60AA29334933C2023A /* OMPCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatiOSApp.swift; sourceTree = "<group>"; };
+		31530891343AF9A448A307AF /* OMPKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OMPKit; path = Packages/OMPKit; sourceTree = SOURCE_ROOT; };
+		383AF11ED8E7A70913E2E055 /* OMPChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OMPChat.entitlements; sourceTree = "<group>"; };
+		436F03FF8C7B1AA4F96688D6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		57D198FF73A36BECC16ED550 /* OMPChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OMPChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A3C954699D33223A1C904DD /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
+		7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OMPChatiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9DF8AF1DD236308B3E9BFCCC /* OMPChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OMPChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A28AFEA8439E281774F3A040 /* OMPChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatApp.swift; sourceTree = "<group>"; };
+		FF0E7E503D25CD720139B116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2858BED7D1ECBCC0F2FB5EE2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F87C63434CEFB4FCEA42EE48 /* OMPCore in Frameworks */,
+				133E9B06146BB48356845D06 /* OMPDesign in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8F89408DB6F8675003E98B63 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */,
+				6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D6CE581E3EFCCB295C59550F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				50F968C61F4012EB0E471103 /* OMPCore in Frameworks */,
+				5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		05F30D9A0C8B44DCF3490A94 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				FF0E7E503D25CD720139B116 /* Info.plist */,
+				1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */,
+			);
+			path = iOS;
+			sourceTree = "<group>";
+		};
+		180EE1AE6CB0C19C0131E270 /* Apps */ = {
+			isa = PBXGroup;
+			children = (
+				05F30D9A0C8B44DCF3490A94 /* iOS */,
+				D21A173F0B3FB4A7C6B9FF62 /* macOS */,
+			);
+			path = Apps;
+			sourceTree = "<group>";
+		};
+		401CBCD6AD0C68AE5AB45DE2 = {
+			isa = PBXGroup;
+			children = (
+				180EE1AE6CB0C19C0131E270 /* Apps */,
+				DC5767DB6E23DC3D307047CD /* Packages */,
+				429A162BF0C612635EA112B2 /* Tests */,
+				D79FB2E92087015FE2AB37DE /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		429A162BF0C612635EA112B2 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				7CF44B43C141E0986C661BA4 /* OMPChatTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		7CF44B43C141E0986C661BA4 /* OMPChatTests */ = {
+			isa = PBXGroup;
+			children = (
+				5A3C954699D33223A1C904DD /* SmokeTests.swift */,
+			);
+			path = OMPChatTests;
+			sourceTree = "<group>";
+		};
+		D21A173F0B3FB4A7C6B9FF62 /* macOS */ = {
+			isa = PBXGroup;
+			children = (
+				436F03FF8C7B1AA4F96688D6 /* Info.plist */,
+				383AF11ED8E7A70913E2E055 /* OMPChat.entitlements */,
+				A28AFEA8439E281774F3A040 /* OMPChatApp.swift */,
+			);
+			path = macOS;
+			sourceTree = "<group>";
+		};
+		D79FB2E92087015FE2AB37DE /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				57D198FF73A36BECC16ED550 /* OMPChat.app */,
+				7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */,
+				9DF8AF1DD236308B3E9BFCCC /* OMPChatTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DC5767DB6E23DC3D307047CD /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				31530891343AF9A448A307AF /* OMPKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1EE85AA706CA3A2F0D5AE3BC /* OMPChatiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DC916574CBEE2AF31620811 /* Build configuration list for PBXNativeTarget "OMPChatiOS" */;
+			buildPhases = (
+				C01B585AFBB67871FF16A22B /* Sources */,
+				8F89408DB6F8675003E98B63 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OMPChatiOS;
+			packageProductDependencies = (
+				DC29DA60AA29334933C2023A /* OMPCore */,
+				71C378D712852DA4990BE826 /* OMPDesign */,
+			);
+			productName = OMPChatiOS;
+			productReference = 7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		283CAD7B05BF105D534D6601 /* OMPChat */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7507B195E329C33128495588 /* Build configuration list for PBXNativeTarget "OMPChat" */;
+			buildPhases = (
+				B1FE1CFE3EB0A916BD0C9DB4 /* Sources */,
+				D6CE581E3EFCCB295C59550F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OMPChat;
+			packageProductDependencies = (
+				0FF631BA1332E6394354C5A7 /* OMPCore */,
+				9F83DF7DC8DC788D829018A6 /* OMPDesign */,
+			);
+			productName = OMPChat;
+			productReference = 57D198FF73A36BECC16ED550 /* OMPChat.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9A710078436B090CA6900926 /* OMPChatTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A175C8F0BFC22F129B95741 /* Build configuration list for PBXNativeTarget "OMPChatTests" */;
+			buildPhases = (
+				40225505003BDDB0338F2846 /* Sources */,
+				2858BED7D1ECBCC0F2FB5EE2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OMPChatTests;
+			packageProductDependencies = (
+				15AFBE83C4C7E348CCC85E43 /* OMPCore */,
+				FC10A98B20FF37D0174B36AB /* OMPDesign */,
+			);
+			productName = OMPChatTests;
+			productReference = 9DF8AF1DD236308B3E9BFCCC /* OMPChatTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4E743588AEFB68266DEE526D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					1EE85AA706CA3A2F0D5AE3BC = {
+						DevelopmentTeam = 4C645LPFNT;
+						ProvisioningStyle = Automatic;
+					};
+					283CAD7B05BF105D534D6601 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					9A710078436B090CA6900926 = {
+						DevelopmentTeam = 4C645LPFNT;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 51993AD455A81AC52305313B /* Build configuration list for PBXProject "OMPChat" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 401CBCD6AD0C68AE5AB45DE2;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				657AC617A777DBB5860BFAC1 /* XCLocalSwiftPackageReference "Packages/OMPKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = D79FB2E92087015FE2AB37DE /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				283CAD7B05BF105D534D6601 /* OMPChat */,
+				9A710078436B090CA6900926 /* OMPChatTests */,
+				1EE85AA706CA3A2F0D5AE3BC /* OMPChatiOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		40225505003BDDB0338F2846 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				90CA8714BE45F88765ABAF5B /* SmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1FE1CFE3EB0A916BD0C9DB4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A0A4F0477F5895F0D5B3037 /* OMPChatApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C01B585AFBB67871FF16A22B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				979E72E7690ACF24609BEDC1 /* OMPChatiOSApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		31ECEC922A39D2FF96D3937B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Apps/iOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat.ios;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		42E60B192C511F3EBC8AA88B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Apps/macOS/OMPChat.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Apps/macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		A69D79172B05D6B06F289F36 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Apps/macOS/OMPChat.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Apps/macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		D5339C2FF23DBE544AA3A1C6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat.tests;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		DFC2C556F05B924AF71A1371 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4C645LPFNT;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F2AC9ADE812C922518B60C48 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Apps/iOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat.ios;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		F4BDC0B51A684246FC6A543F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ace.ompchat.tests;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		FC42E4F2C8D7CAFB93D02B6C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4C645LPFNT;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0A175C8F0BFC22F129B95741 /* Build configuration list for PBXNativeTarget "OMPChatTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D5339C2FF23DBE544AA3A1C6 /* Debug */,
+				F4BDC0B51A684246FC6A543F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1DC916574CBEE2AF31620811 /* Build configuration list for PBXNativeTarget "OMPChatiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				31ECEC922A39D2FF96D3937B /* Debug */,
+				F2AC9ADE812C922518B60C48 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		51993AD455A81AC52305313B /* Build configuration list for PBXProject "OMPChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DFC2C556F05B924AF71A1371 /* Debug */,
+				FC42E4F2C8D7CAFB93D02B6C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7507B195E329C33128495588 /* Build configuration list for PBXNativeTarget "OMPChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				42E60B192C511F3EBC8AA88B /* Debug */,
+				A69D79172B05D6B06F289F36 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		657AC617A777DBB5860BFAC1 /* XCLocalSwiftPackageReference "Packages/OMPKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OMPKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0FF631BA1332E6394354C5A7 /* OMPCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPCore;
+		};
+		15AFBE83C4C7E348CCC85E43 /* OMPCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPCore;
+		};
+		71C378D712852DA4990BE826 /* OMPDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPDesign;
+		};
+		9F83DF7DC8DC788D829018A6 /* OMPDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPDesign;
+		};
+		DC29DA60AA29334933C2023A /* OMPCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPCore;
+		};
+		FC10A98B20FF37D0174B36AB /* OMPDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPDesign;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4E743588AEFB68266DEE526D /* Project object */;
+}

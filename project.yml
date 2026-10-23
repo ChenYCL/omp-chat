@@ -1,0 +1,93 @@
+name: OMPChat
+options:
+  bundleIdPrefix: com.ace
+  deploymentTarget:
+    macOS: "15.0"
+    iOS: "18.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  OMPKit:
+    path: Packages/OMPKit
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: 4C645LPFNT
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  OMPChat:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/macOS
+    dependencies:
+      - package: OMPKit
+        product: OMPCore
+      - package: OMPKit
+        product: OMPDesign
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ace.ompchat
+        INFOPLIST_FILE: Apps/macOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Apps/macOS/OMPChat.entitlements
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+
+  OMPChatiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/iOS
+    dependencies:
+      - package: OMPKit
+        product: OMPCore
+      - package: OMPKit
+        product: OMPDesign
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ace.ompchat.ios
+        INFOPLIST_FILE: Apps/iOS/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+
+  OMPChatTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/OMPChatTests
+    dependencies:
+      - package: OMPKit
+        product: OMPCore
+      - package: OMPKit
+        product: OMPDesign
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ace.ompchat.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  OMPChat:
+    build:
+      targets:
+        OMPChat: all
+        OMPChatTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OMPChatTests
+  OMPChatiOS:
+    build:
+      targets:
+        OMPChatiOS: all
+    run:
+      config: Debug
