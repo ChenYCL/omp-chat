@@ -86,7 +86,7 @@ struct IconRail: View {
     @State private var activeSheet: ActiveSheet?
 
     enum ActiveSheet: Identifiable {
-        case projects, history, schedules, usage
+        case projects, history, schedules, usage, subagents
         var id: Self { self }
     }
 
@@ -110,6 +110,9 @@ struct IconRail: View {
             }
             railButton("chart.bar", help: "用量统计") {
                 activeSheet = .usage
+            }
+            railButton("person.2", help: "子代理管理 (Agents)") {
+                activeSheet = .subagents
             }
             railButton("magnifyingglass", help: "快速搜索 (⌘K)") {
                 NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
@@ -136,6 +139,8 @@ struct IconRail: View {
                 PaseoScheduledTasksSheet()
             case .usage:
                 PaseoUsageSheet().environment(model)
+            case .subagents:
+                PaseoSubagentsSheet()
             }
         }
     }

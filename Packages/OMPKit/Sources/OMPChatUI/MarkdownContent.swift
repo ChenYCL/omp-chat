@@ -113,7 +113,7 @@ public struct CodeBlockView: View {
 
     @State private var copied = false
     @State private var collapsed = false
-
+    @State private var showingPreview = false
     public init(language: String?, code: String) {
         self.language = language
         self.code = code
@@ -154,6 +154,17 @@ public struct CodeBlockView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                if isRenderable {
+                    Button {
+                        showingPreview = true
+                    } label: {
+                        Label("工件预览", systemImage: "play.circle")
+                            .font(.caption2)
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
             }
             .padding(.horizontal, Theme.Spacing.m)
             .padding(.vertical, Theme.Spacing.s)
@@ -179,17 +190,145 @@ public struct CodeBlockView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
                 .strokeBorder(Color.ompSeparator.opacity(0.6), lineWidth: 1)
         )
+        .sheet(isPresented: $showingPreview) {
+            ArtifactPreviewSheet(language: language, code: code)
+        }
+    }
+
+    private var isRenderable: Bool {
+        let lang = language?.lowercased() ?? ""
+        return lang == "html" || lang == "svg" || lang == "xml" || lang == "web"
+    }
+}
+
+import WebKit
+
+public struct ArtifactPreviewSheet: View {
+    let language: String?
+    let code: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+    @State private var viewMode: ViewMode = .preview
+
+    enum ViewMode: String, CaseIterable {
+        case preview = "渲染效果"
+        case source = "源代码"
+    }
+
+    public init(language: String?, code: String) {
+        self.language = language
+        self.code = code
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("", selection: $viewMode) {
+                    ForEach(ViewMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                if viewMode == .preview {
+                    HTMLPreviewView(html: wrappedHTML)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView([.horizontal, .vertical]) {
+                        Text(code)
+                            .font(Theme.Typography.monospaced)
+                            .padding(16)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .background(Color.ompSecondaryBackground)
+                }
+            }
+            .navigationTitle("工件预览 (Artifacts)")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        copyToPasteboard(code)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.2))
+                            copied = false
+                        }
+                    } label: {
+                        Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 700, minHeight: 520)
+        #endif
+    }
+
+    private var wrappedHTML: String {
+        let lang = language?.lowercased() ?? ""
+        if lang == "svg" {
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body { margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #fafafa; }</style></head>
+            <body>\(code)</body>
+            </html>
+            """
+        }
+        return code
     }
 }
 
 #if os(macOS)
 import AppKit
+
+struct HTMLPreviewView: NSViewRepresentable {
+    let html: String
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        nsView.loadHTMLString(html, baseURL: nil)
+    }
+}
+
 func copyToPasteboard(_ value: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(value, forType: .string)
 }
 #else
 import UIKit
+
+struct HTMLPreviewView: UIViewRepresentable {
+    let html: String
+
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.loadHTMLString(html, baseURL: nil)
+    }
+}
+
 func copyToPasteboard(_ value: String) {
     UIPasteboard.general.string = value
 }

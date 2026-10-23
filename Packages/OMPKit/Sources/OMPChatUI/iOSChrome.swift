@@ -398,6 +398,7 @@ struct PaseoDrawer: View {
 public struct PaseoChatScreen: View {
     @Environment(ChatAppModel.self) private var model
     let onOpenDrawer: () -> Void
+    @State private var showingSubagents = false
 
     public init(onOpenDrawer: @escaping () -> Void = {}) {
         self.onOpenDrawer = onOpenDrawer
@@ -471,19 +472,23 @@ public struct PaseoChatScreen: View {
                         .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
                     }
 
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.2")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.ompTextTertiary)
-                        Text(toolCount > 0 ? "操作 · \(toolCount)" : "子代理 · \(model.sortedConversations.count)")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Color.ompTextSecondary)
+                    Button {
+                        showingSubagents = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.2")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.ompTextTertiary)
+                            Text(toolCount > 0 ? "操作 · \(toolCount)" : "子代理 · \(model.sortedConversations.count)")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(Color.ompTextSecondary)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.ompCard, in: Capsule())
+                        .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
                     }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.ompCard, in: Capsule())
-                    .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
-
+                    .buttonStyle(.plain)
                     Spacer()
                 }
                 .padding(.horizontal, 20)
@@ -492,6 +497,9 @@ public struct PaseoChatScreen: View {
                 PaseoComposerBar()
             }
             .padding(.bottom, 8)
+        }
+        .sheet(isPresented: $showingSubagents) {
+            PaseoSubagentsSheet()
         }
     }
 
