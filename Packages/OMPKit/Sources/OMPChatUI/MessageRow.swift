@@ -258,6 +258,12 @@ public struct MessageRow: View {
         HStack(spacing: 2) {
             if alignment == .trailing { Spacer(minLength: 0) }
 
+            if message.role == .assistant, !message.concatenatedText.isEmpty {
+                iconButton("speaker.wave.2", help: "朗读") {
+                    Speech.speak(message.concatenatedText)
+                }
+            }
+
             iconButton(copied ? "checkmark" : "doc.on.doc", help: "复制") {
                 actions.copy()
                 copied = true

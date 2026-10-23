@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 import UniformTypeIdentifiers
 import OMPCore
 import OMPDesign
@@ -229,7 +232,10 @@ public struct ChatDetailView: View {
             iconButton("arrow.clockwise", help: "重新生成 (⇧⌘R)") {
                 model.regenerateLast()
             }
-            iconButton("square.and.arrow.up", help: "导出 Markdown") {
+            iconButton("square.and.arrow.up", help: "分享对话") {
+                shareConversation()
+            }
+            iconButton("arrow.down.doc", help: "导出 Markdown") {
                 prepareExport()
             }
             iconButton("slider.horizontal.3", help: "对话设置") {
@@ -257,6 +263,19 @@ public struct ChatDetailView: View {
         .help(help)
     }
     #endif
+
+    private func shareConversation() {
+        guard let conversation = model.selectedConversation else { return }
+        let markdown = model.exportMarkdown(conversation)
+        #if os(macOS)
+        let picker = NSSharingServicePicker(items: [markdown])
+        if let view = NSApp.keyWindow?.contentView {
+            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+        }
+        #else
+        copyToPasteboard(markdown)
+        #endif
+    }
 
     private func prepareExport() {
         guard let conversation = model.selectedConversation else { return }
