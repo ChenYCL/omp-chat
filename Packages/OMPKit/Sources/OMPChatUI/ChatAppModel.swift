@@ -572,6 +572,68 @@ public final class ChatAppModel {
         return lines.joined(separator: "\n")
     }
 
+    public func exportJSON(_ conversation: Conversation) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(conversation),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
+    }
+
+    public func exportHTML(_ conversation: Conversation) -> String {
+        var body = ""
+        for message in conversation.messages {
+            let isUser = message.role == .user
+            let roleName = isUser ? "你" : "助手"
+            let text = message.concatenatedText
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\n", with: "<br>")
+
+            body += """
+            <div class="message-row \(isUser ? "user" : "assistant")">
+                <div class="sender">\(roleName)</div>
+                <div class="bubble">\(text)</div>
+            </div>
+            """
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>\(conversation.title)</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9f9fb; color: #1a1a1a; margin: 0; padding: 40px 20px; }
+                .container { max-width: 760px; margin: 0 auto; background: #ffffff; padding: 32px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+                h1 { font-size: 24px; margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 16px; }
+                .meta { color: #888; font-size: 13px; margin-bottom: 24px; }
+                .message-row { margin-bottom: 20px; display: flex; flex-direction: column; }
+                .message-row.user { align-items: flex-end; }
+                .message-row.assistant { align-items: flex-start; }
+                .sender { font-size: 12px; color: #999; margin-bottom: 4px; }
+                .bubble { padding: 12px 16px; border-radius: 14px; max-width: 80%; font-size: 14.5px; line-height: 1.6; }
+                .user .bubble { background: #007aff; color: #ffffff; }
+                .assistant .bubble { background: #f2f2f7; color: #1a1a1a; }
+                @media print { body { padding: 0; background: #fff; } .container { box-shadow: none; padding: 0; } }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>\(conversation.title)</h1>
+                <div class="meta">模型: \(conversation.modelID ?? "默认")</div>
+                \(body)
+            </div>
+        </body>
+        </html>
+        """
+    }
+
     // MARK: - Context budget
 
     /// Rough token estimate (CJK ≈ 1 token/char, latin ≈ 1 token/4 chars).

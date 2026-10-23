@@ -186,6 +186,7 @@ public struct ChatDetailView: View {
 
     @State private var showExporter = false
     @State private var exportDocument: MarkdownDocument?
+    @State private var exportFilename = "conversation.md"
     @State private var showOptions = false
     @State private var inChatSearch = ""
     @State private var showInChatSearch = false
@@ -241,7 +242,7 @@ public struct ChatDetailView: View {
             isPresented: $showExporter,
             document: exportDocument,
             contentType: .plainText,
-            defaultFilename: (model.selectedConversation?.title ?? "conversation") + ".md"
+            defaultFilename: exportFilename
         ) { _ in
             exportDocument = nil
         }
@@ -336,10 +337,30 @@ public struct ChatDetailView: View {
                     Label("对话设置 (自定义指令)", systemImage: "slider.horizontal.3")
                 }
 
+                Menu("导出对话") {
+                    Button {
+                        prepareExport(format: .markdown)
+                    } label: {
+                        Label("导出为 Markdown (.md)", systemImage: "doc.plaintext")
+                    }
+                    Button {
+                        prepareExport(format: .html)
+                    } label: {
+                        Label("导出为 HTML 网页 (.html)", systemImage: "safari")
+                    }
+                    Button {
+                        prepareExport(format: .json)
+                    } label: {
+                        Label("导出为 JSON 数据 (.json)", systemImage: "curlybraces")
+                    }
+                }
+
                 Button {
-                    prepareExport()
+                    if let conversation = model.selectedConversation {
+                        copyToPasteboard(model.exportMarkdown(conversation))
+                    }
                 } label: {
-                    Label("导出 Markdown", systemImage: "arrow.down.doc")
+                    Label("复制整篇对话内容", systemImage: "doc.on.doc")
                 }
 
                 Divider()
@@ -433,9 +454,26 @@ public struct ChatDetailView: View {
         #endif
     }
 
-    private func prepareExport() {
+    enum ExportFormat: String {
+        case markdown = "md"
+        case html = "html"
+        case json = "json"
+    }
+
+    private func prepareExport(format: ExportFormat = .markdown) {
         guard let conversation = model.selectedConversation else { return }
-        exportDocument = MarkdownDocument(text: model.exportMarkdown(conversation))
+        let text: String
+        let ext = format.rawValue
+        switch format {
+        case .markdown:
+            text = model.exportMarkdown(conversation)
+        case .html:
+            text = model.exportHTML(conversation)
+        case .json:
+            text = model.exportJSON(conversation)
+        }
+        exportDocument = MarkdownDocument(text: text)
+        exportFilename = (conversation.title) + ".\(ext)"
         showExporter = true
     }
 }
