@@ -483,6 +483,7 @@ enum TokenFormat {
 struct ContextBadge: View {
     let used: Int
     let limit: Int
+    @State private var showPopover = false
 
     private var ratio: Double {
         guard limit > 0 else { return 0 }
@@ -490,19 +491,59 @@ struct ContextBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.ompFill)
-                Capsule()
-                    .fill(ratio > 0.85 ? Color.red : Color.accentColor.opacity(0.7))
-                    .frame(width: max(2, 34 * ratio))
+        Button {
+            showPopover.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.ompFill)
+                    Capsule()
+                        .fill(ratio > 0.85 ? Color.red : Color.accentColor.opacity(0.7))
+                        .frame(width: max(2, 34 * ratio))
+                }
+                .frame(width: 34, height: 3)
+                Text("\(TokenFormat.compact(used))/\(TokenFormat.compact(limit))")
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
             }
-            .frame(width: 34, height: 3)
-            Text("\(TokenFormat.compact(used))/\(TokenFormat.compact(limit))")
-                .font(.system(size: 9.5).monospacedDigit())
-                .foregroundStyle(Color.ompTextTertiary)
         }
-        .help("上下文用量估算")
+        .buttonStyle(.plain)
+        .help("点击查看上下文窗口占用详情")
+        .popover(isPresented: $showPopover) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("上下文窗口占用 (Context Window)")
+                    .font(.system(size: 12, weight: .semibold))
+                Divider()
+                HStack {
+                    Text("当前对话已用:")
+                    Spacer()
+                    Text("\(used) tok")
+                        .font(.system(size: 11.5).monospacedDigit())
+                }
+                HStack {
+                    Text("模型上限:")
+                    Spacer()
+                    Text("\(limit) tok")
+                        .font(.system(size: 11.5).monospacedDigit())
+                }
+                HStack {
+                    Text("剩余可用空间:")
+                    Spacer()
+                    Text("\(max(0, limit - used)) tok")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(ratio > 0.85 ? .red : .green)
+                }
+                HStack {
+                    Text("占用比例:")
+                    Spacer()
+                    Text(String(format: "%.1f%%", ratio * 100))
+                        .font(.system(size: 11.5).monospacedDigit())
+                }
+            }
+            .font(.system(size: 11.5))
+            .padding(12)
+            .frame(width: 220)
+        }
     }
 }
 
