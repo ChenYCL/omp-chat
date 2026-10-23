@@ -188,11 +188,23 @@ public struct HostScreen: View {
             Image(systemName: "folder")
                 .font(.system(size: 10))
                 .foregroundStyle(Color.ompTextTertiary)
-            Text(directory.path)
+            Text(GitInfo.tildified(directory.path))
                 .font(.system(size: 11.5, weight: .medium).monospaced())
                 .foregroundStyle(Color.ompTextSecondary)
                 .lineLimit(1)
                 .truncationMode(.head)
+            if let branch = GitInfo.branch(at: directory) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text(branch)
+                        .font(.system(size: 10, weight: .medium).monospaced())
+                }
+                .foregroundStyle(Color.ompTextSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Color.ompFill, in: Capsule())
+            }
             Spacer()
             if directory.path != "/" {
                 Button {
@@ -302,68 +314,6 @@ struct ProviderSettingsEmbedded: View {
             ProviderSettingsView()
                 .environment(model)
         }
-    }
-}
-
-public struct TerminalView: View {
-    @State private var lines: [String] = []
-    @State private var cwd = FileConversationStore.defaultDirectory().path
-    @State private var input = ""
-
-    public init() {}
-
-    private let prompt = "❯"
-
-    public var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                            Text(line)
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(index == lines.count - 1 && isPrompt(line) ? Color.ompText : Color.ompTextSecondary)
-                                .textSelection(.enabled)
-                                .id(index)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .background(Color.black)
-                .onChange(of: lines.count) { _, _ in
-                    proxy.scrollTo(lines.count - 1, anchor: .bottom)
-                }
-            }
-            .frame(maxHeight: .infinity)
-
-            keyRow
-        }
-    }
-
-    private var isPrompt: (String) -> Bool {
-        { $0.hasSuffix(prompt) || $0.contains("\(prompt) ") == false && $0.hasSuffix(prompt) }
-    }
-
-    private func append(_ text: String) {
-        lines.append(text)
-        if lines.count > 400 { lines.removeFirst(lines.count - 400) }
-    }
-
-    public var keyRow: some View {
-        HStack(spacing: 5) {
-            ForEach(["Esc", "Tab", "Ctrl", "Alt", "⇧", "↑", "↓", "←", "→", "⌨"], id: \.self) { key in
-                Text(key)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
     }
 }
 #endif

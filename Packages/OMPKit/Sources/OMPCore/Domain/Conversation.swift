@@ -48,6 +48,10 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var lastMessagePreview: String {
         guard let last = messages.last else { return "开始新的对话" }
         let text = last.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? "附件消息" : text
+        guard !text.isEmpty else { return "附件消息" }
+        let stripped = text
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "`", with: "")
+        return stripped
     }
 }

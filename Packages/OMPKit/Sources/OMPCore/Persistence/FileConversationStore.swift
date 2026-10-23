@@ -158,10 +158,12 @@ public actor FileConversationStore: ConversationStoring {
         do {
             return try decoder.decode(Snapshot.self, from: data)
         } catch {
-            // Corrupt document: preserve it for forensics instead of clobbering.
+            // Preserve the original bytes so a decode failure never destroys
+            // the user's workspace, then surface the error instead of silently
+            // starting a fresh document.
             let backup = directoryURL.appendingPathComponent("workspace.corrupt-\(Int(Date().timeIntervalSince1970)).json")
-            try? FileManager.default.moveItem(at: fileURL, to: backup)
-            return Snapshot()
+            try? FileManager.default.copyItem(at: fileURL, to: backup)
+            throw error
         }
     }
 

@@ -123,12 +123,14 @@ public struct MessageRow: View {
 
     // MARK: Assistant
 
+    @ViewBuilder
     private var assistantRow: some View {
         HStack(alignment: .top, spacing: 10) {
             OMPMark(size: 26)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: Theme.Spacing.s) {
                 thinkingSection
+                operationSection
                 ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
                     partView(part)
                 }
@@ -144,6 +146,20 @@ public struct MessageRow: View {
             Spacer(minLength: 24)
         }
         .padding(.trailing, 24)
+    }
+
+    /// Tool traffic folds into one collapsible card instead of loose pills.
+    @ViewBuilder
+    private var operationSection: some View {
+        let calls = message.parts.compactMap { part -> ToolCall? in
+            if case .toolCall(let call) = part { call } else { nil }
+        }
+        let results = message.parts.compactMap { part -> ToolResult? in
+            if case .toolResult(let result) = part { result } else { nil }
+        }
+        if !calls.isEmpty {
+            OperationCard(calls: calls, results: results)
+        }
     }
 
     private var systemRow: some View {
@@ -194,34 +210,10 @@ public struct MessageRow: View {
             EmptyView()
         case .media(let ref):
             MediaAttachmentView(ref: ref, library: mediaLibrary)
-        case .toolCall(let call):
-            HStack(spacing: 5) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 10))
-                Text(call.name.isEmpty ? "工具调用" : call.name)
-                    .font(.system(size: 11.5, weight: .medium))
-                if !call.argumentsJSON.isEmpty {
-                    Text(call.argumentsJSON)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Color.ompFill, in: Capsule())
-        case .toolResult(let result):
-            VStack(alignment: .leading, spacing: 4) {
-                Text("工具结果 · \(result.name)")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(result.outputText)
-                    .font(Theme.Typography.monospaced)
-                    .textSelection(.enabled)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s))
+        case .toolCall:
+            EmptyView()
+        case .toolResult:
+            EmptyView()
         }
     }
 
@@ -242,9 +234,17 @@ public struct MessageRow: View {
     @ViewBuilder
     private var metaRow: some View {
         if let usage = message.usage, usage.totalTokens > 0 {
-            Text("\(usage.inputTokens) in · \(usage.outputTokens) out")
-                .font(.system(size: 10.5).monospacedDigit())
-                .foregroundStyle(Color.ompTextTertiary)
+            HStack(spacing: 4) {
+                Label(TokenFormat.compact(usage.inputTokens), systemImage: "arrow.up")
+                    .foregroundStyle(Color.green)
+                Label(TokenFormat.compact(usage.outputTokens), systemImage: "arrow.down")
+                    .foregroundStyle(Color.accentColor)
+            }
+            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.ompFill, in: Capsule())
         }
     }
 

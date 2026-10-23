@@ -77,12 +77,16 @@ final class WorkspaceStoreTests: XCTestCase {
         try Data("{ not json".utf8).write(to: file)
 
         let store = FileConversationStore(directoryURL: directory)
-        let conversations = try await store.loadAll()
-        XCTAssertTrue(conversations.isEmpty)
+        do {
+            _ = try await store.loadAll()
+            XCTFail("corrupt document must surface an error")
+        } catch {
+            // expected
+        }
 
         let siblings = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         XCTAssertTrue(siblings.contains { $0.hasPrefix("workspace.corrupt-") })
-        XCTAssertFalse(siblings.contains("workspace.json"))
+        XCTAssertTrue(siblings.contains("workspace.json"), "original document must be preserved")
     }
     func testProjectsRoundTrip() async throws {
         let store = FileConversationStore(directoryURL: directory)
