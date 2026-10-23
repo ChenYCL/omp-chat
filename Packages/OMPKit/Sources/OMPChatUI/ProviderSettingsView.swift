@@ -201,6 +201,14 @@ public struct ProviderSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            HStack {
+                Text("字号")
+                Slider(value: $draft.fontSize, in: 13...20, step: 1)
+                Text("\(Int(draft.fontSize))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, alignment: .trailing)
+            }
         }
     }
 

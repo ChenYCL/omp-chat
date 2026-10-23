@@ -24,6 +24,8 @@ public final class ChatAppModel {
     public var selectedConversationID: UUID?
     public var draft = ""
     public var draftAttachments: [MediaRef] = []
+    /// Message the next send will quote.
+    public var replyingTo: ChatMessage?
     public var showSettings = false
 
     // MARK: Dependencies
@@ -306,7 +308,8 @@ public final class ChatAppModel {
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(text)) }
         parts.append(contentsOf: attachments.map { .media($0) })
 
-        conversation.messages.append(ChatMessage(role: .user, parts: parts))
+        conversation.messages.append(ChatMessage(role: .user, parts: parts, replyToID: replyingTo?.id))
+        replyingTo = nil
         if conversation.title == "新对话" {
             let seed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             conversation.title = seed.isEmpty ? "图片消息" : String(seed.prefix(28))

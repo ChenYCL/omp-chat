@@ -60,7 +60,8 @@ public struct ChatTranscriptView: View {
             regenerate: message.role == .assistant ? { model.regenerateLast() } : nil,
             feedback: message.role == .assistant ? { value in
                 model.setFeedback(message.id, value: value)
-            } : nil
+            } : nil,
+            reply: { model.replyingTo = message }
         )
     }
 

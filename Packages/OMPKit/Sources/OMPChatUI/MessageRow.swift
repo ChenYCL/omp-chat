@@ -10,6 +10,7 @@ public struct MessageRow: View {
         public var delete: (() -> Void)?
         public var regenerate: (() -> Void)?
         public var feedback: ((Int) -> Void)?
+        public var reply: (() -> Void)?
 
         public init(
             copy: @escaping () -> Void,
@@ -17,7 +18,8 @@ public struct MessageRow: View {
             branch: (() -> Void)? = nil,
             delete: (() -> Void)? = nil,
             regenerate: (() -> Void)? = nil,
-            feedback: ((Int) -> Void)? = nil
+            feedback: ((Int) -> Void)? = nil,
+            reply: (() -> Void)? = nil
         ) {
             self.copy = copy
             self.edit = edit
@@ -25,6 +27,7 @@ public struct MessageRow: View {
             self.delete = delete
             self.regenerate = regenerate
             self.feedback = feedback
+            self.reply = reply
         }
     }
 
@@ -32,6 +35,7 @@ public struct MessageRow: View {
     private let mediaLibrary: MediaLibrary
     private let actions: Actions
 
+    @Environment(ChatAppModel.self) private var model
     @State private var hovering = false
     @State private var editing = false
     @State private var editText = ""
@@ -207,6 +211,7 @@ public struct MessageRow: View {
         case .text(let value):
             if !value.isEmpty {
                 MarkdownText(value)
+                    .font(.system(size: model.settings.fontSize))
                     .foregroundStyle(Color.ompText)
             }
         case .thinking:
@@ -274,6 +279,10 @@ public struct MessageRow: View {
                     try? await Task.sleep(for: .seconds(1.2))
                     copied = false
                 }
+            }
+
+            if let reply = actions.reply {
+                iconButton("arrowshape.turn.up.left", help: "引用回复") { reply() }
             }
 
             if message.role == .user, actions.edit != nil {

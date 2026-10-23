@@ -26,6 +26,9 @@ public struct ComposerBar: View {
                 templateList
             }
             VStack(alignment: .leading, spacing: 8) {
+                if let quoted = model.replyingTo {
+                    replyPreview(quoted)
+                }
                 if !model.draftAttachments.isEmpty {
                     attachmentStrip
                 }
@@ -154,6 +157,35 @@ public struct ComposerBar: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Color.ompFill, in: Capsule())
+    }
+
+    private func replyPreview(_ quoted: ChatMessage) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.accentColor)
+                .frame(width: 2, height: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(quoted.role == .user ? "引用你的消息" : "引用助手")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(quoted.concatenatedText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                model.replyingTo = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.ompTextSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
     }
 
     private var canSend: Bool {

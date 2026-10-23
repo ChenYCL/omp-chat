@@ -27,6 +27,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var systemPrompt: String
     public var temperature: Double?
     public var maxOutputTokens: Int?
+    /// Message text size in points.
+    public var fontSize: Double
 
     public init(
         version: Int = 1,
@@ -36,7 +38,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         appearance: AppearancePreference = .system,
         systemPrompt: String = "",
         temperature: Double? = nil,
-        maxOutputTokens: Int? = nil
+        maxOutputTokens: Int? = nil,
+        fontSize: Double = 15
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -46,6 +49,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.systemPrompt = systemPrompt
         self.temperature = temperature
         self.maxOutputTokens = maxOutputTokens
+        self.fontSize = fontSize
     }
 
     public init(from decoder: Decoder) throws {
@@ -58,5 +62,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         maxOutputTokens = try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens)
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 15
     }
 }
