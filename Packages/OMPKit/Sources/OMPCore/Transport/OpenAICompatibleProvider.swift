@@ -5,11 +5,18 @@ public struct OpenAICompatibleProvider: ChatProvider {
     public let profile: ProviderProfile
     private let apiKey: String
     private let transport: HTTPTransport
+    private let mediaPayloads: MediaPayloadProvider?
 
-    public init(profile: ProviderProfile, apiKey: String, transport: HTTPTransport = URLSessionTransport()) {
+    public init(
+        profile: ProviderProfile,
+        apiKey: String,
+        transport: HTTPTransport = URLSessionTransport(),
+        mediaPayloads: MediaPayloadProvider? = nil
+    ) {
         self.profile = profile
         self.apiKey = apiKey
         self.transport = transport
+        self.mediaPayloads = mediaPayloads
     }
 
     public func fetchModels() async throws -> [ModelDescriptor] {
@@ -114,7 +121,8 @@ public struct OpenAICompatibleProvider: ChatProvider {
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         for (key, value) in profile.extraHeaders { urlRequest.setValue(value, forHTTPHeaderField: key) }
 
-        let body = OpenAIRequestBuilder.build(request)
+        let media = MediaPayloadResolver.resolve(messages: request.messages, using: mediaPayloads)
+        let body = OpenAIRequestBuilder.build(request, media: media)
         urlRequest.httpBody = try JSONEncoder().encode(body)
         return urlRequest
     }

@@ -199,7 +199,7 @@ struct OpenAIRequestBuilder {
         }
     }
 
-    static func build(_ request: GenerationRequest) -> Body {
+    static func build(_ request: GenerationRequest, media: [UUID: MediaPayload] = [:]) -> Body {
         var messages: [Body.WireMessage] = []
         if let system = request.systemPrompt, !system.isEmpty {
             messages.append(.init(role: "system", content: .text(system)))
@@ -212,13 +212,32 @@ struct OpenAIRequestBuilder {
                 default: nil
                 }
             }.joined()
+            let imageBlocks = message.parts.compactMap { part -> WireContent.Block? in
+                guard case .media(let ref) = part, let payload = media[ref.id] else { return nil }
+                return WireContent.Block(type: "image_url", text: nil, imageURL: .init(url: payload.dataURL))
+            }
+            let unresolved = message.parts.compactMap { part -> String? in
+                guard case .media(let ref) = part, media[ref.id] == nil else { return nil }
+                return "[附件] \(ref.originalName ?? ref.relativePath)"
+            }
+            let bodyText = ([text] + unresolved).filter { !$0.isEmpty }.joined(separator: "\n")
+            let content: WireContent?
+            if imageBlocks.isEmpty {
+                content = bodyText.isEmpty ? nil : .text(bodyText)
+            } else {
+                var blocks = imageBlocks
+                if !bodyText.isEmpty {
+                    blocks.insert(WireContent.Block(type: "text", text: bodyText, imageURL: nil), at: 0)
+                }
+                content = .blocks(blocks)
+            }
             let calls = message.parts.compactMap { part -> Body.WireToolCall? in
                 guard case .toolCall(let call) = part else { return nil }
                 return Body.WireToolCall(id: call.id, function: .init(name: call.name, arguments: call.argumentsJSON))
             }
             messages.append(.init(
                 role: message.role.rawValue,
-                content: text.isEmpty ? nil : .text(text),
+                content: content,
                 toolCalls: calls.isEmpty ? nil : calls,
                 toolCallID: nil
             ))

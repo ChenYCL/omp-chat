@@ -8,12 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		133E9B06146BB48356845D06 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FC10A98B20FF37D0174B36AB /* OMPDesign */; };
+		3981CFCF8D9E62773D6B1E14 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */; };
 		50F968C61F4012EB0E471103 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0FF631BA1332E6394354C5A7 /* OMPCore */; };
 		5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 9F83DF7DC8DC788D829018A6 /* OMPDesign */; };
 		6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 71C378D712852DA4990BE826 /* OMPDesign */; };
 		6A0A4F0477F5895F0D5B3037 /* OMPChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A28AFEA8439E281774F3A040 /* OMPChatApp.swift */; };
+		8CD1E4FF8E40450ACBF400D9 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0D24C4132E82A847FFEFC53A /* OMPChatUI */; };
 		90CA8714BE45F88765ABAF5B /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3C954699D33223A1C904DD /* SmokeTests.swift */; };
 		979E72E7690ACF24609BEDC1 /* OMPChatiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */; };
+		BF6A5C9C9D79E4BFE7F4B915 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5186DC0EFA32A3939E576ACE /* OMPChatUI */; };
+		C9C6F4B0CB7844B7154C87A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D76CE3C86BE12307212872C4 /* Assets.xcassets */; };
 		F87C63434CEFB4FCEA42EE48 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 15AFBE83C4C7E348CCC85E43 /* OMPCore */; };
 		FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC29DA60AA29334933C2023A /* OMPCore */; };
 /* End PBXBuildFile section */
@@ -28,6 +32,8 @@
 		7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OMPChatiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DF8AF1DD236308B3E9BFCCC /* OMPChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OMPChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A28AFEA8439E281774F3A040 /* OMPChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatApp.swift; sourceTree = "<group>"; };
+		C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D76CE3C86BE12307212872C4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FF0E7E503D25CD720139B116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -47,6 +53,7 @@
 			files = (
 				FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */,
 				6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */,
+				8CD1E4FF8E40450ACBF400D9 /* OMPChatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -56,6 +63,7 @@
 			files = (
 				50F968C61F4012EB0E471103 /* OMPCore in Frameworks */,
 				5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */,
+				BF6A5C9C9D79E4BFE7F4B915 /* OMPChatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +73,7 @@
 		05F30D9A0C8B44DCF3490A94 /* iOS */ = {
 			isa = PBXGroup;
 			children = (
+				D76CE3C86BE12307212872C4 /* Assets.xcassets */,
 				FF0E7E503D25CD720139B116 /* Info.plist */,
 				1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */,
 			);
@@ -109,6 +118,7 @@
 		D21A173F0B3FB4A7C6B9FF62 /* macOS */ = {
 			isa = PBXGroup;
 			children = (
+				C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */,
 				436F03FF8C7B1AA4F96688D6 /* Info.plist */,
 				383AF11ED8E7A70913E2E055 /* OMPChat.entitlements */,
 				A28AFEA8439E281774F3A040 /* OMPChatApp.swift */,
@@ -142,6 +152,7 @@
 			buildConfigurationList = 1DC916574CBEE2AF31620811 /* Build configuration list for PBXNativeTarget "OMPChatiOS" */;
 			buildPhases = (
 				C01B585AFBB67871FF16A22B /* Sources */,
+				C1B92DA9372D1BF39AC952C9 /* Resources */,
 				8F89408DB6F8675003E98B63 /* Frameworks */,
 			);
 			buildRules = (
@@ -152,6 +163,7 @@
 			packageProductDependencies = (
 				DC29DA60AA29334933C2023A /* OMPCore */,
 				71C378D712852DA4990BE826 /* OMPDesign */,
+				0D24C4132E82A847FFEFC53A /* OMPChatUI */,
 			);
 			productName = OMPChatiOS;
 			productReference = 7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */;
@@ -162,6 +174,7 @@
 			buildConfigurationList = 7507B195E329C33128495588 /* Build configuration list for PBXNativeTarget "OMPChat" */;
 			buildPhases = (
 				B1FE1CFE3EB0A916BD0C9DB4 /* Sources */,
+				2C9493F12F4F6AA3400A7B85 /* Resources */,
 				D6CE581E3EFCCB295C59550F /* Frameworks */,
 			);
 			buildRules = (
@@ -172,6 +185,7 @@
 			packageProductDependencies = (
 				0FF631BA1332E6394354C5A7 /* OMPCore */,
 				9F83DF7DC8DC788D829018A6 /* OMPDesign */,
+				5186DC0EFA32A3939E576ACE /* OMPChatUI */,
 			);
 			productName = OMPChat;
 			productReference = 57D198FF73A36BECC16ED550 /* OMPChat.app */;
@@ -243,6 +257,25 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2C9493F12F4F6AA3400A7B85 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3981CFCF8D9E62773D6B1E14 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1B92DA9372D1BF39AC952C9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C9C6F4B0CB7844B7154C87A9 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		40225505003BDDB0338F2846 /* Sources */ = {
@@ -554,6 +587,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0D24C4132E82A847FFEFC53A /* OMPChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPChatUI;
+		};
 		0FF631BA1332E6394354C5A7 /* OMPCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OMPCore;
@@ -561,6 +598,10 @@
 		15AFBE83C4C7E348CCC85E43 /* OMPCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OMPCore;
+		};
+		5186DC0EFA32A3939E576ACE /* OMPChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OMPChatUI;
 		};
 		71C378D712852DA4990BE826 /* OMPDesign */ = {
 			isa = XCSwiftPackageProductDependency;

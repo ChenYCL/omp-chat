@@ -5,6 +5,7 @@ public protocol SecretStoring: Sendable {
     func setSecret(_ value: String?, for account: String) throws
 }
 
+
 #if canImport(Security)
 import Security
 
@@ -23,6 +24,9 @@ public struct KeychainSecretStore: SecretStoring {
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            // Per-app items: no ACL prompt even for ad-hoc signed dev builds.
+            // Falls back to the file vault when the entitlement is missing.
+            kSecUseDataProtectionKeychain as String: true,
         ]
         #if os(iOS)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -41,6 +45,7 @@ public struct KeychainSecretStore: SecretStoring {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecUseDataProtectionKeychain as String: true,
         ]
         guard let value else {
             SecItemDelete(base as CFDictionary)

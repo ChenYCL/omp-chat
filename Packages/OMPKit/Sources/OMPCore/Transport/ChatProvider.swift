@@ -11,13 +11,14 @@ public enum ProviderFactory {
     public static func makeProvider(
         profile: ProviderProfile,
         apiKey: String,
-        transport: HTTPTransport = URLSessionTransport()
+        transport: HTTPTransport = URLSessionTransport(),
+        mediaPayloads: MediaPayloadProvider? = nil
     ) -> any ChatProvider {
         switch profile.kind {
         case .openAICompatible:
-            OpenAICompatibleProvider(profile: profile, apiKey: apiKey, transport: transport)
+            OpenAICompatibleProvider(profile: profile, apiKey: apiKey, transport: transport, mediaPayloads: mediaPayloads)
         case .anthropic:
-            AnthropicProvider(profile: profile, apiKey: apiKey, transport: transport)
+            AnthropicProvider(profile: profile, apiKey: apiKey, transport: transport, mediaPayloads: mediaPayloads)
         }
     }
 }

@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(name: "OMPCore", targets: ["OMPCore"]),
         .library(name: "OMPDesign", targets: ["OMPDesign"]),
+        .library(name: "OMPChatUI", targets: ["OMPChatUI"]),
     ],
     targets: [
         .target(
@@ -21,10 +22,21 @@ let package = Package(
             dependencies: ["OMPCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .target(
+            name: "OMPChatUI",
+            dependencies: ["OMPCore", "OMPDesign"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "OMPCoreTests",
             dependencies: ["OMPCore", "OMPDesign"],
             path: "Tests/OMPCoreTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "OMPChatUITests",
+            dependencies: ["OMPChatUI"],
+            path: "Tests/OMPChatUITests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

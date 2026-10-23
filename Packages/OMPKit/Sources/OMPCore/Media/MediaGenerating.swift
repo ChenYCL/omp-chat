@@ -15,9 +15,7 @@ public struct MediaLibrary: Sendable {
     }
 
     public static func `default`() -> MediaLibrary {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let root = base.appendingPathComponent("OMPChat/Media", isDirectory: true)
+        let root = FileConversationStore.defaultDirectory().appendingPathComponent("Media", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return MediaLibrary(rootURL: root)
     }

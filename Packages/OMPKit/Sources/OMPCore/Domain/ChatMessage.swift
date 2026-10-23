@@ -41,12 +41,10 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.usage = usage
     }
 
+    /// Visible answer text only. Thinking lives in `thinkingText`.
     public var concatenatedText: String {
         parts.compactMap { part in
-            switch part {
-            case .text(let value), .thinking(let value): value
-            default: nil
-            }
+            if case .text(let value) = part { value } else { nil }
         }.joined()
     }
 

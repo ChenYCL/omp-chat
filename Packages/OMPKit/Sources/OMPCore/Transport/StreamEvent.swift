@@ -23,6 +23,7 @@ public enum ProviderError: Error, LocalizedError, Sendable, Equatable {
     case http(status: Int, body: String)
     case decoding(String)
     case stream(String)
+    case unsupported(String)
 
     public var errorDescription: String? {
         switch self {
@@ -32,6 +33,7 @@ public enum ProviderError: Error, LocalizedError, Sendable, Equatable {
         case .http(let status, let body): "HTTP \(status)：\(body.prefix(400))"
         case .decoding(let value): "解析失败：\(value)"
         case .stream(let value): "流式响应中断：\(value)"
+        case .unsupported(let value): "不支持：\(value)"
         }
     }
 }

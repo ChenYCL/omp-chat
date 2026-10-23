@@ -6,12 +6,20 @@ public struct AnthropicProvider: ChatProvider {
     private let apiKey: String
     private let transport: HTTPTransport
     private let apiVersion: String
+    private let mediaPayloads: MediaPayloadProvider?
 
-    public init(profile: ProviderProfile, apiKey: String, transport: HTTPTransport = URLSessionTransport(), apiVersion: String = "2023-06-01") {
+    public init(
+        profile: ProviderProfile,
+        apiKey: String,
+        transport: HTTPTransport = URLSessionTransport(),
+        apiVersion: String = "2023-06-01",
+        mediaPayloads: MediaPayloadProvider? = nil
+    ) {
         self.profile = profile
         self.apiKey = apiKey
         self.transport = transport
         self.apiVersion = apiVersion
+        self.mediaPayloads = mediaPayloads
     }
 
     public func fetchModels() async throws -> [ModelDescriptor] {
@@ -119,7 +127,8 @@ public struct AnthropicProvider: ChatProvider {
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
         for (key, value) in profile.extraHeaders { urlRequest.setValue(value, forHTTPHeaderField: key) }
-        urlRequest.httpBody = try JSONEncoder().encode(AnthropicRequestBuilder.build(request))
+        let media = MediaPayloadResolver.resolve(messages: request.messages, using: mediaPayloads)
+        urlRequest.httpBody = try JSONEncoder().encode(AnthropicRequestBuilder.build(request, media: media))
         return urlRequest
     }
 }
@@ -263,7 +272,7 @@ struct AnthropicRequestBuilder {
         }
     }
 
-    static func build(_ request: GenerationRequest) -> Body {
+    static func build(_ request: GenerationRequest, media: [UUID: MediaPayload] = [:]) -> Body {
         let messages = request.messages
             .filter { $0.role == .user || $0.role == .assistant }
             .map { message -> Body.WireMessage in
@@ -273,6 +282,12 @@ struct AnthropicRequestBuilder {
                         return value.isEmpty ? nil : Body.Block(type: "text", text: value)
                     case .thinking(let value):
                         return value.isEmpty ? nil : Body.Block(type: "thinking", text: value)
+                    case .media(let ref):
+                        guard let payload = media[ref.id] else { return nil }
+                        return Body.Block(
+                            type: "image",
+                            source: .init(mediaType: payload.mimeType, data: payload.base64)
+                        )
                     default:
                         return nil
                     }
