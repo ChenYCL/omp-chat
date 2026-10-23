@@ -572,7 +572,10 @@ public final class ChatAppModel {
 
         let cancelled = Task.isCancelled
         updateMessage(conversationID: conversationID, messageID: assistantID) { message in
-            if let failure {
+            if cancelled, !message.concatenatedText.isEmpty {
+                // Keep what was already streamed instead of discarding it.
+                message.status = .complete
+            } else if let failure {
                 message.status = .failed
                 message.errorText = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription
             } else {
@@ -585,8 +588,17 @@ public final class ChatAppModel {
         isStreaming = false
         streamingConversationID = nil
         streamTask = nil
-        if let failure { errorMessage = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription }
-        if let conversation = conversation(conversationID) { persist(conversation) }
+        if let failure, !cancelled { errorMessage = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription }
+        if var conversation = conversation(conversationID) {
+            if conversation.title == "新对话" || conversation.title == "图片消息" {
+                if let first = conversation.messages.first(where: { $0.role == .user }) {
+                    let seed = first.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !seed.isEmpty { conversation.title = String(seed.prefix(28)) }
+                }
+            }
+            replace(conversation)
+            persist(conversation)
+        }
     }
 
     private func apply(_ event: StreamEvent, conversationID: UUID, assistantID: UUID) {
