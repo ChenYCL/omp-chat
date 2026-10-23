@@ -34,6 +34,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var codeFontName: String
     public var speechRateMultiplier: Double
     public var speechVoiceLanguage: String
+    /// Sidebar ordering: "updated" (default), "created", or "manual".
+    public var conversationSort: String
     public init(
         version: Int = 1,
         defaultProviderID: UUID? = nil,
@@ -48,7 +50,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showLineNumbers: Bool = true,
         codeFontName: String = "SF Mono",
         speechRateMultiplier: Double = 1.0,
-        speechVoiceLanguage: String = "zh-CN"
+        speechVoiceLanguage: String = "zh-CN",
+        conversationSort: String = "updated"
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -64,6 +67,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.codeFontName = codeFontName
         self.speechRateMultiplier = speechRateMultiplier
         self.speechVoiceLanguage = speechVoiceLanguage
+        self.conversationSort = conversationSort
     }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -81,5 +85,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName) ?? "SF Mono"
         speechRateMultiplier = try container.decodeIfPresent(Double.self, forKey: .speechRateMultiplier) ?? 1.0
         speechVoiceLanguage = try container.decodeIfPresent(String.self, forKey: .speechVoiceLanguage) ?? "zh-CN"
+        conversationSort = try container.decodeIfPresent(String.self, forKey: .conversationSort) ?? "updated"
     }
 }

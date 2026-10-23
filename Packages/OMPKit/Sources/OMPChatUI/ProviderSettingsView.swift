@@ -11,9 +11,47 @@ public struct ProviderSettingsView: View {
     @State private var editing: ProviderDraft?
     @State private var deleting: ProviderProfile?
     @State private var showingClearConfirmation = false
+    @State private var section: SettingsSection = .general
+    @State private var sectionQuery = ""
     public init() {}
 
+    enum SettingsSection: String, CaseIterable, Identifiable {
+        case general, appearance, voice, archived, shortcuts, providers, about
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .general: "常规"
+            case .appearance: "外观"
+            case .voice: "语音"
+            case .archived: "已归档的聊天"
+            case .shortcuts: "键盘快捷键"
+            case .providers: "连接"
+            case .about: "关于"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .general: "gearshape"
+            case .appearance: "sparkles"
+            case .voice: "waveform"
+            case .archived: "archivebox"
+            case .shortcuts: "keyboard"
+            case .providers: "point.3.connected.trianglepath.dotted"
+            case .about: "info.circle"
+            }
+        }
+    }
+
     public var body: some View {
+        Group {
+        #if os(macOS)
+        HStack(spacing: 0) {
+            settingsSidebar
+            Divider()
+            settingsDetail
+        }
+        .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 720)
+        #else
         NavigationStack {
             Form {
                 providersSection
@@ -25,26 +63,23 @@ public struct ProviderSettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
-            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
             }
-            .task {
-                guard !loaded else { return }
-                loaded = true
-                draft = model.settings
-            }
-            .onChange(of: draft) { _, newValue in
-                Task { await model.saveSettings(newValue) }
-            }
         }
-        #if os(macOS)
-        .frame(minWidth: 560, idealWidth: 620, minHeight: 560, idealHeight: 680)
         #endif
+        }
+        .task {
+            guard !loaded else { return }
+            loaded = true
+            draft = model.settings
+        }
+        .onChange(of: draft) { _, newValue in
+            Task { await model.saveSettings(newValue) }
+        }
         .sheet(item: $editing) { value in
             ProviderEditorSheet(draft: value)
                 .environment(model)
@@ -65,6 +100,175 @@ public struct ProviderSettingsView: View {
             Text("相关的模型缓存会一起移除，已存对话保留。")
         }
     }
+
+    #if os(macOS)
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("设置")
+                .font(.system(size: 20, weight: .bold))
+                .padding(.horizontal, 14)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextTertiary)
+                TextField("搜索", text: $sectionQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            ForEach(filteredSections) { item in
+                Button {
+                    section = item
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 12))
+                            .frame(width: 16)
+                        Text(item.title)
+                            .font(.system(size: 13))
+                        Spacer()
+                    }
+                    .foregroundStyle(Color.ompText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(section == item ? Color.ompSelection : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+            }
+            Spacer()
+        }
+        .frame(width: 220)
+        .background(Color.ompFill.opacity(0.4))
+    }
+
+    private var filteredSections: [SettingsSection] {
+        let q = sectionQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return SettingsSection.allCases }
+        return SettingsSection.allCases.filter { $0.title.lowercased().contains(q) }
+    }
+
+    private var settingsDetail: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(section.title)
+                        .font(.system(size: 26, weight: .bold))
+                    detailContent
+                }
+                .padding(28)
+                .frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Color.ompCanvas)
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch section {
+        case .general:
+            settingsCard { generationSection }
+            settingsCard { defaultModelSection }
+        case .appearance:
+            settingsCard { appearanceSection }
+        case .voice:
+            settingsCard { speechSection }
+        case .archived:
+            archivedContent
+        case .shortcuts:
+            shortcutsContent
+        case .providers:
+            settingsCard { providersSection }
+        case .about:
+            settingsCard { aboutSection }
+        }
+    }
+
+    private func settingsCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        Form { content() }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 60)
+    }
+
+    private var archivedContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.archivedConversations.isEmpty {
+                Text("没有已归档的聊天")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .padding(.vertical, 24)
+            } else {
+                ForEach(model.archivedConversations) { conversation in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(conversation.title)
+                                .font(.system(size: 13, weight: .medium))
+                            Text(conversation.lastMessagePreview)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.ompTextTertiary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("取消归档") {
+                            model.toggleArchive(conversation.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    private var shortcutsContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            shortcutRow("新建对话", "⌘N")
+            shortcutRow("新建临时对话", "⇧⌘N")
+            shortcutRow("重新生成", "⇧⌘R")
+            shortcutRow("停止生成", "⌘.")
+            shortcutRow("语音模式", "⇧⌘V")
+            shortcutRow("会话内查找", "⌘F")
+            shortcutRow("命令面板", "⌘K")
+            shortcutRow("折叠侧栏", "⌘B")
+            shortcutRow("上一个 / 下一个对话", "⌥↑ / ⌥↓")
+            shortcutRow("偏好设置", "⌘,")
+        }
+    }
+
+    private func shortcutRow(_ name: String, _ keys: String) -> some View {
+        HStack {
+            Text(name)
+                .font(.system(size: 13))
+            Spacer()
+            Text(keys)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Color.ompTextSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 5))
+        }
+        .padding(.vertical, 7)
+    }
+    #endif
+
 
     // MARK: Sections
 

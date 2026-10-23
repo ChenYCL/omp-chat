@@ -86,11 +86,18 @@ public final class ChatAppModel {
             .filter { !$0.isLocked && !$0.isTemporary && !$0.isArchived }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                switch (lhs.sortIndex, rhs.sortIndex) {
-                case let (l?, r?) where l != r: return l < r
-                case (_?, nil): return true
-                case (nil, _?): return false
-                default: return lhs.updatedAt > rhs.updatedAt
+                switch settings.conversationSort {
+                case "created":
+                    return lhs.createdAt > rhs.createdAt
+                case "manual":
+                    switch (lhs.sortIndex, rhs.sortIndex) {
+                    case let (l?, r?) where l != r: return l < r
+                    case (_?, nil): return true
+                    case (nil, _?): return false
+                    default: return lhs.updatedAt > rhs.updatedAt
+                    }
+                default:
+                    return lhs.updatedAt > rhs.updatedAt
                 }
             }
     }
