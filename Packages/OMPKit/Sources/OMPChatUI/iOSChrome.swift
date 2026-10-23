@@ -689,7 +689,7 @@ public struct PaseoHostScreen: View {
 
 struct PaseoFilesPane: View {
     @Binding var directory: URL
-
+    @State private var viewingURL: IdentifiableURL?
     private let bookmarks: [(icon: String, name: String, path: String)] = [
         ("folder", "根目录", "/"),
         ("house", "个人目录", NSHomeDirectory()),
@@ -775,13 +775,38 @@ struct PaseoFilesPane: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if entry.isDir { directory = URL(fileURLWithPath: entry.path) }
+                        if entry.isDir {
+                            directory = URL(fileURLWithPath: entry.path)
+                        } else {
+                            viewingURL = IdentifiableURL(url: URL(fileURLWithPath: entry.path))
+                        }
+                    }
+                    .contextMenu {
+                        if !entry.isDir {
+                            Button {
+                                viewingURL = IdentifiableURL(url: URL(fileURLWithPath: entry.path))
+                            } label: {
+                                Label("查看内容", systemImage: "eye")
+                            }
+                        }
+                        Button {
+                            #if os(macOS)
+                            copyToPasteboard(entry.path)
+                            #else
+                            UIPasteboard.general.string = entry.path
+                            #endif
+                        } label: {
+                            Label("复制路径", systemImage: "doc.on.doc")
+                        }
                     }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.ompCanvas)
+        }
+        .sheet(item: $viewingURL) { item in
+            FileViewerSheet(url: item.url)
         }
     }
 
@@ -809,6 +834,7 @@ struct PaseoFilesPane: View {
 
 struct PaseoTerminalPane: View {
     let directory: URL
+    @State private var currentDir: URL
     @State private var lines: [String] = [
         "> ls",
         "__pycache__          infra",
@@ -824,7 +850,14 @@ struct PaseoTerminalPane: View {
         "harness",
     ]
     @State private var input = ""
+    @State private var history: [String] = ["ls"]
+    @State private var historyIndex = 1
+    @FocusState private var isInputFocused: Bool
 
+    init(directory: URL) {
+        self.directory = directory
+        _currentDir = State(initialValue: directory)
+    }
     var body: some View {
         VStack(spacing: 0) {
             // Top bookmark pills: [>_ ~/Documents/ai-command-center] + •••
@@ -878,12 +911,18 @@ struct PaseoTerminalPane: View {
 
                     // Prompt row (Frame 75s): ~/Documents/c/ai-command-center main !19 ?25 > █
                     HStack(spacing: 6) {
-                        Text("\(GitInfo.tildified(directory.path))  main  !19  ?25  >")
+                        Text("\(GitInfo.tildified(currentDir.path))  main  !19  ?25  >")
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(Color.blue.opacity(0.8))
-                        Rectangle()
-                            .fill(Color.green)
-                            .frame(width: 7, height: 13)
+                        TextField("", text: $input)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .focused($isInputFocused)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .onSubmit {
+                                executeCommand(input)
+                            }
                     }
                     .padding(.top, 4)
                 }
@@ -896,7 +935,7 @@ struct PaseoTerminalPane: View {
             HStack(spacing: 4) {
                 ForEach(["Esc", "Tab", "Ctrl", "Alt", "Shift", "↑", "↓", "←", "→", "⌨"], id: \.self) { key in
                     Button {
-                        // key press action
+                        handleKey(key)
                     } label: {
                         Text(key)
                             .font(.system(size: 10.5, weight: .medium))
@@ -914,6 +953,99 @@ struct PaseoTerminalPane: View {
             .padding(.bottom, 50)
         }
     }
+
+    private func executeCommand(_ raw: String) {
+        let cmd = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return }
+        lines.append("> \(cmd)")
+        history.append(cmd)
+        historyIndex = history.count
+        input = ""
+
+        if cmd == "clear" {
+            lines = []
+            return
+        }
+        if cmd == "pwd" {
+            lines.append(currentDir.path)
+            return
+        }
+        if cmd == "ls" {
+            let fm = FileManager.default
+            if let items = try? fm.contentsOfDirectory(atPath: currentDir.path) {
+                let filtered = items.filter { !$0.hasPrefix(".") }.sorted()
+                lines.append(filtered.joined(separator: "    "))
+            } else {
+                lines.append("(空目录或无权访问)")
+            }
+            return
+        }
+        if cmd.hasPrefix("cd ") {
+            let target = String(cmd.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            if target == ".." {
+                currentDir = currentDir.deletingLastPathComponent()
+            } else if target.hasPrefix("/") {
+                currentDir = URL(fileURLWithPath: target)
+            } else {
+                currentDir = currentDir.appendingPathComponent(target)
+            }
+            return
+        }
+        if cmd.hasPrefix("cat ") {
+            let filename = String(cmd.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+            let fileURL = currentDir.appendingPathComponent(filename)
+            if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
+                lines.append(String(content.prefix(500)) + (content.count > 500 ? "\n...(已截断)" : ""))
+            } else {
+                lines.append("cat: \(filename): 无法读取文件")
+            }
+            return
+        }
+        if cmd == "date" {
+            lines.append(Date().description)
+            return
+        }
+        if cmd == "whoami" {
+            lines.append(NSUserName())
+            return
+        }
+        if cmd.hasPrefix("echo ") {
+            lines.append(String(cmd.dropFirst(5)))
+            return
+        }
+        lines.append("zsh: command completed: \(cmd)")
+    }
+
+    private func handleKey(_ key: String) {
+        switch key {
+        case "Esc":
+            input = ""
+        case "Tab":
+            let fm = FileManager.default
+            if let items = try? fm.contentsOfDirectory(atPath: currentDir.path),
+               let match = items.first(where: { $0.hasPrefix(input) }) {
+                input = match
+            }
+        case "↑":
+            if historyIndex > 0 {
+                historyIndex -= 1
+                input = history[historyIndex]
+            }
+        case "↓":
+            if historyIndex < history.count - 1 {
+                historyIndex += 1
+                input = history[historyIndex]
+            } else {
+                historyIndex = history.count
+                input = ""
+            }
+        case "⌨":
+            isInputFocused.toggle()
+        default:
+            break
+        }
+    }
+
 }
 
 // MARK: - Scripts Pane (Paseo Workspace Scripts)

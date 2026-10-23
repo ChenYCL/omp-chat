@@ -687,6 +687,67 @@ public struct PaseoSubagentsSheet: View {
     }
 }
 
+// MARK: - 9. File Viewer Sheet (文件查看器)
+
+public struct IdentifiableURL: Identifiable {
+    public let id = UUID()
+    public let url: URL
+    public init(url: URL) { self.url = url }
+}
+
+public struct FileViewerSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var content = ""
+    @State private var copied = false
+
+    public init(url: URL) {
+        self.url = url
+    }
+
+    public var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(content)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Color.ompText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .textSelection(.enabled)
+            }
+            .background(Color.ompCanvas)
+            .navigationTitle(url.lastPathComponent)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        copyToPasteboard(content)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.2))
+                            copied = false
+                        }
+                    } label: {
+                        Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+            }
+            .task {
+                content = (try? String(contentsOf: url, encoding: .utf8)) ?? "(无法读取文件内容或为二进制文件)"
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 600, minHeight: 450)
+        #endif
+    }
+}
+
+
 
 
 private func ConversationRow_relativeTime(_ date: Date) -> String {
