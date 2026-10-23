@@ -29,7 +29,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var maxOutputTokens: Int?
     /// Message text size in points.
     public var fontSize: Double
-
+    public var soundEffects: Bool
+    public var showLineNumbers: Bool
+    public var codeFontName: String
     public init(
         version: Int = 1,
         defaultProviderID: UUID? = nil,
@@ -39,7 +41,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         systemPrompt: String = "",
         temperature: Double? = nil,
         maxOutputTokens: Int? = nil,
-        fontSize: Double = 15
+        fontSize: Double = 15,
+        soundEffects: Bool = true,
+        showLineNumbers: Bool = true,
+        codeFontName: String = "SF Mono"
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -50,8 +55,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.temperature = temperature
         self.maxOutputTokens = maxOutputTokens
         self.fontSize = fontSize
+        self.soundEffects = soundEffects
+        self.showLineNumbers = showLineNumbers
+        self.codeFontName = codeFontName
     }
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
@@ -63,5 +70,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         maxOutputTokens = try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens)
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 15
+        soundEffects = try container.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? true
+        showLineNumbers = try container.decodeIfPresent(Bool.self, forKey: .showLineNumbers) ?? true
+        codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName) ?? "SF Mono"
     }
 }

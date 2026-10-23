@@ -326,7 +326,7 @@ public final class ChatAppModel {
 
         conversation.messages.append(ChatMessage(role: .user, parts: parts, replyToID: replyingTo?.id))
         replyingTo = nil
-        AudioFeedback.playSend()
+        AudioFeedback.playSend(enabled: settings.soundEffects)
         if conversation.title == "新对话" {
             let seed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             conversation.title = seed.isEmpty ? "图片消息" : String(seed.prefix(28))
@@ -634,6 +634,20 @@ public final class ChatAppModel {
         """
     }
 
+    @discardableResult
+    public func importConversation(from jsonString: String) throws -> Conversation {
+        let decoder = JSONDecoder()
+        var conversation = try decoder.decode(Conversation.self, from: Data(jsonString.utf8))
+        if conversations.contains(where: { $0.id == conversation.id }) {
+            conversation.id = UUID()
+            conversation.title += " (导入)"
+        }
+        conversations.append(conversation)
+        selectedConversationID = conversation.id
+        persist(conversation)
+        return conversation
+    }
+
     // MARK: - Context budget
 
     /// Rough token estimate (CJK ≈ 1 token/char, latin ≈ 1 token/4 chars).
@@ -685,7 +699,7 @@ public final class ChatAppModel {
             }
         }
         if failure == nil && !cancelled {
-            AudioFeedback.playComplete()
+            AudioFeedback.playComplete(enabled: settings.soundEffects)
         }
         isStreaming = false
         streamingConversationID = nil

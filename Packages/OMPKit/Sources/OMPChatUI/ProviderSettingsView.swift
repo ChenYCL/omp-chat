@@ -194,7 +194,7 @@ public struct ProviderSettingsView: View {
     }
 
     private var appearanceSection: some View {
-        Section("外观") {
+        Section("外观与交互") {
             Picker("主题", selection: $draft.appearance) {
                 ForEach(AppearancePreference.allCases) { preference in
                     Text(preference.displayName).tag(preference)
@@ -208,6 +208,13 @@ public struct ProviderSettingsView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 24, alignment: .trailing)
+            }
+            Toggle("代码块显示行号", isOn: $draft.showLineNumbers)
+            Toggle("触觉与音效反馈 (Audio Chimes)", isOn: $draft.soundEffects)
+            Picker("代码字体", selection: $draft.codeFontName) {
+                Text("SF Mono").tag("SF Mono")
+                Text("Menlo").tag("Menlo")
+                Text("Courier New").tag("Courier New")
             }
         }
     }
