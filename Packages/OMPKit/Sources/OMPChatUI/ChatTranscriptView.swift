@@ -108,8 +108,10 @@ public struct ChatTranscriptView: View {
         guard let conversation = model.selectedConversation, let last = conversation.messages.last else {
             return "empty-\(model.selectedConversationID?.uuidString ?? "-")"
         }
+        // Bucket the growing text so streaming scrolls a few times a second
+        // instead of once per token.
         let textCount = last.parts.reduce(0) { $0 + $1.plainText.count }
-        return "\(conversation.id)-\(conversation.messages.count)-\(last.id)-\(textCount)-\(last.status.rawValue)"
+        return "\(conversation.id)-\(conversation.messages.count)-\(last.id)-\(textCount / 40)-\(last.status.rawValue)"
     }
 
     // MARK: Empty state

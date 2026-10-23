@@ -9,7 +9,6 @@ public struct ComposerBar: View {
     @State private var showImageSheet = false
     @State private var hoveringSend = false
     @FocusState private var focused: Bool
-
     public init() {}
 
     private static let templates: [(title: String, prompt: String)] = [
@@ -133,6 +132,9 @@ public struct ComposerBar: View {
         .dropDestination(for: URL.self) { urls, _ in
             for url in urls { try? model.attach(url: url) }
             return !urls.isEmpty
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in
+            focused = true
         }
         .sheet(isPresented: $showImageSheet) {
             ImageGenerationSheet()
