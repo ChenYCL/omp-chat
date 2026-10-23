@@ -339,6 +339,17 @@ public struct ConversationSidebar: View {
             model.selectedConversationID = conversation.id
         }
         .contextMenu { menu(for: conversation) }
+        .draggable(conversation.id.uuidString)
+        .dropDestination(for: String.self) { items, _ in
+            guard let raw = items.first, let dragged = UUID(uuidString: raw), dragged != conversation.id else { return false }
+            var order = model.sortedConversations
+            guard let from = order.firstIndex(where: { $0.id == dragged }),
+                  let to = order.firstIndex(where: { $0.id == conversation.id }) else { return false }
+            let moved = order.remove(at: from)
+            order.insert(moved, at: to)
+            model.reorderConversations(order)
+            return true
+        }
     }
 
     private var footer: some View {

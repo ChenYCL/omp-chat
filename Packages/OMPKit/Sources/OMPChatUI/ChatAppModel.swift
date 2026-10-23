@@ -63,7 +63,12 @@ public final class ChatAppModel {
             .filter { !$0.isLocked && !$0.isTemporary && !$0.isArchived }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.updatedAt > rhs.updatedAt
+                switch (lhs.sortIndex, rhs.sortIndex) {
+                case let (l?, r?) where l != r: return l < r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return lhs.updatedAt > rhs.updatedAt
+                }
             }
     }
 
@@ -268,6 +273,15 @@ public final class ChatAppModel {
         persist(conversation)
         if conversation.isLocked, selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
+        }
+    }
+
+    public func reorderConversations(_ ordered: [Conversation]) {
+        for (index, item) in ordered.enumerated() {
+            guard var conversation = conversation(item.id) else { continue }
+            conversation.sortIndex = index
+            replace(conversation)
+            persist(conversation)
         }
     }
 

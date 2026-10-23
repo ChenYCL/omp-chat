@@ -19,6 +19,15 @@ public struct MarkdownText: View {
                         Text(attributed)
                             .font(Theme.Typography.body)
                             .textSelection(.enabled)
+                            .tint(Color.accentColor)
+                            .environment(\.openURL, OpenURLAction { url in
+                                #if os(macOS)
+                                NSWorkspace.shared.open(url)
+                                #else
+                                return .systemAction
+                                #endif
+                                return .handled
+                            })
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text(value)

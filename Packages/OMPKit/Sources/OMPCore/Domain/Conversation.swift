@@ -22,6 +22,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var reasoningEffort: String?
     /// Earlier assistant replies kept when regenerating the last answer.
     public var alternativeReplies: [ChatMessage] = []
+    /// Manual order within a sidebar section; nil keeps the date ordering.
+    public var sortIndex: Int? = nil
 
     public init(
         id: UUID = UUID(),
@@ -72,6 +74,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isTemporary = try container.decodeIfPresent(Bool.self, forKey: .isTemporary) ?? false
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         alternativeReplies = try container.decodeIfPresent([ChatMessage].self, forKey: .alternativeReplies) ?? []
+        sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex)
     }
 
 
