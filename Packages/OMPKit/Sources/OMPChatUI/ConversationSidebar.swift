@@ -13,6 +13,7 @@ public struct ConversationSidebar: View {
     @State private var newProjectName = ""
     @State private var renamingProjectID: UUID?
     @State private var showLocked = false
+    @State private var showArchived = false
 
     public init() {}
 
@@ -167,6 +168,7 @@ public struct ConversationSidebar: View {
                     projectSections
                     ungroupedSection
                     lockedSection
+                    archivedSection
                     if model.conversations.isEmpty { emptyHint }
                 }
             }
@@ -194,6 +196,35 @@ public struct ConversationSidebar: View {
             if !items.isEmpty {
                 sectionHeader(model.projects.isEmpty ? "最近" : "未分组")
                 ForEach(items) { row($0) }
+            }
+        }
+    }
+
+    private var archivedSection: some View {
+        Group {
+            if !model.archivedConversations.isEmpty {
+                Button {
+                    showArchived.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showArchived ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Image(systemName: "archivebox")
+                            .font(.system(size: 9))
+                        Text("已归档")
+                            .font(Theme.Typography.sectionHeader)
+                        Text("\(model.archivedConversations.count)")
+                            .font(.system(size: 9.5).monospacedDigit())
+                    }
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                }
+                .buttonStyle(.plain)
+                if showArchived {
+                    ForEach(model.archivedConversations) { row($0) }
+                }
             }
         }
     }
@@ -373,6 +404,11 @@ public struct ConversationSidebar: View {
             model.togglePin(conversation.id)
         } label: {
             Label(conversation.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
+        }
+        Button {
+            model.toggleArchive(conversation.id)
+        } label: {
+            Label(conversation.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
         }
         Button {
             model.toggleLock(conversation.id)

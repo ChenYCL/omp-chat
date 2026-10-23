@@ -56,11 +56,15 @@ public final class ChatAppModel {
 
     public var sortedConversations: [Conversation] {
         conversations
-            .filter { !$0.isLocked && !$0.isTemporary }
+            .filter { !$0.isLocked && !$0.isTemporary && !$0.isArchived }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 return lhs.updatedAt > rhs.updatedAt
             }
+    }
+
+    public var archivedConversations: [Conversation] {
+        conversations.filter(\.isArchived).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public var lockedConversations: [Conversation] {
@@ -238,6 +242,17 @@ public final class ChatAppModel {
             Task { try? await store.delete(id: id) }
         }
         if let selected = selectedConversationID, ids.contains(selected) {
+            selectedConversationID = sortedConversations.first?.id
+        }
+    }
+
+    public func toggleArchive(_ id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        conversation.isArchived.toggle()
+        if conversation.isArchived { conversation.isPinned = false }
+        replace(conversation)
+        persist(conversation)
+        if conversation.isArchived, selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
         }
     }

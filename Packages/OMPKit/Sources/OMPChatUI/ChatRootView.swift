@@ -14,6 +14,7 @@ public extension Notification.Name {
 public struct ChatRootView: View {
     @Environment(ChatAppModel.self) private var model
     @State private var showSwitcher = false
+    @State private var sidebarVisible = true
 
     public init() {}
 
@@ -56,13 +57,21 @@ public struct ChatRootView: View {
         HStack(spacing: 0) {
             IconRail()
             Divider().opacity(0.6)
-            ConversationSidebar()
-                .frame(width: Theme.Layout.sidebarIdeal)
-            Divider().opacity(0.6)
-            ChatDetailView(onQuickSwitch: { showSwitcher = true })
+            if sidebarVisible {
+                ConversationSidebar()
+                    .frame(width: Theme.Layout.sidebarIdeal)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                Divider().opacity(0.6)
+            }
+            ChatDetailView(onQuickSwitch: { showSwitcher = true }, onToggleSidebar: toggleSidebar)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.ompCanvas)
+        .animation(Theme.Motion.quick, value: sidebarVisible)
+    }
+
+    private func toggleSidebar() {
+        sidebarVisible.toggle()
     }
     #endif
 }
@@ -142,13 +151,15 @@ struct RailButton: View {
 public struct ChatDetailView: View {
     @Environment(ChatAppModel.self) private var model
     let onQuickSwitch: () -> Void
+    let onToggleSidebar: () -> Void
 
     @State private var showExporter = false
     @State private var exportDocument: MarkdownDocument?
     @State private var showOptions = false
 
-    public init(onQuickSwitch: @escaping () -> Void = {}) {
+    public init(onQuickSwitch: @escaping () -> Void = {}, onToggleSidebar: @escaping () -> Void = {}) {
         self.onQuickSwitch = onQuickSwitch
+        self.onToggleSidebar = onToggleSidebar
     }
 
     public var body: some View {
@@ -201,6 +212,9 @@ public struct ChatDetailView: View {
     #if os(macOS)
     private var header: some View {
         HStack(spacing: 10) {
+            iconButton("sidebar.left", help: "切换侧栏 (⌘B)") {
+                onToggleSidebar()
+            }
             Text(model.selectedConversation?.title ?? "OMP Chat")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.ompText)
