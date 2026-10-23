@@ -575,7 +575,48 @@ public struct QuickSwitcherView: View {
 
     public init() {}
 
-    private var results: [Conversation] {
+    private struct QuickAction: Identifiable {
+        let id = UUID()
+        let icon: String
+        let title: String
+        let shortcut: String?
+        let action: (ChatAppModel, () -> Void) -> Void
+    }
+
+    private let allActions: [QuickAction] = [
+        QuickAction(icon: "plus.circle.fill", title: "新建对话", shortcut: "⌘N") { model, dismiss in
+            model.newConversation()
+            dismiss()
+        },
+        QuickAction(icon: "eye.slash", title: "新建临时对话 (不保存)", shortcut: nil) { model, dismiss in
+            _ = model.newTemporaryConversation()
+            dismiss()
+        },
+        QuickAction(icon: "gearshape", title: "偏好设置", shortcut: "⌘,") { model, dismiss in
+            model.showSettings = true
+            dismiss()
+        },
+        QuickAction(icon: "folder", title: "新建项目", shortcut: nil) { model, dismiss in
+            _ = model.createProject(name: "新项目")
+            dismiss()
+        },
+    ]
+
+    private var matchingActions: [QuickAction] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return allActions }
+        return allActions.filter {
+            $0.title.lowercased().contains(trimmed) || ($0.shortcut?.lowercased().contains(trimmed) ?? false)
+        }
+    }
+
+    private var matchingProjects: [Project] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return model.projects }
+        return model.projects.filter { $0.name.lowercased().contains(trimmed) }
+    }
+
+    private var matchingConversations: [Conversation] {
         let all = model.sortedConversations
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return all }
@@ -608,37 +649,121 @@ public struct QuickSwitcherView: View {
             Divider().opacity(0.6)
 
             ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(results) { conversation in
-                        Button {
-                            model.selectedConversationID = conversation.id
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: conversation.isPinned ? "pin.fill" : "bubble.left")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(conversation.isPinned ? .orange : Color.ompTextTertiary)
-                                    .frame(width: 14)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(conversation.title)
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    // 快捷动作
+                    if !matchingActions.isEmpty {
+                        Text("快捷动作")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 6)
+                            .padding(.bottom, 2)
+
+                        ForEach(matchingActions) { item in
+                            Button {
+                                item.action(model, { dismiss() })
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: item.icon)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(width: 16)
+                                    Text(item.title)
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundStyle(Color.ompText)
-                                        .lineLimit(1)
-                                    Text(conversation.lastMessagePreview)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(Color.ompTextSecondary)
-                                        .lineLimit(1)
+                                    Spacer()
+                                    if let sc = item.shortcut {
+                                        Text(sc)
+                                            .font(.system(size: 10).monospaced())
+                                            .foregroundStyle(Color.ompTextTertiary)
+                                    }
                                 }
-                                Spacer()
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.ompFill.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
-                    if results.isEmpty {
-                        Text("没有匹配的对话")
+
+                    // 项目
+                    if !matchingProjects.isEmpty {
+                        Text("项目与工作区")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+
+                        ForEach(matchingProjects) { project in
+                            Button {
+                                if let first = model.conversations(in: project.id).first {
+                                    model.selectedConversationID = first.id
+                                }
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(width: 16)
+                                    Text(project.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(Color.ompText)
+                                    Spacer()
+                                    Text("\(model.conversations(in: project.id).count) 会话")
+                                        .font(.system(size: 10.5).monospacedDigit())
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.ompFill.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // 对话历史
+                    if !matchingConversations.isEmpty {
+                        Text("对话历史")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+
+                        ForEach(matchingConversations) { conversation in
+                            Button {
+                                model.selectedConversationID = conversation.id
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: conversation.isPinned ? "pin.fill" : "bubble.left")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(conversation.isPinned ? .orange : Color.ompTextTertiary)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(conversation.title)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(Color.ompText)
+                                            .lineLimit(1)
+                                        Text(conversation.lastMessagePreview)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(Color.ompTextSecondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.ompFill.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if matchingActions.isEmpty && matchingProjects.isEmpty && matchingConversations.isEmpty {
+                        Text("没有匹配的结果")
                             .font(.system(size: 12))
                             .foregroundStyle(Color.ompTextSecondary)
                             .padding(.top, 24)
