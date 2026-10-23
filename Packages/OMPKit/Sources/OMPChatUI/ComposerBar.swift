@@ -15,11 +15,14 @@ public struct ComposerBar: View {
     @FocusState private var focused: Bool
     public init() {}
 
-    private static let templates: [(title: String, prompt: String)] = [
-        ("翻译成英文", "把下面的内容翻译成地道的英文：\n"),
-        ("总结要点", "用要点总结下面的内容：\n"),
-        ("更简洁", "把下面的内容改写得更简洁：\n"),
-        ("审查代码", "审查下面这段代码的风险与改进点：\n```\n\n```"),
+    private static let templates: [(title: String, alias: String, icon: String, prompt: String)] = [
+        ("代码审查", "review", "sparkle.magnifyingglass", "请全面审查以下代码，指出潜在 bug、边界条件、性能瓶颈与六个月可维护性风险：\n\n```\n\n```"),
+        ("错误修复", "fix", "wrench.and.screwdriver", "这段代码在运行时报错，请分析根本原因并给出最小改动的修复方案：\n\n```\n\n```"),
+        ("单元测试", "test", "checklist", "请为以下模块编写严谨的单元测试，覆盖正常路径、边界值与错误分支：\n\n```\n\n```"),
+        ("架构设计", "arch", "square.3.layers.3d", "我需要设计一个系统模块，请给出：1) 职责边界 2) 接口契约 3) 数据流 4) 关键风险与权衡。"),
+        ("性能优化", "opt", "bolt.fill", "请分析以下代码的计算与内存热点，给出减少非必要分配和避免重复计算的优化建议：\n\n```\n\n```"),
+        ("要点总结", "summary", "doc.plaintext", "用清晰条理的要点总结以下内容，突出核心结论与行动建议：\n\n"),
+        ("翻译润色", "translate", "character.book.closed", "把下面的内容翻译或润色为地道专业的技术英文：\n\n"),
     ]
 
     public var body: some View {
@@ -70,7 +73,7 @@ public struct ComposerBar: View {
                             }
                         }
                         Menu("提示词模板") {
-                            ForEach(Self.templates, id: \.title) { item in
+                            ForEach(Self.templates, id: \.alias) { item in
                                 Button(item.title) { model.draft = item.prompt }
                             }
                         }
@@ -356,35 +359,55 @@ public struct ComposerBar: View {
         model.draft.hasPrefix("/") && !model.draft.contains("\n")
     }
 
-    private var filteredTemplates: [(title: String, prompt: String)] {
-        let query = String(model.draft.dropFirst())
+    private var filteredTemplates: [(title: String, alias: String, icon: String, prompt: String)] {
+        let query = String(model.draft.dropFirst()).lowercased()
         guard !query.isEmpty else { return Self.templates }
-        return Self.templates.filter { $0.title.contains(query) }
+        return Self.templates.filter {
+            $0.title.lowercased().contains(query) || $0.alias.lowercased().contains(query)
+        }
     }
 
     private var templateList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(filteredTemplates, id: \.title) { item in
+        VStack(alignment: .leading, spacing: 1) {
+            HStack {
+                Text("快捷指令 (Slash Commands)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.ompTextTertiary)
+                Spacer()
+                Text("ESC 关闭")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+
+            Divider().opacity(0.4)
+
+            ForEach(filteredTemplates, id: \.alias) { item in
                 Button {
                     model.draft = item.prompt
                 } label: {
                     HStack(spacing: 8) {
-                        Text("/\(item.title)")
-                            .font(.system(size: 12.5, weight: .medium))
-                        Spacer()
-                        Text(item.prompt.replacingOccurrences(of: "\n", with: " "))
+                        Image(systemName: item.icon)
                             .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 18)
+                        Text("/\(item.alias)")
+                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.ompText)
+                        Text(item.title)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.ompTextSecondary)
+                        Spacer()
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.ompFill.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, 4)
+        .padding(6)
         .frame(maxWidth: Theme.Layout.transcriptMax)
         .ompSurface(radius: Theme.Radius.m)
         .padding(.horizontal, Theme.Layout.transcriptPadding)

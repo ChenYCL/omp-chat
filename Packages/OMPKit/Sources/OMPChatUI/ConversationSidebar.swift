@@ -195,6 +195,7 @@ public struct ConversationSidebar: View {
                     ForEach(filtered) { row($0) }
                     if filtered.isEmpty { emptyHint }
                 } else {
+                    pinnedSection
                     projectSections
                     ungroupedSection
                     lockedSection
@@ -211,17 +212,27 @@ public struct ConversationSidebar: View {
         !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var pinnedSection: some View {
+        let pinned = model.sortedConversations.filter { $0.isPinned && !$0.isArchived && !$0.isLocked }
+        return Group {
+            if !pinned.isEmpty {
+                sectionHeader("置顶")
+                ForEach(pinned) { row($0) }
+            }
+        }
+    }
+
     private var projectSections: some View {
         ForEach(model.orderedProjects) { project in
             projectHeader(project)
             if !collapsedProjects.contains(project.id) {
-                ForEach(model.conversations(in: project.id)) { row($0) }
+                ForEach(model.conversations(in: project.id).filter { !$0.isPinned }) { row($0) }
             }
         }
     }
 
     private var ungroupedSection: some View {
-        let items = model.conversations(in: nil)
+        let items = model.conversations(in: nil).filter { !$0.isPinned }
         return Group {
             if !items.isEmpty {
                 sectionHeader(model.projects.isEmpty ? "最近" : "未分组")
