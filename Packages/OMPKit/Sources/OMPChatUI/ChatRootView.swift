@@ -192,7 +192,8 @@ public struct ChatDetailView: View {
     @State private var showOptions = false
     @State private var inChatSearch = ""
     @State private var showInChatSearch = false
-
+    @State private var showRenameAlert = false
+    @State private var renamingTitle = ""
     public init(onQuickSwitch: @escaping () -> Void = {}, onToggleSidebar: @escaping () -> Void = {}) {
         self.onQuickSwitch = onQuickSwitch
         self.onToggleSidebar = onToggleSidebar
@@ -248,6 +249,15 @@ public struct ChatDetailView: View {
         ) { _ in
             exportDocument = nil
         }
+        .alert("重命名对话", isPresented: $showRenameAlert) {
+            TextField("对话标题", text: $renamingTitle)
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                if let id = model.selectedConversationID {
+                    model.renameConversation(id, title: renamingTitle)
+                }
+            }
+        }
     }
 
     // MARK: macOS header
@@ -258,10 +268,83 @@ public struct ChatDetailView: View {
             iconButton("sidebar.left", help: "切换侧栏 (⌘B)") {
                 onToggleSidebar()
             }
-            Text(model.selectedConversation?.title ?? "OMP Chat")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.ompText)
-                .lineLimit(1)
+            if let conversation = model.selectedConversation {
+                Menu {
+                    Button {
+                        renamingTitle = conversation.title
+                        showRenameAlert = true
+                    } label: {
+                        Label("重命名对话", systemImage: "pencil")
+                    }
+
+                    if !model.projects.isEmpty {
+                        Menu("移动到项目") {
+                            if conversation.projectID != nil {
+                                Button("移出项目 (未分组)") {
+                                    model.moveConversation(conversation.id, to: nil)
+                                }
+                                Divider()
+                            }
+                            ForEach(model.projects) { project in
+                                Button {
+                                    model.moveConversation(conversation.id, to: project.id)
+                                } label: {
+                                    if conversation.projectID == project.id {
+                                        Label(project.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(project.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        model.togglePin(conversation.id)
+                    } label: {
+                        Label(conversation.isPinned ? "取消置顶" : "置顶对话", systemImage: "pin")
+                    }
+
+                    Button {
+                        model.toggleLock(conversation.id)
+                    } label: {
+                        Label(conversation.isLocked ? "解锁对话" : "锁定对话", systemImage: "lock")
+                    }
+
+                    Button {
+                        model.toggleArchive(conversation.id)
+                    } label: {
+                        Label(conversation.isArchived ? "取消归档" : "归档对话", systemImage: "archivebox")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        model.deleteConversation(conversation.id)
+                    } label: {
+                        Label("删除对话", systemImage: "trash")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(conversation.title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.ompText)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.ompFill.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+            } else {
+                Text("OMP Chat")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+            }
             if model.selectedConversation?.isTemporary == true {
                 Text("临时")
                     .font(.system(size: 9, weight: .semibold))
