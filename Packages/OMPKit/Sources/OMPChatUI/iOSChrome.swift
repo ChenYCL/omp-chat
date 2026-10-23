@@ -297,7 +297,14 @@ struct PaseoDrawer: View {
                                         .foregroundStyle(Color.ompText)
                                         .lineLimit(1)
                                     Spacer()
-                                    if conv.id == model.selectedConversationID {
+                                    if model.streamingConversationID == conv.id {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                    } else if conv.hasUnread {
+                                        Circle()
+                                            .fill(Color.accentColor)
+                                            .frame(width: 6, height: 6)
+                                    } else if conv.id == model.selectedConversationID {
                                         Circle()
                                             .fill(Color.ompText)
                                             .frame(width: 5, height: 5)

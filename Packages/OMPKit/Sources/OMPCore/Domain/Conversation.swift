@@ -24,7 +24,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var alternativeReplies: [ChatMessage] = []
     /// Manual order within a sidebar section; nil keeps the date ordering.
     public var sortIndex: Int? = nil
-
+    /// Whether this conversation has an unread response from a background stream.
+    public var hasUnread: Bool = false
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -39,7 +40,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         projectID: UUID? = nil,
         isLocked: Bool = false,
         isTemporary: Bool = false,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil,
+        hasUnread: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -55,6 +57,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.isLocked = isLocked
         self.isTemporary = isTemporary
         self.reasoningEffort = reasoningEffort
+        self.hasUnread = hasUnread
     }
 
     public init(from decoder: Decoder) throws {
@@ -75,6 +78,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         alternativeReplies = try container.decodeIfPresent([ChatMessage].self, forKey: .alternativeReplies) ?? []
         sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex)
+        hasUnread = (try? container.decodeIfPresent(Bool.self, forKey: .hasUnread)) ?? false
     }
 
 

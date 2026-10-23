@@ -375,6 +375,7 @@ public struct ConversationSidebar: View {
         ConversationRow(
             conversation: conversation,
             isSelected: model.selectedConversationID == conversation.id,
+            isStreamingThis: model.streamingConversationID == conversation.id,
             menuContent: { AnyView(menu(for: conversation)) }
         )
         .onTapGesture {
@@ -506,6 +507,7 @@ public struct ConversationSidebar: View {
 private struct ConversationRow: View {
     let conversation: Conversation
     let isSelected: Bool
+    var isStreamingThis: Bool = false
     var menuContent: (() -> AnyView)? = nil
     @State private var hovering = false
     var body: some View {
@@ -522,7 +524,14 @@ private struct ConversationRow: View {
                         .foregroundStyle(Color.ompText)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    if hovering, let menuContent {
+                    if isStreamingThis {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else if conversation.hasUnread {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 6, height: 6)
+                    } else if hovering, let menuContent {
                         Menu {
                             menuContent()
                         } label: {

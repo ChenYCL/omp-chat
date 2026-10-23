@@ -21,7 +21,16 @@ public final class ChatAppModel {
     public private(set) var refreshingProviderIDs: Set<UUID> = []
     public private(set) var bootstrapped = false
 
-    public var selectedConversationID: UUID?
+    public var selectedConversationID: UUID? {
+        didSet {
+            if let id = selectedConversationID, let index = conversations.firstIndex(where: { $0.id == id }) {
+                if conversations[index].hasUnread {
+                    conversations[index].hasUnread = false
+                    persist(conversations[index])
+                }
+            }
+        }
+    }
     public var draft = ""
     public var draftAttachments: [MediaRef] = []
     /// Message the next send will quote.
@@ -711,6 +720,9 @@ public final class ChatAppModel {
                     let seed = first.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !seed.isEmpty { conversation.title = String(seed.prefix(28)) }
                 }
+            }
+            if selectedConversationID != conversationID {
+                conversation.hasUnread = true
             }
             replace(conversation)
             persist(conversation)
