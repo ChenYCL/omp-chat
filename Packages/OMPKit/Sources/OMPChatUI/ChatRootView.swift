@@ -156,6 +156,8 @@ public struct ChatDetailView: View {
     @State private var showExporter = false
     @State private var exportDocument: MarkdownDocument?
     @State private var showOptions = false
+    @State private var inChatSearch = ""
+    @State private var showInChatSearch = false
 
     public init(onQuickSwitch: @escaping () -> Void = {}, onToggleSidebar: @escaping () -> Void = {}) {
         self.onQuickSwitch = onQuickSwitch
@@ -168,6 +170,8 @@ public struct ChatDetailView: View {
             header
             Divider().opacity(0.5)
             #endif
+
+            if showInChatSearch { inChatSearchBar }
 
             if let message = model.errorMessage {
                 ErrorBanner(message: message) { model.dismissError() }
@@ -242,7 +246,10 @@ public struct ChatDetailView: View {
                 }
             }
 
-            iconButton("magnifyingglass", help: "快速切换 (⌘K)", action: onQuickSwitch)
+            iconButton("magnifyingglass", help: "在对话中查找 (⌘F)") {
+                showInChatSearch.toggle()
+                if !showInChatSearch { inChatSearch = "" }
+            }
             iconButton("arrow.clockwise", help: "重新生成 (⇧⌘R)") {
                 model.regenerateLast()
             }
@@ -278,6 +285,48 @@ public struct ChatDetailView: View {
     }
     #endif
 
+
+    @ViewBuilder
+    private var inChatSearchBar: some View {
+        if showInChatSearch {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.ompTextTertiary)
+                TextField("在此对话中查找", text: $inChatSearch)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                if !inChatSearch.isEmpty {
+                    Text("\(matchCount) 处")
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+                Button {
+                    showInChatSearch = false
+                    inChatSearch = ""
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
+            .padding(.horizontal, 18)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private var matchCount: Int {
+        let query = inChatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, let conversation = model.selectedConversation else { return 0 }
+        return conversation.messages.filter {
+            $0.concatenatedText.localizedCaseInsensitiveContains(query)
+        }.count
+    }
+
     private func shareConversation() {
         guard let conversation = model.selectedConversation else { return }
         let markdown = model.exportMarkdown(conversation)
@@ -297,6 +346,7 @@ public struct ChatDetailView: View {
         showExporter = true
     }
 }
+
 
 enum TokenFormat {
     static func compact(_ value: Int) -> String {

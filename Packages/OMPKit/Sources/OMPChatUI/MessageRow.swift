@@ -248,6 +248,9 @@ public struct MessageRow: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(Color.ompFill, in: Capsule())
+            Text(message.createdAt, format: .dateTime.hour().minute())
+                .font(.system(size: 9.5).monospacedDigit())
+                .foregroundStyle(Color.ompTextTertiary)
         }
     }
 
