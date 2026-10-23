@@ -10,6 +10,7 @@ public struct ComposerBar: View {
     @State private var showOptionsSheet = false
     @State private var showMCPSheet = false
     @State private var showVoiceSheet = false
+    @State private var showModelPicker = false
     @State private var webSearchEnabled = false
     @State private var hoveringSend = false
     @FocusState private var focused: Bool
@@ -429,46 +430,66 @@ public struct ComposerBar: View {
     }
 
     private var modelPill: some View {
-        Menu {
-            if model.availableModels.isEmpty {
-                Text("先在设置中同步模型")
+        Group {
+            if model.availableModels.count > 12 {
+                Button {
+                    showModelPicker = true
+                } label: {
+                    modelPillLabel
+                }
+                .buttonStyle(.plain)
             } else {
-                ForEach(model.availableModels) { descriptor in
-                    Button {
-                        model.setModel(descriptor)
-                    } label: {
-                        let tag = [
-                            descriptor.capabilities.thinking ? "🧠 思考" : nil,
-                            descriptor.capabilities.vision ? "👁 视觉" : nil,
-                            descriptor.limits.contextWindow.map { TokenFormat.compact($0) }
-                        ].compactMap { $0 }.joined(separator: " · ")
-                        let suffix = tag.isEmpty ? "" : " (\(tag))"
-                        if descriptor.id == model.activeModel?.id {
-                            Label(descriptor.displayName + suffix, systemImage: "checkmark")
-                        } else {
-                            Text(descriptor.displayName + suffix)
+                Menu {
+                    if model.availableModels.isEmpty {
+                        Text("先在设置中同步模型")
+                    } else {
+                        ForEach(model.availableModels) { descriptor in
+                            Button {
+                                model.setModel(descriptor)
+                            } label: {
+                                let tag = [
+                                    descriptor.capabilities.thinking ? "🧠 思考" : nil,
+                                    descriptor.capabilities.vision ? "👁 视觉" : nil,
+                                    descriptor.limits.contextWindow.map { TokenFormat.compact($0) }
+                                ].compactMap { $0 }.joined(separator: " · ")
+                                let suffix = tag.isEmpty ? "" : " (\(tag))"
+                                if descriptor.id == model.activeModel?.id {
+                                    Label(descriptor.displayName + suffix, systemImage: "checkmark")
+                                } else {
+                                    Text(descriptor.displayName + suffix)
+                                }
+                            }
                         }
                     }
+                } label: {
+                    modelPillLabel
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
             }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 9.5))
-                Text(model.activeModel?.displayName ?? "选择模型")
-                    .font(Theme.Typography.pill)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Color.ompTextSecondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Color.ompFill, in: Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
+        .sheet(isPresented: $showModelPicker) {
+            ModelPickerSheet()
+                .environment(model)
+        }
+    }
+
+    private var modelPillLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: model.activeModel?.capabilities.thinking == true ? "sparkles" : "cpu")
+                .font(.system(size: 9.5))
+                .foregroundStyle(model.activeModel?.capabilities.thinking == true ? Color.purple : Color.ompTextSecondary)
+            Text(model.activeModel?.displayName ?? "选择模型")
+                .font(Theme.Typography.pill)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+        }
+        .foregroundStyle(Color.ompTextSecondary)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Color.ompFill, in: Capsule())
     }
 
     private var attachmentStrip: some View {
