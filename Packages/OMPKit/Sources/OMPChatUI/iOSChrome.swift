@@ -186,7 +186,12 @@ struct PaseoDrawer: View {
 
     @State private var hostExpanded = true
     @State private var search = ""
+    @State private var activeSheet: ActiveSheet?
 
+    enum ActiveSheet: Identifiable {
+        case projects, history, schedules, usage
+        var id: Self { self }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header: PaseoPro + Search
@@ -212,10 +217,21 @@ struct PaseoDrawer: View {
 
             // Top 4 Menu Items
             VStack(spacing: 2) {
-                drawerItem(icon: "folder", title: "项目", badge: "\(model.projects.count)")
-                drawerItem(icon: "clock", title: "会话历史", badge: "\(model.sortedConversations.count)")
-                drawerItem(icon: "calendar", title: "计划任务")
-                drawerItem(icon: "chart.bar", title: "用量")
+                Button { activeSheet = .projects } label: {
+                    drawerItem(icon: "folder", title: "项目", badge: "\(model.projects.count)")
+                }.buttonStyle(.plain)
+
+                Button { activeSheet = .history } label: {
+                    drawerItem(icon: "clock", title: "会话历史", badge: "\(model.sortedConversations.count)")
+                }.buttonStyle(.plain)
+
+                Button { activeSheet = .schedules } label: {
+                    drawerItem(icon: "calendar", title: "计划任务")
+                }.buttonStyle(.plain)
+
+                Button { activeSheet = .usage } label: {
+                    drawerItem(icon: "chart.bar", title: "用量")
+                }.buttonStyle(.plain)
             }
             .padding(.horizontal, 10)
 
@@ -335,6 +351,20 @@ struct PaseoDrawer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.ompCard)
         .shadow(color: Color.black.opacity(0.12), radius: 16, x: 8, y: 0)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .projects:
+                PaseoProjectsSheet().environment(model)
+            case .history:
+                PaseoSessionHistorySheet(onSelectConversation: { id in
+                    onSelectConversation(id)
+                }).environment(model)
+            case .schedules:
+                PaseoScheduledTasksSheet()
+            case .usage:
+                PaseoUsageSheet().environment(model)
+            }
+        }
     }
 
     private func drawerItem(icon: String, title: String, badge: String? = nil) -> some View {

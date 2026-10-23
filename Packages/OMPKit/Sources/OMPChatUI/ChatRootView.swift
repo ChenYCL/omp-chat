@@ -83,7 +83,12 @@ public struct ChatRootView: View {
 /// Narrow icon rail like Codex/ChatGPT desktop.
 struct IconRail: View {
     @Environment(ChatAppModel.self) private var model
-    @State private var showSwitcher = false
+    @State private var activeSheet: ActiveSheet?
+
+    enum ActiveSheet: Identifiable {
+        case projects, history, schedules, usage
+        var id: Self { self }
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -94,16 +99,20 @@ struct IconRail: View {
             railButton("square.and.pencil", help: "新聊天 (⌘N)", active: false) {
                 NotificationCenter.default.post(name: .ompNewChat, object: nil)
             }
-            railButton("clock", help: "最近对话") {
-                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+            railButton("folder", help: "项目与工作区") {
+                activeSheet = .projects
             }
-            railButton("magnifyingglass", help: "搜索 (⌘K)") {
-                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+            railButton("clock", help: "会话历史") {
+                activeSheet = .history
             }
-            railButton("arrow.triangle.branch", help: "分支当前对话") {
-                if let selected = model.selectedConversation, let last = selected.messages.last {
-                    _ = model.branch(from: last.id)
-                }
+            railButton("calendar", help: "计划任务") {
+                activeSheet = .schedules
+            }
+            railButton("chart.bar", help: "用量统计") {
+                activeSheet = .usage
+            }
+            railButton("magnifyingglass", help: "快速搜索 (⌘K)") {
+                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
             }
 
             Spacer()
@@ -115,6 +124,20 @@ struct IconRail: View {
         }
         .padding(.horizontal, 10)
         .frame(width: 52)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .projects:
+                PaseoProjectsSheet().environment(model)
+            case .history:
+                PaseoSessionHistorySheet(onSelectConversation: { id in
+                    model.selectedConversationID = id
+                }).environment(model)
+            case .schedules:
+                PaseoScheduledTasksSheet()
+            case .usage:
+                PaseoUsageSheet().environment(model)
+            }
+        }
     }
 
     private func railButton(_ symbol: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
