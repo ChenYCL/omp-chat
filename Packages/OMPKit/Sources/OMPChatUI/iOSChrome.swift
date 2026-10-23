@@ -535,7 +535,7 @@ public struct PaseoChatScreen: View {
 /// PaseoPro Pill Composer (Frame 15s)
 struct PaseoComposerBar: View {
     @Environment(ChatAppModel.self) private var model
-
+    @State private var showVoiceSheet = false
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 8) {
@@ -561,9 +561,9 @@ struct PaseoComposerBar: View {
                 .strokeBorder(Color.yellow.opacity(0.8), lineWidth: 2)
                 .frame(width: 14, height: 14)
 
-            // Mic button
+            // Mic button (ChatGPT / Moshi voice mode)
             Button {
-                // voice input action
+                showVoiceSheet = true
             } label: {
                 Image(systemName: "mic")
                     .font(.system(size: 14))
@@ -609,6 +609,10 @@ struct PaseoComposerBar: View {
         .background(Color.ompCard, in: Capsule())
         .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
         .padding(.horizontal, 16)
+        .sheet(isPresented: $showVoiceSheet) {
+            VoiceModeSheet()
+                .environment(model)
+        }
     }
 }
 

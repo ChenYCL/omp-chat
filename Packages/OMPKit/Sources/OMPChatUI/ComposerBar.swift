@@ -9,6 +9,8 @@ public struct ComposerBar: View {
     @State private var showImageSheet = false
     @State private var showOptionsSheet = false
     @State private var showMCPSheet = false
+    @State private var showVoiceSheet = false
+    @State private var webSearchEnabled = false
     @State private var hoveringSend = false
     @FocusState private var focused: Bool
     public init() {}
@@ -118,6 +120,24 @@ public struct ComposerBar: View {
                     }
                     .buttonStyle(.plain)
                     .help("查看已挂载的 MCP 工具")
+
+                    // 🌐 联网搜索按钮
+                    Button {
+                        webSearchEnabled.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 10))
+                            Text("联网")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(webSearchEnabled ? Color.white : Color.ompTextSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(webSearchEnabled ? Color.accentColor : Color.ompFill, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("启用联网搜索参考")
                     Spacer(minLength: 0)
 
                     if model.isStreaming {
@@ -134,6 +154,19 @@ public struct ComposerBar: View {
                         .help("停止生成 (Esc)")
                         .keyboardShortcut(.cancelAction)
                     } else {
+                    // 语音模式按钮
+                    Button {
+                        showVoiceSheet = true
+                    } label: {
+                        Image(systemName: "mic")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.ompTextSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Color.ompFill, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("语音模式 (Voice Mode)")
+
                         Button {
                             model.send()
                         } label: {
@@ -197,6 +230,10 @@ public struct ComposerBar: View {
         }
         .sheet(isPresented: $showMCPSheet) {
             MCPPluginsSheet()
+        }
+        .sheet(isPresented: $showVoiceSheet) {
+            VoiceModeSheet()
+                .environment(model)
         }
     }
 

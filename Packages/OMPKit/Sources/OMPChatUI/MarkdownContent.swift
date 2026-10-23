@@ -37,6 +37,8 @@ public struct MarkdownText: View {
                     }
                 case .code(let language, let code):
                     CodeBlockView(language: language, code: code)
+                case .table(let headers, let rows):
+                    MarkdownTableView(headers: headers, rows: rows)
                 }
             }
         }
@@ -53,6 +55,7 @@ public struct MarkdownText: View {
         enum Kind: Equatable {
             case text(String)
             case code(language: String?, code: String)
+            case table(headers: [String], rows: [[String]])
         }
 
         let id: Int
@@ -60,52 +63,131 @@ public struct MarkdownText: View {
 
         static func parse(_ raw: String) -> [Segment] {
             var segments: [Segment] = []
-            var buffer: [String] = []
-            var codeBuffer: [String] = []
-            var language: String?
-            var inCode = false
+            var textBuffer: [String] = []
 
             func flushText() {
-                let text = buffer.joined(separator: "\n")
+                let text = textBuffer.joined(separator: "\n")
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     segments.append(Segment(id: segments.count, kind: .text(text)))
                 }
-                buffer.removeAll(keepingCapacity: true)
+                textBuffer.removeAll(keepingCapacity: true)
             }
 
-            for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
-                let string = String(line)
-                if string.hasPrefix("```") {
-                    if inCode {
-                        segments.append(Segment(
-                            id: segments.count,
-                            kind: .code(language: language, code: codeBuffer.joined(separator: "\n"))
-                        ))
-                        codeBuffer.removeAll(keepingCapacity: true)
-                        language = nil
-                        inCode = false
-                    } else {
-                        flushText()
-                        let tag = string.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                        language = tag.isEmpty ? nil : tag
-                        inCode = true
+            func splitRow(_ line: String) -> [String] {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("|"), trimmed.hasSuffix("|") else { return [] }
+                return trimmed.dropFirst().dropLast().split(separator: "|", omittingEmptySubsequences: false).map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+            }
+
+            let allLines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            var i = 0
+            while i < allLines.count {
+                let line = allLines[i]
+                if line.hasPrefix("```") {
+                    flushText()
+                    let tag = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                    let lang = tag.isEmpty ? nil : tag
+                    var codeLines: [String] = []
+                    i += 1
+                    while i < allLines.count && !allLines[i].hasPrefix("```") {
+                        codeLines.append(allLines[i])
+                        i += 1
                     }
+                    segments.append(Segment(id: segments.count, kind: .code(language: lang, code: codeLines.joined(separator: "\n"))))
+                    if i < allLines.count { i += 1 }
                     continue
                 }
-                if inCode { codeBuffer.append(string) } else { buffer.append(string) }
+
+                let headerCells = splitRow(line)
+                if !headerCells.isEmpty && i + 1 < allLines.count {
+                    let dividerCells = splitRow(allLines[i + 1])
+                    if dividerCells.count == headerCells.count && dividerCells.allSatisfy({ $0.contains("-") }) {
+                        flushText()
+                        var rows: [[String]] = []
+                        i += 2
+                        while i < allLines.count {
+                            let dataCells = splitRow(allLines[i])
+                            if dataCells.isEmpty { break }
+                            rows.append(dataCells)
+                            i += 1
+                        }
+                        segments.append(Segment(id: segments.count, kind: .table(headers: headerCells, rows: rows)))
+                        continue
+                    }
+                }
+
+                textBuffer.append(line)
+                i += 1
             }
-            if inCode {
-                segments.append(Segment(
-                    id: segments.count,
-                    kind: .code(language: language, code: codeBuffer.joined(separator: "\n"))
-                ))
-            } else {
-                flushText()
-            }
+            flushText()
             return segments
         }
     }
 }
+
+public struct MarkdownTableView: View {
+    let headers: [String]
+    let rows: [[String]]
+
+    public init(headers: [String], rows: [[String]]) {
+        self.headers = headers
+        self.rows = rows
+    }
+
+    public var body: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
+                        Text(header)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.ompText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .frame(minWidth: 90, alignment: .leading)
+                        if index < headers.count - 1 {
+                            Divider().frame(height: 18).opacity(0.5)
+                        }
+                    }
+                }
+                .background(Color.ompFill)
+
+                Divider()
+
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(spacing: 0) {
+                        ForEach(Array(headers.indices), id: \.self) { colIndex in
+                            let cellText = colIndex < row.count ? row[colIndex] : ""
+                            Text(cellText)
+                                .font(Theme.Typography.body)
+                                .foregroundStyle(Color.ompText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .frame(minWidth: 90, alignment: .leading)
+                                .textSelection(.enabled)
+                            if colIndex < headers.count - 1 {
+                                Divider().frame(height: 16).opacity(0.3)
+                            }
+                        }
+                    }
+                    .background(rowIndex % 2 == 0 ? Color.ompCard : Color.ompFill.opacity(0.3))
+                    if rowIndex < rows.count - 1 {
+                        Divider().opacity(0.4)
+                    }
+                }
+            }
+        }
+        .background(Color.ompCard)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
+                .strokeBorder(Color.ompBorder.opacity(0.7), lineWidth: 1)
+        )
+    }
+}
+
 
 public struct CodeBlockView: View {
     let language: String?
