@@ -439,6 +439,22 @@ public final class ChatAppModel {
         persist(conversation)
     }
 
+    public func selectPreviousConversation() {
+        let list = sortedConversations
+        guard let current = selectedConversationID,
+              let index = list.firstIndex(where: { $0.id == current }),
+              index > 0 else { return }
+        selectedConversationID = list[index - 1].id
+    }
+
+    public func selectNextConversation() {
+        let list = sortedConversations
+        guard let current = selectedConversationID,
+              let index = list.firstIndex(where: { $0.id == current }),
+              index < list.count - 1 else { return }
+        selectedConversationID = list[index + 1].id
+    }
+
 
     // MARK: - Message actions
 

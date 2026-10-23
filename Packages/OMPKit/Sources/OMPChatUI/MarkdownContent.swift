@@ -259,7 +259,7 @@ public struct CodeBlockView: View {
                 // pushing the transcript endlessly (ChatGPT desktop behaviour).
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
                     HStack(alignment: .top, spacing: 10) {
-                        let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
+                        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
                         VStack(alignment: .trailing, spacing: 3) {
                             ForEach(0..<lines.count, id: \.self) { i in
                                 Text("\(i + 1)")
@@ -270,13 +270,31 @@ public struct CodeBlockView: View {
                         .padding(.vertical, Theme.Spacing.m)
                         .padding(.leading, Theme.Spacing.m)
 
-                        Text(code)
-                            .font(Theme.Typography.monospaced)
-                            .lineSpacing(3)
-                            .textSelection(.enabled)
+                        if isDiff {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                                    let isAdd = line.hasPrefix("+") && !line.hasPrefix("+++")
+                                    let isDel = line.hasPrefix("-") && !line.hasPrefix("---")
+                                    Text(line.isEmpty ? " " : line)
+                                        .font(Theme.Typography.monospaced)
+                                        .foregroundStyle(isAdd ? Color.green : (isDel ? Color.red : Color.ompText))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 4)
+                                        .background(isAdd ? Color.green.opacity(0.12) : (isDel ? Color.red.opacity(0.12) : Color.clear), in: RoundedRectangle(cornerRadius: 3))
+                                }
+                            }
                             .padding(.vertical, Theme.Spacing.m)
                             .padding(.trailing, Theme.Spacing.m)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                        } else {
+                            Text(code)
+                                .font(Theme.Typography.monospaced)
+                                .lineSpacing(3)
+                                .textSelection(.enabled)
+                                .padding(.vertical, Theme.Spacing.m)
+                                .padding(.trailing, Theme.Spacing.m)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
                 .frame(maxHeight: 320)
@@ -296,6 +314,14 @@ public struct CodeBlockView: View {
     private var isRenderable: Bool {
         let lang = language?.lowercased() ?? ""
         return lang == "html" || lang == "svg" || lang == "xml" || lang == "web"
+    }
+
+    private var isDiff: Bool {
+        let lang = language?.lowercased() ?? ""
+        if lang == "diff" || lang == "patch" { return true }
+        let lines = code.split(separator: "\n", maxSplits: 10).map(String.init)
+        let diffCount = lines.filter { ($0.hasPrefix("+") && !$0.hasPrefix("+++")) || ($0.hasPrefix("-") && !$0.hasPrefix("---")) }.count
+        return diffCount >= 2
     }
 }
 

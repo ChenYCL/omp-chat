@@ -61,6 +61,18 @@ struct OMPChatApp: App {
                     NotificationCenter.default.post(name: .ompToggleSidebar, object: nil)
                 }
                 .keyboardShortcut("b", modifiers: .command)
+
+                Divider()
+
+                Button("上一个对话") {
+                    model.selectPreviousConversation()
+                }
+                .keyboardShortcut(.upArrow, modifiers: .option)
+
+                Button("下一个对话") {
+                    model.selectNextConversation()
+                }
+                .keyboardShortcut(.downArrow, modifiers: .option)
             }
         }
 
