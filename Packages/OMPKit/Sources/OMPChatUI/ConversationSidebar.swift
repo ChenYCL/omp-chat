@@ -17,7 +17,10 @@ public struct ConversationSidebar: View {
     @State private var showLocked = false
     @State private var isLockedUnlocked = false
     @State private var showArchived = false
-
+    @State private var creatingCustomSection = false
+    @State private var customSectionName = ""
+    @State private var renamingSectionID: UUID?
+    @State private var collapsedCustomSections: Set<UUID> = []
     public init() {}
 
     public var body: some View {
@@ -65,15 +68,23 @@ public struct ConversationSidebar: View {
                 newProjectName = ""
             }
         }
-        .alert("重命名项目", isPresented: Binding(
-            get: { renamingProjectID != nil },
-            set: { if !$0 { renamingProjectID = nil } }
+        .alert("新建自定义分区", isPresented: $creatingCustomSection) {
+            TextField("分区名称", text: $customSectionName)
+            Button("取消", role: .cancel) { customSectionName = "" }
+            Button("创建") {
+                _ = model.createCustomSection(name: customSectionName)
+                customSectionName = ""
+            }
+        }
+        .alert("重命名分区", isPresented: Binding(
+            get: { renamingSectionID != nil },
+            set: { if !$0 { renamingSectionID = nil } }
         )) {
-            TextField("项目名称", text: $newProjectName)
-            Button("取消", role: .cancel) { renamingProjectID = nil }
+            TextField("分区名称", text: $customSectionName)
+            Button("取消", role: .cancel) { renamingSectionID = nil }
             Button("保存") {
-                if let id = renamingProjectID { model.renameProject(id, name: newProjectName) }
-                renamingProjectID = nil
+                if let id = renamingSectionID { model.renameCustomSection(id, name: customSectionName) }
+                renamingSectionID = nil
             }
         }
     }
@@ -92,6 +103,10 @@ public struct ConversationSidebar: View {
                 Button("新建项目") {
                     newProjectName = ""
                     creatingProject = true
+                }
+                Button("新建自定义分区") {
+                    customSectionName = ""
+                    creatingCustomSection = true
                 }
                 Button("新建临时对话") {
                     _ = model.newTemporaryConversation()
@@ -189,6 +204,7 @@ public struct ConversationSidebar: View {
                     if filtered.isEmpty { emptyHint }
                 } else {
                     pinnedSection
+                    customSections
                     projectSections
                     ungroupedSection
                     lockedSection
@@ -211,6 +227,50 @@ public struct ConversationSidebar: View {
             if !pinned.isEmpty {
                 sectionHeader("置顶")
                 ForEach(pinned) { row($0) }
+            }
+        }
+    }
+
+    private var customSections: some View {
+        ForEach(model.orderedCustomSections) { custom in
+            let collapsed = collapsedCustomSections.contains(custom.id)
+            Button {
+                if collapsed { collapsedCustomSections.remove(custom.id) } else { collapsedCustomSections.insert(custom.id) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextSecondary)
+                    Text(custom.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Color.ompText)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                Button {
+                    customSectionName = custom.name
+                    renamingSectionID = custom.id
+                } label: {
+                    Label("重命名分区", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    model.deleteCustomSection(custom.id)
+                } label: {
+                    Label("删除分区", systemImage: "trash")
+                }
+            }
+            if !collapsed {
+                ForEach(model.conversations(inCustomSection: custom.id).filter { !$0.isPinned }) { row($0) }
             }
         }
     }

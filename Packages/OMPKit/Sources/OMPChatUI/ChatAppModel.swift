@@ -229,9 +229,6 @@ public final class ChatAppModel {
 
     // MARK: Projects
 
-    public var orderedProjects: [Project] {
-        projects.sorted { $0.order < $1.order }
-    }
 
     public func conversations(in projectID: UUID?) -> [Conversation] {
         sortedConversations.filter { $0.projectID == projectID }
@@ -260,6 +257,53 @@ public final class ChatAppModel {
             persist(conversations[index])
         }
         persistProjects()
+    }
+
+    // MARK: Custom sections (ChatGPT sidebarElectron.customSections)
+
+    public var orderedCustomSections: [Project] {
+        projects.filter(\.isCustomSection).sorted { $0.order < $1.order }
+    }
+
+    public var orderedProjects: [Project] {
+        projects.filter { !$0.isCustomSection }.sorted { $0.order < $1.order }
+    }
+
+    @discardableResult
+    public func createCustomSection(name: String) -> Project {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let section = Project(
+            name: trimmed.isEmpty ? "新分区" : trimmed,
+            order: projects.count,
+            isCustomSection: true
+        )
+        projects.append(section)
+        persistProjects()
+        return section
+    }
+
+    public func renameCustomSection(_ id: UUID, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[index].name = trimmed
+        persistProjects()
+    }
+
+    public func deleteCustomSection(_ id: UUID) {
+        projects.removeAll { $0.id == id }
+        for index in conversations.indices where conversations[index].projectID == id {
+            conversations[index].projectID = nil
+            persist(conversations[index])
+        }
+        persistProjects()
+    }
+
+    public func conversations(inCustomSection sectionID: UUID) -> [Conversation] {
+        sortedConversations.filter { $0.projectID == sectionID }
+    }
+
+    public func moveConversation(_ id: UUID, toCustomSection sectionID: UUID?) {
+        moveConversation(id, to: sectionID)
     }
 
     /// Moves a conversation into a project, or out of one when `projectID` is nil.
