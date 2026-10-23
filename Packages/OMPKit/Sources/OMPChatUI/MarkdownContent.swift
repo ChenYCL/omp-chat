@@ -103,6 +103,7 @@ public struct CodeBlockView: View {
     let code: String
 
     @State private var copied = false
+    @State private var collapsed = false
 
     public init(language: String?, code: String) {
         self.language = language
@@ -119,6 +120,17 @@ public struct CodeBlockView: View {
                     .padding(.vertical, 2)
                     .background(Color.ompFill, in: Capsule())
                 Spacer()
+                Text("\(code.split(separator: "\n", omittingEmptySubsequences: false).count) 行")
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
+                Button {
+                    withAnimation(Theme.Motion.quick) { collapsed.toggle() }
+                } label: {
+                    Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
                 Button {
                     copyToPasteboard(code)
                     copied = true
@@ -137,18 +149,20 @@ public struct CodeBlockView: View {
             .padding(.horizontal, Theme.Spacing.m)
             .padding(.vertical, Theme.Spacing.s)
 
-            Divider()
+            if !collapsed {
+                Divider()
 
-            // Long blocks stay a fixed height and scroll internally instead of
-            // pushing the transcript endlessly (ChatGPT desktop behaviour).
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                Text(code)
-                    .font(Theme.Typography.monospaced)
-                    .textSelection(.enabled)
-                    .padding(Theme.Spacing.m)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Long blocks stay a fixed height and scroll internally instead of
+                // pushing the transcript endlessly (ChatGPT desktop behaviour).
+                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                    Text(code)
+                        .font(Theme.Typography.monospaced)
+                        .textSelection(.enabled)
+                        .padding(Theme.Spacing.m)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 320)
             }
-            .frame(maxHeight: 320)
         }
         .background(Color.ompSecondaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))

@@ -34,6 +34,23 @@ struct OMPChatApp: App {
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!model.isStreaming)
+
+                Divider()
+
+                Button("在对话中查找") {
+                    NotificationCenter.default.post(name: .ompFindInChat, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
+
+                Button("快速切换") {
+                    NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
+
+                Button("切换侧栏") {
+                    NotificationCenter.default.post(name: .ompToggleSidebar, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: .command)
             }
         }
 

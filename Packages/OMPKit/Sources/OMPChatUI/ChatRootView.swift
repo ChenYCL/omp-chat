@@ -9,6 +9,8 @@ import OMPDesign
 public extension Notification.Name {
     static let ompQuickSwitch = Notification.Name("omp.quickSwitch")
     static let ompNewChat = Notification.Name("omp.newChat")
+    static let ompFindInChat = Notification.Name("omp.findInChat")
+    static let ompToggleSidebar = Notification.Name("omp.toggleSidebar")
 }
 
 public struct ChatRootView: View {
@@ -39,6 +41,7 @@ public struct ChatRootView: View {
             .task { await model.bootstrap() }
             .onReceive(NotificationCenter.default.publisher(for: .ompQuickSwitch)) { _ in showSwitcher = true }
             .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in model.newConversation() }
+            .onReceive(NotificationCenter.default.publisher(for: .ompToggleSidebar)) { _ in toggleSidebar() }
         #endif
     }
 
@@ -197,6 +200,9 @@ public struct ChatDetailView: View {
         .navigationTitle(model.selectedConversation?.title ?? "OMP Chat")
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .onReceive(NotificationCenter.default.publisher(for: .ompFindInChat)) { _ in
+            showInChatSearch = true
+        }
         .sheet(isPresented: $showOptions) {
             ConversationOptionsSheet()
                 .environment(model)
