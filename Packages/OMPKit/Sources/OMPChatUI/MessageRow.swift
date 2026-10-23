@@ -680,6 +680,24 @@ struct ImageLightboxSheet: View {
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 12) {
                         Button {
+                            zoom = max(0.5, zoom - 0.25)
+                        } label: {
+                            Image(systemName: "minus.magnifyingglass")
+                        }
+                        .help("缩小")
+                        Text("\(Int(zoom * 100))%")
+                            .font(.system(size: 11).monospacedDigit())
+                            .frame(width: 42)
+                        Button {
+                            zoom = min(4.0, zoom + 0.25)
+                        } label: {
+                            Image(systemName: "plus.magnifyingglass")
+                        }
+                        .help("放大")
+                        Button("适应") { zoom = 1.0 }
+                            .help("恢复原始大小")
+
+                        Button {
                             #if os(macOS)
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.writeObjects([image])
