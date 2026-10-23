@@ -4,6 +4,7 @@ import OMPDesign
 
 public struct ChatTranscriptView: View {
     @Environment(ChatAppModel.self) private var model
+    @State private var showingBatchDeleteConfirmation = false
 
     public init() {}
 
@@ -74,26 +75,57 @@ public struct ChatTranscriptView: View {
         )
     }
 
+    private var allSelected: Bool {
+        guard let messages = model.selectedConversation?.messages, !messages.isEmpty else { return false }
+        return model.selectedMessageIDs.count == messages.count
+    }
+
     private var selectionBar: some View {
         HStack(spacing: 10) {
             Text("已选 \(model.selectedMessageIDs.count) 条")
                 .font(.system(size: 12, weight: .medium))
+
+            Button(allSelected ? "取消全选" : "全选") {
+                if allSelected {
+                    model.selectedMessageIDs = []
+                } else if let messages = model.selectedConversation?.messages {
+                    model.selectedMessageIDs = Set(messages.map(\.id))
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundStyle(Color.accentColor)
+
             Spacer()
+
             Button("复制") {
                 let text = model.selectedConversation?.messages
                     .filter { model.selectedMessageIDs.contains($0.id) }
                     .map(\.concatenatedText)
                     .joined(separator: "\n\n") ?? ""
                 copyToPasteboard(text)
+                AudioFeedback.playSend(enabled: true)
             }
             .buttonStyle(.plain)
             .font(.system(size: 12))
+
             Button("删除", role: .destructive) {
-                model.deleteSelectedMessages()
+                showingBatchDeleteConfirmation = true
             }
             .buttonStyle(.plain)
             .font(.system(size: 12))
             .foregroundStyle(.red)
+            .confirmationDialog(
+                "确定删除选中的 \(model.selectedMessageIDs.count) 条消息吗？",
+                isPresented: $showingBatchDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("删除消息", role: .destructive) {
+                    model.deleteSelectedMessages()
+                }
+                Button("取消", role: .cancel) {}
+            }
+
             Button {
                 model.selectedMessageIDs = []
             } label: {

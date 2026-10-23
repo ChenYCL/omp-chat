@@ -142,6 +142,10 @@ public final class ChatAppModel {
 
     public func key(for providerID: UUID) -> String { apiKeys[providerID] ?? "" }
 
+
+    public var storageDirectoryURL: URL? {
+        (store as? FileConversationStore)?.directoryURL
+    }
     // MARK: Lifecycle
 
     public func bootstrap() async {

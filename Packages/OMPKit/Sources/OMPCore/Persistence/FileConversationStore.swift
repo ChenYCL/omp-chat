@@ -41,8 +41,8 @@ public actor FileConversationStore: ConversationStoring {
         }
     }
 
-    public let directoryURL: URL
-    public var fileURL: URL { directoryURL.appendingPathComponent("workspace.json") }
+    public nonisolated let directoryURL: URL
+    public nonisolated var fileURL: URL { directoryURL.appendingPathComponent("workspace.json") }
 
     private var cache: Snapshot?
     private let encoder: JSONEncoder

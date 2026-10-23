@@ -241,6 +241,13 @@ public struct ProviderSettingsView: View {
         Section("关于") {
             LabeledContent("版本", value: AppInfo.version)
             LabeledContent("存储", value: "Application Support/OMPChat")
+            #if os(macOS)
+            if let dir = model.storageDirectoryURL {
+                Button("在访达中显示数据文件…") {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
+                }
+            }
+            #endif
             Button("清除全部对话") {
                 showingClearConfirmation = true
             }
