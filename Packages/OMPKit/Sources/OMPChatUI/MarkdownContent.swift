@@ -257,11 +257,26 @@ public struct CodeBlockView: View {
                 // Long blocks stay a fixed height and scroll internally instead of
                 // pushing the transcript endlessly (ChatGPT desktop behaviour).
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                    Text(code)
-                        .font(Theme.Typography.monospaced)
-                        .textSelection(.enabled)
-                        .padding(Theme.Spacing.m)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .top, spacing: 10) {
+                        let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
+                        VStack(alignment: .trailing, spacing: 3) {
+                            ForEach(0..<lines.count, id: \.self) { i in
+                                Text("\(i + 1)")
+                                    .font(Theme.Typography.monospaced)
+                                    .foregroundStyle(Color.ompTextTertiary.opacity(0.5))
+                            }
+                        }
+                        .padding(.vertical, Theme.Spacing.m)
+                        .padding(.leading, Theme.Spacing.m)
+
+                        Text(code)
+                            .font(Theme.Typography.monospaced)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                            .padding(.vertical, Theme.Spacing.m)
+                            .padding(.trailing, Theme.Spacing.m)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .frame(maxHeight: 320)
             }
