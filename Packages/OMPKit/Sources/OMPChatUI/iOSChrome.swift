@@ -18,6 +18,7 @@ public struct iOSRootView: View {
     @State private var hostPane: HostPane = .files
     @State private var drawerOpen = false
     @State private var selectedHost = "Mac mini"
+    @State private var showDevicesSheet = false
 
     public init() {}
 
@@ -29,6 +30,7 @@ public struct iOSRootView: View {
     public enum HostPane: String, CaseIterable {
         case files = "文件"
         case terminal = "终端"
+        case scripts = "脚本"
         case config = "配置"
     }
 
@@ -72,6 +74,9 @@ public struct iOSRootView: View {
         .sheet(isPresented: Binding(get: { model.showSettings }, set: { model.showSettings = $0 })) {
             ProviderSettingsView()
                 .environment(model)
+        }
+        .sheet(isPresented: $showDevicesSheet) {
+            PaseoDevicesSheet(selectedDeviceName: $selectedHost)
         }
         .task { await model.bootstrap() }
     }
@@ -130,10 +135,8 @@ public struct iOSRootView: View {
                     }
                 }
             } else {
-                Menu {
-                    Button("Mac mini") { selectedHost = "Mac mini" }
-                    Button("MacBook") { selectedHost = "MacBook" }
-                    Button("win11") { selectedHost = "win11" }
+                Button {
+                    showDevicesSheet = true
                 } label: {
                     HStack(spacing: 4) {
                         Text(selectedHost)
@@ -146,6 +149,7 @@ public struct iOSRootView: View {
                     .padding(.vertical, 7)
                     .background(Color.ompFill, in: Capsule())
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)
@@ -622,6 +626,8 @@ public struct PaseoHostScreen: View {
                     PaseoFilesPane(directory: $directory)
                 case .terminal:
                     PaseoTerminalPane(directory: directory)
+                case .scripts:
+                    PaseoScriptsPane(selectedHost: selectedHost)
                 case .config:
                     ProviderSettingsEmbedded()
                 }
@@ -664,9 +670,11 @@ public struct PaseoHostScreen: View {
         switch pane {
         case .files: "folder"
         case .terminal: "terminal"
+        case .scripts: "play.circle"
         case .config: "slider.horizontal.3"
         }
     }
+
 }
 
 // MARK: - Files Pane (Frame 60s)
@@ -899,6 +907,121 @@ struct PaseoTerminalPane: View {
         }
     }
 }
+
+// MARK: - Scripts Pane (Paseo Workspace Scripts)
+
+struct PaseoScriptsPane: View {
+    let selectedHost: String
+    @State private var scripts: [ScriptItem] = [
+        ScriptItem(name: "dev", command: "bun run dev", desc: "启动本地开发热重载服务器", port: "3000", status: "运行中"),
+        ScriptItem(name: "build", command: "swift build -c release", desc: "编译全平台生产版本二进制", port: nil, status: "就绪"),
+        ScriptItem(name: "test", command: "swift test --jobs 4", desc: "运行全套自动化单元测试", port: nil, status: "通过"),
+        ScriptItem(name: "sync", command: "paseo project sync", desc: "同步远程主机工作区变更", port: nil, status: "就绪"),
+    ]
+    @State private var outputLog: String
+
+    init(selectedHost: String) {
+        self.selectedHost = selectedHost
+        _outputLog = State(initialValue: "已连接到主机 \(selectedHost)。运行环境就绪。\n> bun run dev\n[ready] Next.js dev server listening on http://localhost:3000\n")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("工作区脚本 (Paseo Scripts)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+                Spacer()
+                Text(selectedHost)
+                    .font(.system(size: 11).monospaced())
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.ompFill, in: Capsule())
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            Divider()
+
+            List {
+                Section("可用脚本") {
+                    ForEach($scripts) { $script in
+                        HStack(spacing: 12) {
+                            Image(systemName: script.status == "运行中" ? "play.circle.fill" : "terminal")
+                                .font(.system(size: 16))
+                                .foregroundStyle(script.status == "运行中" ? Color.green : Color.ompTextSecondary)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(script.name)
+                                        .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+                                    Text(script.command)
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                }
+                                Text(script.desc)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.ompTextSecondary)
+                            }
+
+                            Spacer()
+
+                            if let port = script.port {
+                                Text(":\(port)")
+                                    .font(.system(size: 10).monospaced())
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.accentColor.opacity(0.1), in: Capsule())
+                            }
+
+                            Button {
+                                if script.status == "运行中" {
+                                    script.status = "已停止"
+                                    outputLog += "\n[stop] 脚本 \(script.name) 已停止。\n"
+                                } else {
+                                    script.status = "运行中"
+                                    outputLog += "\n[start] 启动 \(script.command)...\n"
+                                }
+                            } label: {
+                                Image(systemName: script.status == "运行中" ? "stop.fill" : "play.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(script.status == "运行中" ? Color.red : Color.ompText)
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.ompFill, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
+                Section("输出日志 (Live Logs)") {
+                    Text(outputLog)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.ompCanvas)
+        }
+    }
+
+    struct ScriptItem: Identifiable {
+        let id = UUID()
+        var name: String
+        var command: String
+        var desc: String
+        var port: String?
+        var status: String
+    }
+}
+
 
 struct ProviderSettingsEmbedded: View {
     @Environment(ChatAppModel.self) private var model

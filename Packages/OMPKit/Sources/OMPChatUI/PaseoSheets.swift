@@ -425,6 +425,162 @@ public struct MCPPluginsSheet: View {
 }
 
 
+// MARK: - 6. Controllable Devices Sheet (可控设备 - Frame 45s)
+
+public struct PaseoDevicesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedDeviceName: String
+    @State private var bottomTab = 0
+
+    public init(selectedDeviceName: Binding<String>) {
+        _selectedDeviceName = selectedDeviceName
+    }
+
+    private let devices: [(name: String, platform: String, icon: String, gradient: [Color], status: String, ip: String)] = [
+        ("Mac mini", "macOS", "applelogo", [Color.orange.opacity(0.7), Color.pink.opacity(0.5)], "在线", "10.110.18.30"),
+        ("macbook", "macOS", "applelogo", [Color.blue.opacity(0.7), Color.teal.opacity(0.5)], "在线", "192.168.1.124"),
+        ("win11", "Windows", "window.casement", [Color.teal.opacity(0.7), Color.cyan.opacity(0.5)], "在线", "192.168.1.188"),
+    ]
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Text("在线设备 3")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Color.ompTextSecondary)
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.ompTextSecondary)
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Image(systemName: "rectangle.badge.checkmark")
+                                    .font(.system(size: 12))
+                                Text("全部设备")
+                                    .font(.system(size: 12))
+                            }
+                            .foregroundStyle(Color.ompTextTertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                        ForEach(devices, id: \.name) { dev in
+                            Button {
+                                selectedDeviceName = dev.name
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 14) {
+                                    // Screen Thumbnail Preview
+                                    ZStack(alignment: .topLeading) {
+                                        LinearGradient(colors: dev.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+                                            .frame(width: 96, height: 62)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                        // Status badge
+                                        HStack(spacing: 3) {
+                                            Circle()
+                                                .fill(Color.green)
+                                                .frame(width: 5, height: 5)
+                                            Text(dev.status)
+                                                .font(.system(size: 9, weight: .semibold))
+                                                .foregroundStyle(.white)
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.black.opacity(0.35), in: Capsule())
+                                        .padding(5)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(dev.name)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(Color.ompText)
+                                        HStack(spacing: 4) {
+                                            Image(systemName: dev.icon)
+                                                .font(.system(size: 11))
+                                            Text(dev.ip)
+                                                .font(.system(size: 11).monospacedDigit())
+                                        }
+                                        .foregroundStyle(Color.accentColor)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                }
+                                .padding(10)
+                                .background(
+                                    selectedDeviceName == dev.name
+                                        ? Color.ompFill
+                                        : Color.ompCard,
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(
+                                            selectedDeviceName == dev.name
+                                                ? Color.accentColor.opacity(0.4)
+                                                : Color.ompBorder.opacity(0.6),
+                                            lineWidth: 1
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
+                        }
+                    }
+                    .padding(.bottom, 20)
+                }
+
+                // Bottom Tab Bar (Frame 45s): [ 我的设备 | 远程协助 | 我的 ]
+                HStack(spacing: 0) {
+                    bottomTabItem(index: 0, icon: "macbook.and.iphone", title: "我的设备")
+                    bottomTabItem(index: 1, icon: "person.crop.rectangle", title: "远程协助")
+                    bottomTabItem(index: 2, icon: "person", title: "我的")
+                }
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
+            }
+            .background(Color.ompCanvas)
+            .navigationTitle("可控设备")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 480, minHeight: 460)
+        #endif
+    }
+
+    private func bottomTabItem(index: Int, icon: String, title: String) -> some View {
+        Button {
+            bottomTab = index
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 15))
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(bottomTab == index ? Color.accentColor : Color.ompTextSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(bottomTab == index ? Color.accentColor.opacity(0.12) : Color.clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+
 private func ConversationRow_relativeTime(_ date: Date) -> String {
     let seconds = Date().timeIntervalSince(date)
     switch seconds {
