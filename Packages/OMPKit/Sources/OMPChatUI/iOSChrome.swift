@@ -190,8 +190,8 @@ struct PaseoDrawer: View {
 
     @State private var hostExpanded = true
     @State private var search = ""
+    @State private var showSearch = false
     @State private var activeSheet: ActiveSheet?
-
     enum ActiveSheet: Identifiable {
         case projects, history, schedules, usage
         var id: Self { self }
@@ -205,19 +205,42 @@ struct PaseoDrawer: View {
                     .foregroundStyle(Color.ompText)
                 Spacer()
                 Button {
-                    // search action
+                    withAnimation(Theme.Motion.quick) { showSearch.toggle() }
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Color.ompText)
+                        .foregroundStyle(showSearch ? Color.accentColor : Color.ompText)
                         .frame(width: 32, height: 32)
-                        .background(Color.ompFill, in: Circle())
+                        .background(showSearch ? Color.accentColor.opacity(0.12) : Color.ompFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.top, 54)
             .padding(.bottom, 14)
+            if showSearch {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    TextField("搜索会话…", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                    if !search.isEmpty {
+                        Button { search = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.ompTextTertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+            }
 
             // Top 4 Menu Items
             VStack(spacing: 2) {
@@ -287,7 +310,7 @@ struct PaseoDrawer: View {
 
                     // Session Thread Rows
                     if hostExpanded {
-                        ForEach(model.sortedConversations) { conv in
+                        ForEach(filteredConversations) { conv in
                             Button {
                                 onSelectConversation(conv.id)
                             } label: {
@@ -375,6 +398,14 @@ struct PaseoDrawer: View {
             case .usage:
                 PaseoUsageSheet().environment(model)
             }
+        }
+    }
+
+    private var filteredConversations: [Conversation] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return model.sortedConversations }
+        return model.sortedConversations.filter {
+            $0.title.lowercased().contains(q) || $0.lastMessagePreview.lowercased().contains(q)
         }
     }
 
@@ -723,10 +754,10 @@ public struct PaseoHostScreen: View {
 struct PaseoFilesPane: View {
     @Binding var directory: URL
     @State private var viewingURL: IdentifiableURL?
-    private let bookmarks: [(icon: String, name: String, path: String)] = [
+    @State private var bookmarks: [(icon: String, name: String, path: String)] = [
         ("folder", "根目录", "/"),
         ("house", "个人目录", NSHomeDirectory()),
-        ("internaldrive", "根目录", "/System/Volumes/Data"),
+        ("internaldrive", "系统卷", "/System/Volumes/Data"),
     ]
 
     var body: some View {
@@ -755,7 +786,10 @@ struct PaseoFilesPane: View {
                     }
 
                     Button {
-                        // add bookmark
+                        let name = directory.lastPathComponent.isEmpty ? "根目录" : directory.lastPathComponent
+                        if !bookmarks.contains(where: { $0.path == directory.path }) {
+                            bookmarks.append(("folder.fill", name, directory.path))
+                        }
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .bold))
@@ -910,7 +944,9 @@ struct PaseoTerminalPane: View {
                 Spacer()
 
                 Button {
-                    // add session
+                    lines.append("> 会话已就绪")
+                    lines.append("> ls")
+                    input = ""
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 12))
@@ -918,14 +954,22 @@ struct PaseoTerminalPane: View {
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    // options
+                Menu {
+                    Button("清屏 (Clear)") {
+                        lines = []
+                    }
+                    Button("复制控制台输出") {
+                        #if os(macOS)
+                        copyToPasteboard(lines.joined(separator: "\n"))
+                        #else
+                        UIPasteboard.general.string = lines.joined(separator: "\n")
+                        #endif
+                    }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.ompText)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
