@@ -77,43 +77,18 @@ public struct ChatTranscriptView: View {
             setupPrompt
         } else {
             VStack(spacing: 0) {
-                OMPMark(size: 54)
-                    .padding(.bottom, 18)
-                Text("今天想聊点什么？")
-                    .font(Theme.Typography.title)
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(.bottom, 20)
+                (Text("今天想在 ")
+                    + Text(model.activeProvider?.name ?? "OMP Chat").underline()
+                    + Text(" 里聊些什么？"))
+                    .font(.system(size: 24, weight: .medium))
                     .foregroundStyle(Color.ompText)
-                    .padding(.bottom, 6)
-                Text("当前模型 \(model.activeModel?.displayName ?? "未选择") · 输入 / 调用快捷模板")
-                    .font(Theme.Typography.secondary)
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .padding(.bottom, 26)
-
-                VStack(spacing: 8) {
-                    ForEach(Self.suggestions, id: \.self) { suggestion in
-                        Button {
-                            model.draft = suggestion
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(suggestion)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(Color.ompText)
-                                Spacer()
-                                Image(systemName: "arrow.up.left")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(Color.ompTextTertiary)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: 460)
+                    .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 64)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
     }
 
@@ -141,15 +116,8 @@ public struct ChatTranscriptView: View {
             .buttonStyle(.borderedProminent)
             .clipShape(Capsule())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 64)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
-
-    private static let suggestions = [
-        "用三句话解释 Swift 的 actor 隔离",
-        "把这段需求拆成可执行的开发任务",
-        "帮我审查这段代码的并发安全风险",
-    ]
 }
 
 public struct ErrorBanner: View {

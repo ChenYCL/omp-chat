@@ -15,38 +15,27 @@ public struct ChatRootView: View {
     public init() {}
 
     public var body: some View {
-        @Bindable var model = model
-        NavigationSplitView {
-            ConversationSidebar()
-                #if os(macOS)
-                .navigationSplitViewColumnWidth(
-                    min: Theme.Layout.sidebarMin,
-                    ideal: Theme.Layout.sidebarIdeal,
-                    max: Theme.Layout.sidebarMax
-                )
-                #endif
-        } detail: {
-            ChatDetailView(onQuickSwitch: { showSwitcher = true })
-        }
-        #if os(macOS)
-        .toolbar(.hidden, for: .windowToolbar)
+        @Bindable var bindable = model
+        #if os(iOS)
+        iOSRootView()
+            .sheet(isPresented: $bindable.showSettings) {
+                ProviderSettingsView().environment(model)
+            }
+            .preferredColorScheme(colorScheme)
+            .task { await model.bootstrap() }
+        #else
+        macOSRoot
+            .sheet(isPresented: $bindable.showSettings) {
+                ProviderSettingsView().environment(model)
+            }
+            .sheet(isPresented: $showSwitcher) {
+                QuickSwitcherView().environment(model)
+            }
+            .preferredColorScheme(colorScheme)
+            .task { await model.bootstrap() }
+            .onReceive(NotificationCenter.default.publisher(for: .ompQuickSwitch)) { _ in showSwitcher = true }
+            .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in model.newConversation() }
         #endif
-        .sheet(isPresented: $model.showSettings) {
-            ProviderSettingsView()
-                .environment(model)
-        }
-        .sheet(isPresented: $showSwitcher) {
-            QuickSwitcherView()
-                .environment(model)
-        }
-        .preferredColorScheme(colorScheme)
-        .task { await model.bootstrap() }
-        .onReceive(NotificationCenter.default.publisher(for: .ompQuickSwitch)) { _ in
-            showSwitcher = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in
-            model.newConversation()
-        }
     }
 
     private var colorScheme: ColorScheme? {
@@ -56,7 +45,77 @@ public struct ChatRootView: View {
         case .dark: .dark
         }
     }
+
+    // MARK: - macOS (Codex-style: icon rail + sidebar + detail)
+
+    #if os(macOS)
+    private var macOSRoot: some View {
+        HStack(spacing: 0) {
+            IconRail()
+            Divider().opacity(0.6)
+            ConversationSidebar()
+                .frame(width: Theme.Layout.sidebarIdeal)
+            Divider().opacity(0.6)
+            ChatDetailView(onQuickSwitch: { showSwitcher = true })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color.ompCanvas)
+    }
+    #endif
 }
+
+#if os(macOS)
+/// Narrow icon rail like Codex/ChatGPT desktop.
+struct IconRail: View {
+    @Environment(ChatAppModel.self) private var model
+    @State private var showSwitcher = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            OMPMark(size: 22)
+                .padding(.top, 30)
+                .padding(.bottom, 8)
+
+            railButton("square.and.pencil", help: "新聊天 (⌘N)", active: false) {
+                NotificationCenter.default.post(name: .ompNewChat, object: nil)
+            }
+            railButton("clock", help: "最近对话") {
+                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+            }
+            railButton("magnifyingglass", help: "搜索 (⌘K)") {
+                NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
+            }
+            railButton("arrow.triangle.branch", help: "分支当前对话") {
+                if let selected = model.selectedConversation, let last = selected.messages.last {
+                    _ = model.branch(from: last.id)
+                }
+            }
+
+            Spacer()
+
+            railButton("gearshape", help: "设置 (⌘,)") {
+                model.showSettings = true
+            }
+            .padding(.bottom, 12)
+        }
+        .padding(.horizontal, 10)
+        .frame(width: 52)
+    }
+
+    private func railButton(_ symbol: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(active ? Color.ompText : Color.ompTextSecondary)
+                .frame(width: 32, height: 32)
+                .background(active ? Color.ompSelection : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+#endif
 
 public struct ChatDetailView: View {
     @Environment(ChatAppModel.self) private var model
@@ -91,35 +150,6 @@ public struct ChatDetailView: View {
         #if os(iOS)
         .navigationTitle(model.selectedConversation?.title ?? "OMP Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Menu {
-                    Button {
-                        model.newConversation()
-                    } label: {
-                        Label("新建对话", systemImage: "square.and.pencil")
-                    }
-                    Button {
-                        model.regenerateLast()
-                    } label: {
-                        Label("重新生成", systemImage: "arrow.clockwise")
-                    }
-                    Button {
-                        prepareExport()
-                    } label: {
-                        Label("导出 Markdown", systemImage: "square.and.arrow.up")
-                    }
-                    Divider()
-                    Button {
-                        model.showSettings = true
-                    } label: {
-                        Label("设置", systemImage: "gearshape")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
-        }
         #endif
         .fileExporter(
             isPresented: $showExporter,
@@ -167,7 +197,8 @@ public struct ChatDetailView: View {
             }
         }
         .padding(.horizontal, 18)
-        .frame(height: 46)
+        .padding(.top, 28)
+        .frame(height: 60)
         .background(Color.ompCanvas)
         .contentShape(Rectangle())
     }
@@ -226,7 +257,7 @@ struct ContextBadge: View {
 }
 
 struct MarkdownDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
+    nonisolated static var readableContentTypes: [UTType] { [.plainText] }
 
     var text: String
 

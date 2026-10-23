@@ -38,9 +38,8 @@ targets:
         INFOPLIST_FILE: Apps/macOS/Info.plist
         CODE_SIGN_ENTITLEMENTS: Apps/macOS/OMPChat.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 4C645LPFNT
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
 
@@ -60,6 +59,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ace.ompchat.ios
         INFOPLIST_FILE: Apps/iOS/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 4C645LPFNT
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO

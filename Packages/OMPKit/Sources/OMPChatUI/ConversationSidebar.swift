@@ -59,16 +59,19 @@ public struct ConversationSidebar: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            OMPMark(size: 22)
+            OMPMark(size: 20)
             Text("OMP Chat")
-                .font(Theme.Typography.headline)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.ompText)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Color.ompTextTertiary)
             Spacer()
             Button {
                 model.newConversation()
             } label: {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(Color.ompTextSecondary)
                     .frame(width: 26, height: 26)
                     .background(Color.ompHover, in: Circle())
@@ -77,8 +80,8 @@ public struct ConversationSidebar: View {
             .help("新建对话 (⌘N)")
         }
         .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.top, 30)
+        .padding(.bottom, 6)
     }
 
     private var searchField: some View {

@@ -129,6 +129,33 @@ public struct ComposerBar: View {
         }
     }
 
+    private var contextChips: some View {
+        HStack(spacing: 6) {
+            if let provider = model.activeProvider {
+                chip("folder", provider.name)
+            }
+            if let modelID = model.activeModel?.id {
+                chip("cpu", modelID)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: Theme.Layout.transcriptMax)
+    }
+
+    private func chip(_ symbol: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .font(.system(size: 9))
+            Text(text)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Color.ompTextSecondary)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(Color.ompFill, in: Capsule())
+    }
+
     private var canSend: Bool {
         !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.draftAttachments.isEmpty
     }
