@@ -13,7 +13,8 @@ public struct ProviderSettingsView: View {
     @State private var showingClearConfirmation = false
     @State private var section: SettingsSection = .general
     @State private var sectionQuery = ""
-    public init() {}
+    @State private var archiveQuery = ""
+    @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
         case general, appearance, voice, archived, shortcuts, providers, about
@@ -41,6 +42,8 @@ public struct ProviderSettingsView: View {
             }
         }
     }
+
+    public init() {}
 
     public var body: some View {
         Group {
@@ -207,14 +210,39 @@ public struct ProviderSettingsView: View {
     }
 
     private var archivedContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.archivedConversations.isEmpty {
-                Text("没有已归档的聊天")
+        let items = filteredArchived
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    TextField("搜索已归档的聊天", text: $archiveQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8))
+
+                if !model.projects.isEmpty {
+                    Picker("项目", selection: $archiveProjectFilter) {
+                        Text("全部项目").tag(UUID?.none)
+                        ForEach(model.orderedProjects) { project in
+                            Text(project.name).tag(Optional(project.id))
+                        }
+                    }
+                    .frame(width: 150)
+                }
+            }
+
+            if items.isEmpty {
+                Text(model.archivedConversations.isEmpty ? "没有已归档的聊天" : "没有匹配的归档聊天")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.ompTextSecondary)
                     .padding(.vertical, 24)
             } else {
-                ForEach(model.archivedConversations) { conversation in
+                ForEach(items) { conversation in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(conversation.title)
@@ -235,6 +263,16 @@ public struct ProviderSettingsView: View {
                     Divider()
                 }
             }
+        }
+    }
+
+    private var filteredArchived: [Conversation] {
+        let q = archiveQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return model.archivedConversations.filter { conversation in
+            if let filter = archiveProjectFilter, conversation.projectID != filter { return false }
+            guard !q.isEmpty else { return true }
+            return conversation.title.localizedCaseInsensitiveContains(q)
+                || conversation.lastMessagePreview.localizedCaseInsensitiveContains(q)
         }
     }
 
