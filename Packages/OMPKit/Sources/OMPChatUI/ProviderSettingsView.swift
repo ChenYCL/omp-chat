@@ -321,7 +321,8 @@ struct ProviderEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: ProviderDraft
     @State private var saving = false
-
+    @State private var testing = false
+    @State private var testResult: (success: Bool, message: String, latencyMs: Int?)? = nil
     var body: some View {
         NavigationStack {
             Form {
@@ -370,6 +371,39 @@ struct ProviderEditorSheet: View {
                     Text("凭据")
                 } footer: {
                     Text("仅保存在本机钥匙串。留空表示该供应商无需 Key（如本地 Ollama）。")
+                }
+
+                Section("网络体检与延迟") {
+                    Button {
+                        testConnection()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if testing {
+                                ProgressView().controlSize(.small)
+                                Text("正在测试连接…")
+                            } else {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                Text("测试连接与延迟")
+                            }
+                        }
+                    }
+                    .disabled(testing || draft.profile == nil)
+
+                    if let result = testResult {
+                        HStack {
+                            Image(systemName: result.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(result.success ? Color.green : Color.red)
+                            Text(result.message)
+                                .font(.system(size: 12))
+                                .foregroundStyle(result.success ? Color.ompText : Color.red)
+                            Spacer()
+                            if let latency = result.latencyMs {
+                                Text("\(latency) ms")
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
                 }
 
                 Section("高级") {
@@ -431,6 +465,33 @@ struct ProviderEditorSheet: View {
             }
             saving = false
             dismiss()
+        }
+    }
+
+    private func testConnection() {
+        guard let profile = draft.profile else { return }
+        testing = true
+        testResult = nil
+        let apiKey = draft.apiKey
+        let start = Date()
+
+        Task {
+            do {
+                let adapter = ProviderFactory.makeProvider(profile: profile, apiKey: apiKey)
+                let models = try await adapter.fetchModels()
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                await MainActor.run {
+                    testing = false
+                    testResult = (true, "连接成功，探测到 \(models.count) 个可用模型", ms)
+                    AudioFeedback.playComplete(enabled: true)
+                }
+            } catch {
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                await MainActor.run {
+                    testing = false
+                    testResult = (false, "连接失败: \(error.localizedDescription)", ms)
+                }
+            }
         }
     }
 }

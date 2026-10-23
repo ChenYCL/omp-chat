@@ -57,5 +57,33 @@ public struct ProviderPreset: Identifiable, Hashable, Sendable {
             suggestedModel: "llama3.1",
             note: "本地服务，无需 API Key"
         ),
+        ProviderPreset(
+            name: "SiliconFlow 硅基流动",
+            kind: .openAICompatible,
+            baseURL: URL(string: "https://api.siliconflow.cn/v1")!,
+            suggestedModel: "deepseek-ai/DeepSeek-V3",
+            note: "聚合大量开源模型与极速推理"
+        ),
+        ProviderPreset(
+            name: "Groq 极速",
+            kind: .openAICompatible,
+            baseURL: URL(string: "https://api.groq.com/openai/v1")!,
+            suggestedModel: "llama-3.3-70b-versatile",
+            note: "超高每秒 token 吞吐速度"
+        ),
+        ProviderPreset(
+            name: "Moonshot Kimi",
+            kind: .openAICompatible,
+            baseURL: URL(string: "https://api.moonshot.cn/v1")!,
+            suggestedModel: "moonshot-v1-8k",
+            note: "月之暗面长文本模型"
+        ),
+        ProviderPreset(
+            name: "智谱 GLM",
+            kind: .openAICompatible,
+            baseURL: URL(string: "https://open.bigmodel.cn/api/paas/v4")!,
+            suggestedModel: "glm-4-plus",
+            note: "智谱开放平台 API"
+        ),
     ]
 }
