@@ -716,17 +716,28 @@ public struct FileViewerSheet: View {
                     .textSelection(.enabled)
             }
             .background(Color.ompCanvas)
-            .navigationTitle(url.lastPathComponent)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(url.lastPathComponent)
+                            .font(.system(size: 13, weight: .semibold))
+                        let lines = content.split(separator: "\n").count
+                        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? content.utf8.count
+                        Text("\(lines) 行 · \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         copyToPasteboard(content)
+                        AudioFeedback.playSend(enabled: true)
                         copied = true
                         Task {
                             try? await Task.sleep(for: .seconds(1.2))

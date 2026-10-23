@@ -302,13 +302,30 @@ public struct CodeBlockView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                Button {
-                    copyToPasteboard(code)
-                    AudioFeedback.playSend(enabled: true)
-                    copied = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(1.2))
-                        copied = false
+                Menu {
+                    Button {
+                        copyToPasteboard(code)
+                        AudioFeedback.playSend(enabled: true)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.2))
+                            copied = false
+                        }
+                    } label: {
+                        Label("复制代码文本", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        let lang = language ?? ""
+                        let md = "```\(lang)\n\(code)\n```"
+                        copyToPasteboard(md)
+                        AudioFeedback.playSend(enabled: true)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.2))
+                            copied = false
+                        }
+                    } label: {
+                        Label("复制为 Markdown 代码块", systemImage: "doc.plaintext")
                     }
                 } label: {
                     Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "doc.on.doc")
@@ -316,7 +333,8 @@ public struct CodeBlockView: View {
                         .foregroundStyle(copied ? Color.green : Color.secondary)
                         .labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 if isRenderable {
                     Button {
                         showingPreview = true
