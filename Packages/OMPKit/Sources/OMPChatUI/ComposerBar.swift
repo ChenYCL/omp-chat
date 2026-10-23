@@ -434,10 +434,16 @@ public struct ComposerBar: View {
                     Button {
                         model.setModel(descriptor)
                     } label: {
+                        let tag = [
+                            descriptor.capabilities.thinking ? "🧠 思考" : nil,
+                            descriptor.capabilities.vision ? "👁 视觉" : nil,
+                            descriptor.limits.contextWindow.map { TokenFormat.compact($0) }
+                        ].compactMap { $0 }.joined(separator: " · ")
+                        let suffix = tag.isEmpty ? "" : " (\(tag))"
                         if descriptor.id == model.activeModel?.id {
-                            Label(descriptor.displayName, systemImage: "checkmark")
+                            Label(descriptor.displayName + suffix, systemImage: "checkmark")
                         } else {
-                            Text(descriptor.displayName)
+                            Text(descriptor.displayName + suffix)
                         }
                     }
                 }

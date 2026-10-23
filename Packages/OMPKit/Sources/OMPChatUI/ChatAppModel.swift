@@ -326,6 +326,7 @@ public final class ChatAppModel {
 
         conversation.messages.append(ChatMessage(role: .user, parts: parts, replyToID: replyingTo?.id))
         replyingTo = nil
+        AudioFeedback.playSend()
         if conversation.title == "新对话" {
             let seed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             conversation.title = seed.isEmpty ? "图片消息" : String(seed.prefix(28))
@@ -620,6 +621,9 @@ public final class ChatAppModel {
                     message.errorText = "响应被内容过滤器拦截"
                 }
             }
+        }
+        if failure == nil && !cancelled {
+            AudioFeedback.playComplete()
         }
         isStreaming = false
         streamingConversationID = nil
