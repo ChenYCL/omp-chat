@@ -560,6 +560,7 @@ public struct StreamingCaret: View {
 public struct MediaAttachmentView: View {
     private let ref: MediaRef
     private let library: MediaLibrary
+    @State private var showingLightbox = false
 
     public init(ref: MediaRef, library: MediaLibrary) {
         self.ref = ref
@@ -569,11 +570,24 @@ public struct MediaAttachmentView: View {
     public var body: some View {
         Group {
             if ref.kind == .image, let image = PlatformImage.load(at: library.url(for: ref)) {
-                Image(platformImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 300, maxHeight: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+                Button {
+                    showingLightbox = true
+                } label: {
+                    Image(platformImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 320, maxHeight: 320)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
+                                .strokeBorder(Color.ompBorder.opacity(0.8), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.06), radius: 6, y: 2)
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showingLightbox) {
+                    ImageLightboxSheet(image: image, fileURL: library.url(for: ref))
+                }
             } else {
                 Label(ref.originalName ?? ref.relativePath, systemImage: icon)
                     .font(Theme.Typography.caption)
@@ -620,3 +634,96 @@ extension Image {
         #endif
     }
 }
+
+/// Fullscreen zoomable lightbox for attachments matching ChatGPT Desktop
+struct ImageLightboxSheet: View {
+    let image: PlatformImageType
+    let fileURL: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var saved = false
+    @State private var copied = false
+    @State private var zoom: CGFloat = 1.0
+
+    init(image: PlatformImageType, fileURL: URL) {
+        self.image = image
+        self.fileURL = fileURL
+    }
+
+    public var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.opacity(0.92).ignoresSafeArea()
+
+                Image(platformImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(zoom)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { val in zoom = max(0.8, min(4.0, val)) }
+                    )
+                    .padding(24)
+            }
+            .navigationTitle(fileURL.lastPathComponent)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                        .foregroundStyle(.white)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    HStack(spacing: 12) {
+                        Button {
+                            #if os(macOS)
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.writeObjects([image])
+                            #else
+                            UIPasteboard.general.image = image
+                            #endif
+                            copied = true
+                            AudioFeedback.playSend(enabled: true)
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.2))
+                                copied = false
+                            }
+                        } label: {
+                            Label(copied ? "已复制" : "复制图片", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        }
+
+                        Button {
+                            saveImage()
+                        } label: {
+                            Label(saved ? "已保存" : "保存到本地", systemImage: saved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                        }
+                    }
+                    .foregroundStyle(.white)
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 780, minHeight: 560)
+        #endif
+    }
+
+    private func saveImage() {
+        #if os(macOS)
+        if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            let target = downloads.appendingPathComponent(fileURL.lastPathComponent)
+            try? FileManager.default.copyItem(at: fileURL, to: target)
+            saved = true
+            AudioFeedback.playComplete(enabled: true)
+        }
+        #else
+        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+        saved = true
+        AudioFeedback.playComplete(enabled: true)
+        #endif
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            saved = false
+        }
+    }
+}
+
