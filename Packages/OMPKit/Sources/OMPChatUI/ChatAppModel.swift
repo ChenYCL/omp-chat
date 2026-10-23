@@ -380,7 +380,11 @@ public final class ChatAppModel {
 
     public func regenerateLast() {
         guard !isStreaming, var conversation = selectedConversation else { return }
-        if conversation.messages.last?.role == .assistant {
+        if let last = conversation.messages.last, last.role == .assistant {
+            conversation.alternativeReplies.append(last)
+            if conversation.alternativeReplies.count > 5 {
+                conversation.alternativeReplies.removeFirst(conversation.alternativeReplies.count - 5)
+            }
             conversation.messages.removeLast()
         }
         guard conversation.messages.last?.role == .user else { return }
@@ -389,6 +393,26 @@ public final class ChatAppModel {
         persist(conversation)
         Task { await startReply(conversationID: conversation.id) }
     }
+
+    /// Swaps the current assistant reply with a previously regenerated one.
+    public func cycleReply(forward: Bool) {
+        guard var conversation = selectedConversation,
+              !conversation.alternativeReplies.isEmpty,
+              let current = conversation.messages.last, current.role == .assistant else { return }
+        if forward {
+            let next = conversation.alternativeReplies.removeFirst()
+            conversation.alternativeReplies.append(current)
+            conversation.messages[conversation.messages.count - 1] = next
+        } else {
+            let previous = conversation.alternativeReplies.removeLast()
+            conversation.alternativeReplies.insert(current, at: 0)
+            conversation.messages[conversation.messages.count - 1] = previous
+        }
+        conversation.updatedAt = Date()
+        replace(conversation)
+        persist(conversation)
+    }
+
 
     // MARK: - Message actions
 

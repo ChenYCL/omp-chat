@@ -242,6 +242,13 @@ public struct ChatDetailView: View {
                let usage = model.contextUsage(conversation) {
                 ContextBadge(used: usage.used, limit: usage.limit)
             }
+            if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
+                let tokens = conversation.messages.compactMap(\.usage).reduce(0) { $0 + $1.totalTokens }
+                Text("\(conversation.messages.count) 条\(tokens > 0 ? " · \(TokenFormat.compact(tokens)) tok" : "")")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
+
 
             Spacer()
 

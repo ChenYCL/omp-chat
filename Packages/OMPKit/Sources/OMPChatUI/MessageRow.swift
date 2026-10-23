@@ -138,6 +138,7 @@ public struct MessageRow: View {
             VStack(alignment: .leading, spacing: Theme.Spacing.s) {
                 thinkingSection
                 operationSection
+                replyVersionPicker
                 ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
                     partView(part)
                 }
@@ -161,11 +162,42 @@ public struct MessageRow: View {
         let calls = message.parts.compactMap { part -> ToolCall? in
             if case .toolCall(let call) = part { call } else { nil }
         }
+
         let results = message.parts.compactMap { part -> ToolResult? in
             if case .toolResult(let result) = part { result } else { nil }
         }
         if !calls.isEmpty {
             OperationCard(calls: calls, results: results)
+        }
+    }
+
+    /// Shows `< n/n >` when the last reply has regenerated alternatives.
+    @ViewBuilder
+    private var replyVersionPicker: some View {
+        if message.role == .assistant,
+           let conversation = model.selectedConversation,
+           conversation.messages.last?.id == message.id,
+           !conversation.alternativeReplies.isEmpty {
+            let total = conversation.alternativeReplies.count + 1
+            HStack(spacing: 4) {
+                Button {
+                    model.cycleReply(forward: false)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                Text("\(total)/\(total)")
+                    .font(.system(size: 10).monospacedDigit())
+                Button {
+                    model.cycleReply(forward: true)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(Color.ompTextSecondary)
         }
     }
 
