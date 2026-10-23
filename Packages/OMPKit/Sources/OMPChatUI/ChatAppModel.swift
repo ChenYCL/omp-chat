@@ -22,12 +22,25 @@ public final class ChatAppModel {
     public private(set) var bootstrapped = false
 
     public var selectedConversationID: UUID? {
+        willSet {
+            if let oldID = selectedConversationID {
+                draftsByConversation[oldID] = draft
+                attachmentsByConversation[oldID] = draftAttachments
+            }
+        }
         didSet {
-            if let id = selectedConversationID, let index = conversations.firstIndex(where: { $0.id == id }) {
-                if conversations[index].hasUnread {
+            if let id = selectedConversationID {
+                draft = draftsByConversation[id] ?? ""
+                draftAttachments = attachmentsByConversation[id] ?? []
+                replyingTo = nil
+                selectedMessageIDs = []
+                if let index = conversations.firstIndex(where: { $0.id == id }), conversations[index].hasUnread {
                     conversations[index].hasUnread = false
                     persist(conversations[index])
                 }
+            } else {
+                draft = ""
+                draftAttachments = []
             }
         }
     }
@@ -47,7 +60,8 @@ public final class ChatAppModel {
     @ObservationIgnored private let transport: HTTPTransport
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var apiKeys: [UUID: String] = [:]
-
+    @ObservationIgnored private var draftsByConversation: [UUID: String] = [:]
+    @ObservationIgnored private var attachmentsByConversation: [UUID: [MediaRef]] = [:]
     public init(
         store: any ConversationStoring = FileConversationStore.defaultStore(),
         secrets: any SecretStoring = FallbackSecretStore(primary: KeychainSecretStore()),
@@ -169,6 +183,8 @@ public final class ChatAppModel {
     public func deleteConversation(_ id: UUID) {
         conversations.removeAll { $0.id == id }
         Task { try? await store.delete(id: id) }
+        draftsByConversation.removeValue(forKey: id)
+        attachmentsByConversation.removeValue(forKey: id)
         if selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
         }
@@ -318,6 +334,10 @@ public final class ChatAppModel {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
         draft = ""
         draftAttachments = []
+        if let id = selectedConversationID {
+            draftsByConversation.removeValue(forKey: id)
+            attachmentsByConversation.removeValue(forKey: id)
+        }
         Task { await sendNow(text: text, attachments: attachments) }
     }
 
