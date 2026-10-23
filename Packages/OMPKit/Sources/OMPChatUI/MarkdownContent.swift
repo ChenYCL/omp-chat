@@ -39,6 +39,8 @@ public struct MarkdownText: View {
                     CodeBlockView(language: language, code: code)
                 case .table(let headers, let rows):
                     MarkdownTableView(headers: headers, rows: rows)
+                case .math(let equation):
+                    MarkdownMathView(equation: equation)
                 }
             }
         }
@@ -56,8 +58,8 @@ public struct MarkdownText: View {
             case text(String)
             case code(language: String?, code: String)
             case table(headers: [String], rows: [[String]])
+            case math(equation: String)
         }
-
         let id: Int
         let kind: Kind
 
@@ -116,6 +118,37 @@ public struct MarkdownText: View {
                         segments.append(Segment(id: segments.count, kind: .table(headers: headerCells, rows: rows)))
                         continue
                     }
+                }
+
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                if trimmedLine.hasPrefix("$$") {
+                    if trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
+                        flushText()
+                        let eq = String(trimmedLine.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
+                        segments.append(Segment(id: segments.count, kind: .math(equation: eq)))
+                        i += 1
+                        continue
+                    }
+                    flushText()
+                    var mathLines: [String] = []
+                    if trimmedLine.count > 2 {
+                        mathLines.append(String(trimmedLine.dropFirst(2)))
+                    }
+                    i += 1
+                    while i < allLines.count && !allLines[i].trimmingCharacters(in: .whitespaces).contains("$$") {
+                        mathLines.append(allLines[i])
+                        i += 1
+                    }
+                    if i < allLines.count {
+                        let closing = allLines[i].trimmingCharacters(in: .whitespaces)
+                        if let endIdx = closing.range(of: "$$")?.lowerBound {
+                            mathLines.append(String(closing[..<endIdx]))
+                        }
+                        i += 1
+                    }
+                    let eq = mathLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                    segments.append(Segment(id: segments.count, kind: .math(equation: eq)))
+                    continue
                 }
 
                 textBuffer.append(line)
@@ -187,6 +220,53 @@ public struct MarkdownTableView: View {
         )
     }
 }
+
+/// Mathematical formula display view for block LaTeX equations ($$...$$)
+public struct MarkdownMathView: View {
+    let equation: String
+    @State private var copied = false
+
+    public init(equation: String) {
+        self.equation = equation
+    }
+
+    public var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                Spacer()
+                Text(equation)
+                    .font(.system(size: 16, weight: .regular, design: .serif).italic())
+                    .foregroundStyle(Color.ompText)
+                    .textSelection(.enabled)
+                    .padding(.vertical, 8)
+                Spacer()
+
+                Button {
+                    copyToPasteboard("$$\n" + equation + "\n$$")
+                    AudioFeedback.playSend(enabled: true)
+                    copied = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.2))
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10))
+                        .foregroundStyle(copied ? Color.green : Color.ompTextTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+        }
+        .padding(.vertical, 4)
+        .background(Color.ompFill.opacity(0.35), in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
+                .strokeBorder(Color.ompBorder.opacity(0.6), lineWidth: 1)
+        )
+    }
+}
+
 
 
 public struct CodeBlockView: View {
