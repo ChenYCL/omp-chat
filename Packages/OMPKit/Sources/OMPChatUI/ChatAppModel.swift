@@ -26,6 +26,8 @@ public final class ChatAppModel {
     public var draftAttachments: [MediaRef] = []
     /// Message the next send will quote.
     public var replyingTo: ChatMessage?
+    /// Messages checked for bulk actions; empty means selection mode is off.
+    public var selectedMessageIDs: Set<UUID> = []
     public var showSettings = false
 
     // MARK: Dependencies
@@ -424,6 +426,24 @@ public final class ChatAppModel {
         replace(conversation)
         persist(conversation)
     }
+
+    public func toggleMessageSelection(_ id: UUID) {
+        if selectedMessageIDs.contains(id) {
+            selectedMessageIDs.remove(id)
+        } else {
+            selectedMessageIDs.insert(id)
+        }
+    }
+
+    public func deleteSelectedMessages() {
+        guard var conversation = selectedConversation, !selectedMessageIDs.isEmpty else { return }
+        conversation.messages.removeAll { selectedMessageIDs.contains($0.id) }
+        conversation.updatedAt = Date()
+        replace(conversation)
+        persist(conversation)
+        selectedMessageIDs = []
+    }
+
 
     /// Truncates the conversation at `messageID`, replaces it with the edited
     /// text (keeping its attachments) and re-runs the reply.

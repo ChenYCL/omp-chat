@@ -12,6 +12,9 @@ public struct ChatTranscriptView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Theme.Layout.messageSpacing) {
                     if let conversation = model.selectedConversation {
+                        if !model.selectedMessageIDs.isEmpty {
+                            selectionBar
+                        }
                         if conversation.messages.isEmpty {
                             emptyState
                         }
@@ -61,9 +64,45 @@ public struct ChatTranscriptView: View {
             feedback: message.role == .assistant ? { value in
                 model.setFeedback(message.id, value: value)
             } : nil,
-            reply: { model.replyingTo = message }
+            reply: { model.replyingTo = message },
+            select: { model.toggleMessageSelection(message.id) }
         )
     }
+
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            Text("已选 \(model.selectedMessageIDs.count) 条")
+                .font(.system(size: 12, weight: .medium))
+            Spacer()
+            Button("复制") {
+                let text = model.selectedConversation?.messages
+                    .filter { model.selectedMessageIDs.contains($0.id) }
+                    .map(\.concatenatedText)
+                    .joined(separator: "\n\n") ?? ""
+                copyToPasteboard(text)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            Button("删除", role: .destructive) {
+                model.deleteSelectedMessages()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundStyle(.red)
+            Button {
+                model.selectedMessageIDs = []
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.ompTextSecondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
+    }
+
 
     private var scrollSignature: String {
         guard let conversation = model.selectedConversation, let last = conversation.messages.last else {

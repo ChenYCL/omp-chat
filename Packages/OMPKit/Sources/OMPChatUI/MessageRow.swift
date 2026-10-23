@@ -11,6 +11,7 @@ public struct MessageRow: View {
         public var regenerate: (() -> Void)?
         public var feedback: ((Int) -> Void)?
         public var reply: (() -> Void)?
+        public var select: (() -> Void)?
 
         public init(
             copy: @escaping () -> Void,
@@ -19,7 +20,8 @@ public struct MessageRow: View {
             delete: (() -> Void)? = nil,
             regenerate: (() -> Void)? = nil,
             feedback: ((Int) -> Void)? = nil,
-            reply: (() -> Void)? = nil
+            reply: (() -> Void)? = nil,
+            select: (() -> Void)? = nil
         ) {
             self.copy = copy
             self.edit = edit
@@ -28,6 +30,7 @@ public struct MessageRow: View {
             self.regenerate = regenerate
             self.feedback = feedback
             self.reply = reply
+            self.select = select
         }
     }
 
@@ -339,6 +342,10 @@ public struct MessageRow: View {
 
             if message.role == .assistant, let regenerate = actions.regenerate {
                 iconButton("arrow.clockwise", help: "重新生成") { regenerate() }
+            }
+
+            if let select = actions.select {
+                iconButton(model.selectedMessageIDs.contains(message.id) ? "checkmark.circle.fill" : "circle", help: "选择") { select() }
             }
 
             if let delete = actions.delete {

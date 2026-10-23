@@ -45,6 +45,14 @@ public struct ComposerBar: View {
                         model.send()
                         return .handled
                     }
+                    .onKeyPress(phases: .down) { press in
+                        guard press.key == .upArrow, model.draft.isEmpty else { return .ignored }
+                        if let last = model.selectedConversation?.messages.last(where: { $0.role == .user }) {
+                            model.draft = last.concatenatedText
+                            return .handled
+                        }
+                        return .ignored
+                    }
 
                 HStack(spacing: 6) {
                     circleButton("paperclip", help: "添加图片或文件") {
