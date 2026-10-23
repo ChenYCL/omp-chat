@@ -13,6 +13,14 @@ public struct ImageGenerationSheet: View {
 
     private let sizes = ["1024x1024", "1024x1536", "1536x1024", "512x512"]
 
+    private let stylePresets: [(name: String, suffix: String)] = [
+        ("极简设计", ", 极简矢量设计, 干净纯色背景, 高品质"),
+        ("3D 渲染", ", 3D 渲染风格, 光影质感, 细致建模, 8k 分辨率"),
+        ("赛博朋克", ", 赛博朋克风格, 霓虹灯光, 科技感, 夜景"),
+        ("扁平插画", ", 扁平现代插画, 温暖配色, 艺术排版"),
+        ("动漫风", ", 日本动漫艺术风格, 精致线条, 唯美背景"),
+        ("真实摄影", ", 真实胶片摄影, 50mm 镜头, 自然采光, 超高清")
+    ]
     public init() {}
 
     private var imageModel: ModelDescriptor? {
@@ -25,6 +33,27 @@ public struct ImageGenerationSheet: View {
                 Section("提示词") {
                     TextField("描述要生成的图片", text: $prompt, axis: .vertical)
                         .lineLimit(3...6)
+                }
+                Section("风格预设") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(stylePresets, id: \.name) { preset in
+                                Button {
+                                    if !prompt.contains(preset.suffix) {
+                                        prompt += preset.suffix
+                                    }
+                                } label: {
+                                    Text(preset.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.ompFill, in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
                 }
                 Section("参数") {
                     Picker("模型", selection: $modelID) {

@@ -500,14 +500,26 @@ public struct MessageRow: View {
         Button {
             actions.copy()
         } label: {
-            Label("复制", systemImage: "doc.on.doc")
+            Label("复制内容", systemImage: "doc.on.doc")
+        }
+        if let reply = actions.reply {
+            Button { reply() } label: {
+                Label("引用此条", systemImage: "arrowshape.turn.up.left")
+            }
+        }
+        if message.role == .assistant, !message.concatenatedText.isEmpty {
+            Button {
+                Speech.speak(message.concatenatedText)
+            } label: {
+                Label("朗读此条", systemImage: "speaker.wave.2")
+            }
         }
         if actions.edit != nil {
             Button {
                 editText = message.concatenatedText
                 editing = true
             } label: {
-                Label("编辑", systemImage: "pencil")
+                Label("编辑重发", systemImage: "pencil")
             }
         }
         if let branch = actions.branch {
@@ -516,6 +528,7 @@ public struct MessageRow: View {
             }
         }
         if let delete = actions.delete {
+            Divider()
             Button(role: .destructive) { delete() } label: {
                 Label("删除", systemImage: "trash")
             }
