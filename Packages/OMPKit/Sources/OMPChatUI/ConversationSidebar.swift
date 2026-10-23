@@ -1,6 +1,7 @@
 import SwiftUI
 import OMPCore
 import OMPDesign
+import LocalAuthentication
 
 public struct ConversationSidebar: View {
     @Environment(ChatAppModel.self) private var model
@@ -13,6 +14,7 @@ public struct ConversationSidebar: View {
     @State private var newProjectName = ""
     @State private var renamingProjectID: UUID?
     @State private var showLocked = false
+    @State private var isLockedUnlocked = false
     @State private var showArchived = false
 
     public init() {}
@@ -274,17 +276,23 @@ public struct ConversationSidebar: View {
         Group {
             if !model.lockedConversations.isEmpty {
                 Button {
-                    showLocked.toggle()
+                    toggleLockedSection()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: showLocked ? "chevron.down" : "chevron.right")
+                        Image(systemName: (showLocked && isLockedUnlocked) ? "chevron.down" : "chevron.right")
                             .font(.system(size: 8, weight: .bold))
-                        Image(systemName: "lock.fill")
+                        Image(systemName: isLockedUnlocked ? "lock.open.fill" : "lock.fill")
                             .font(.system(size: 9))
+                            .foregroundStyle(isLockedUnlocked ? Color.accentColor : Color.ompTextTertiary)
                         Text("已锁定")
                             .font(Theme.Typography.sectionHeader)
                         Text("\(model.lockedConversations.count)")
                             .font(.system(size: 9.5).monospacedDigit())
+                        if isLockedUnlocked {
+                            Text("已解锁")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                        }
                     }
                     .foregroundStyle(Color.ompTextTertiary)
                     .padding(.horizontal, 8)
@@ -292,13 +300,42 @@ public struct ConversationSidebar: View {
                     .padding(.bottom, 4)
                 }
                 .buttonStyle(.plain)
-                if showLocked {
+                .help(isLockedUnlocked ? "点击重新锁定" : "点击验证 Touch ID 或密码解锁")
+                if showLocked && isLockedUnlocked {
                     ForEach(model.lockedConversations) { row($0) }
                 }
             }
         }
     }
 
+    private func toggleLockedSection() {
+        if isLockedUnlocked {
+            withAnimation(Theme.Motion.quick) {
+                isLockedUnlocked = false
+                showLocked = false
+            }
+        } else {
+            let context = LAContext()
+            var error: NSError?
+            if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+                context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "验证以访问已锁定的私密对话") { success, _ in
+                    Task { @MainActor in
+                        if success {
+                            withAnimation(Theme.Motion.quick) {
+                                isLockedUnlocked = true
+                                showLocked = true
+                            }
+                        }
+                    }
+                }
+            } else {
+                withAnimation(Theme.Motion.quick) {
+                    isLockedUnlocked = true
+                    showLocked = true
+                }
+            }
+        }
+    }
     private func projectHeader(_ project: Project) -> some View {
         let collapsed = collapsedProjects.contains(project.id)
         return HStack(spacing: 4) {
