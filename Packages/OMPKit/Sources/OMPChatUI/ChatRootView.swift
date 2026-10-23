@@ -563,15 +563,20 @@ struct ChatEmptyStateView: View {
     @Environment(ChatAppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color.accentColor)
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(Color.ompFill.opacity(0.6))
+                    .frame(width: 62, height: 62)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
 
             (Text("你想让我们在 ")
                 + Text(currentProjectName).underline()
                 + Text(" 中构建什么？"))
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .font(.system(size: 23, weight: .semibold))
                 .foregroundStyle(Color.ompText)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
