@@ -84,6 +84,26 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertTrue(siblings.contains { $0.hasPrefix("workspace.corrupt-") })
         XCTAssertFalse(siblings.contains("workspace.json"))
     }
+    func testProjectsRoundTrip() async throws {
+        let store = FileConversationStore(directoryURL: directory)
+        let project = Project(name: "研究", order: 0)
+        try await store.saveProjects([project])
+
+        let conversation = Conversation(title: "分组内", projectID: project.id)
+        try await store.save(conversation)
+
+        let reopened = FileConversationStore(directoryURL: directory)
+        let projects = try await reopened.loadProjects()
+        XCTAssertEqual(projects.map(\.name), ["研究"])
+        let loaded = try await reopened.loadAll()
+        XCTAssertEqual(loaded.first?.projectID, project.id)
+
+        // Documents written before projects existed still decode.
+        let legacy = FileConversationStore(directoryURL: directory)
+        let legacyProjects = try await legacy.loadProjects()
+        XCTAssertFalse(legacyProjects.isEmpty)
+    }
+
 }
 
 final class SecretStoreTests: XCTestCase {

@@ -113,8 +113,11 @@ public struct CodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Spacing.s) {
                 Text(language?.uppercased() ?? "CODE")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.ompFill, in: Capsule())
                 Spacer()
                 Button {
                     copyToPasteboard(code)
@@ -136,13 +139,16 @@ public struct CodeBlockView: View {
 
             Divider()
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            // Long blocks stay a fixed height and scroll internally instead of
+            // pushing the transcript endlessly (ChatGPT desktop behaviour).
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
                 Text(code)
                     .font(Theme.Typography.monospaced)
                     .textSelection(.enabled)
                     .padding(Theme.Spacing.m)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxHeight: 320)
         }
         .background(Color.ompSecondaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))

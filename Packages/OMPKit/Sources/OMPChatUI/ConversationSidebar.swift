@@ -8,6 +8,10 @@ public struct ConversationSidebar: View {
     @State private var renamingID: UUID?
     @State private var renameText = ""
     @State private var deletingID: UUID?
+    @State private var collapsedProjects: Set<UUID> = []
+    @State private var creatingProject = false
+    @State private var newProjectName = ""
+    @State private var renamingProjectID: UUID?
 
     public init() {}
 
@@ -47,6 +51,25 @@ public struct ConversationSidebar: View {
         } message: {
             Text("此操作不可撤销。")
         }
+        .alert("新建项目", isPresented: $creatingProject) {
+            TextField("项目名称", text: $newProjectName)
+            Button("取消", role: .cancel) { newProjectName = "" }
+            Button("创建") {
+                _ = model.createProject(name: newProjectName)
+                newProjectName = ""
+            }
+        }
+        .alert("重命名项目", isPresented: Binding(
+            get: { renamingProjectID != nil },
+            set: { if !$0 { renamingProjectID = nil } }
+        )) {
+            TextField("项目名称", text: $newProjectName)
+            Button("取消", role: .cancel) { renamingProjectID = nil }
+            Button("保存") {
+                if let id = renamingProjectID { model.renameProject(id, name: newProjectName) }
+                renamingProjectID = nil
+            }
+        }
     }
 
     private var sidebarBackground: some ShapeStyle {
@@ -67,6 +90,18 @@ public struct ConversationSidebar: View {
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(Color.ompTextTertiary)
             Spacer()
+            Button {
+                newProjectName = ""
+                creatingProject = true
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color.ompHover, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("新建项目")
             Button {
                 model.newConversation()
             } label: {
@@ -113,22 +148,89 @@ public struct ConversationSidebar: View {
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
-                let pinned = filtered.filter(\.isPinned)
-                let recent = filtered.filter { !$0.isPinned }
-                if !pinned.isEmpty {
-                    sectionHeader("置顶")
-                    ForEach(pinned) { row($0) }
-                }
-                if !recent.isEmpty {
-                    sectionHeader(pinned.isEmpty ? "最近" : "全部")
-                    ForEach(recent) { row($0) }
-                }
-                if filtered.isEmpty {
-                    emptyHint
+                if searching {
+                    ForEach(filtered) { row($0) }
+                    if filtered.isEmpty { emptyHint }
+                } else {
+                    projectSections
+                    ungroupedSection
+                    if model.conversations.isEmpty { emptyHint }
                 }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 10)
+        }
+    }
+
+    private var searching: Bool {
+        !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var projectSections: some View {
+        ForEach(model.orderedProjects) { project in
+            projectHeader(project)
+            if !collapsedProjects.contains(project.id) {
+                ForEach(model.conversations(in: project.id)) { row($0) }
+            }
+        }
+    }
+
+    private var ungroupedSection: some View {
+        let items = model.conversations(in: nil)
+        return Group {
+            if !items.isEmpty {
+                sectionHeader(model.projects.isEmpty ? "最近" : "未分组")
+                ForEach(items) { row($0) }
+            }
+        }
+    }
+
+    private func projectHeader(_ project: Project) -> some View {
+        let collapsed = collapsedProjects.contains(project.id)
+        return HStack(spacing: 4) {
+            Button {
+                if collapsed { collapsedProjects.remove(project.id) } else { collapsedProjects.insert(project.id) }
+            } label: {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 14)
+            }
+            .buttonStyle(.plain)
+            Image(systemName: "folder")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.ompTextSecondary)
+            Text(project.name)
+                .font(Theme.Typography.sectionHeader)
+                .foregroundStyle(Color.ompTextSecondary)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                _ = model.newConversation(in: project.id)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .help("在项目中新建对话")
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+        .contextMenu {
+            Button {
+                newProjectName = project.name
+                renamingProjectID = project.id
+            } label: {
+                Label("重命名项目", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                model.deleteProject(project.id)
+            } label: {
+                Label("删除项目", systemImage: "trash")
+            }
         }
     }
 
@@ -235,6 +337,26 @@ public struct ConversationSidebar: View {
             renamingID = conversation.id
         } label: {
             Label("重命名", systemImage: "pencil")
+        }
+        if !model.projects.isEmpty {
+            Menu("移动到项目") {
+                if conversation.projectID != nil {
+                    Button("移出项目") {
+                        model.moveConversation(conversation.id, to: nil)
+                    }
+                }
+                ForEach(model.orderedProjects) { project in
+                    Button {
+                        model.moveConversation(conversation.id, to: project.id)
+                    } label: {
+                        if conversation.projectID == project.id {
+                            Label(project.name, systemImage: "checkmark")
+                        } else {
+                            Text(project.name)
+                        }
+                    }
+                }
+            }
         }
         Divider()
         Button(role: .destructive) {

@@ -12,19 +12,22 @@ public actor FileConversationStore: ConversationStoring {
         public var providers: [ProviderProfile]
         public var models: [ModelDescriptor]
         public var settings: AppSettings
+        public var projects: [Project]
 
         public init(
             version: Int = 1,
             conversations: [Conversation] = [],
             providers: [ProviderProfile] = [],
             models: [ModelDescriptor] = [],
-            settings: AppSettings = AppSettings()
+            settings: AppSettings = AppSettings(),
+            projects: [Project] = []
         ) {
             self.version = version
             self.conversations = conversations
             self.providers = providers
             self.models = models
             self.settings = settings
+            self.projects = projects
         }
 
         public init(from decoder: Decoder) throws {
@@ -34,6 +37,7 @@ public actor FileConversationStore: ConversationStoring {
             providers = try container.decodeIfPresent([ProviderProfile].self, forKey: .providers) ?? []
             models = try container.decodeIfPresent([ModelDescriptor].self, forKey: .models) ?? []
             settings = try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+            projects = try container.decodeIfPresent([Project].self, forKey: .projects) ?? []
         }
     }
 
@@ -120,6 +124,16 @@ public actor FileConversationStore: ConversationStoring {
 
     public func loadSettings() async throws -> AppSettings {
         try current().settings
+    }
+
+    public func loadProjects() async throws -> [Project] {
+        try current().projects
+    }
+
+    public func saveProjects(_ projects: [Project]) async throws {
+        var snapshot = try current()
+        snapshot.projects = projects
+        try commit(snapshot)
     }
 
     public func saveSettings(_ settings: AppSettings) async throws {

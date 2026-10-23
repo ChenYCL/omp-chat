@@ -103,16 +103,35 @@ struct IconRail: View {
     }
 
     private func railButton(_ symbol: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        RailButton(symbol: symbol, help: help, active: active, action: action)
+    }
+}
+
+/// Icon-rail button with a hover wash and an accent-tinted active state.
+struct RailButton: View {
+    let symbol: String
+    let help: String
+    var active: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(active ? Color.ompText : Color.ompTextSecondary)
+                .foregroundStyle(active ? Color.accentColor : Color.ompTextSecondary)
                 .frame(width: 32, height: 32)
-                .background(active ? Color.ompSelection : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(active ? Color.accentColor.opacity(0.16) : (hovering ? Color.ompHover : Color.clear))
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
+        .onHover { hovering = $0 }
+        .animation(Theme.Motion.fade, value: hovering)
     }
 }
 #endif
@@ -142,9 +161,17 @@ public struct ChatDetailView: View {
                 StatusToast(message: status) { model.dismissStatus() }
             }
 
-            ChatTranscriptView()
-
-            ComposerBar()
+            if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {
+                // Codex-style empty state: the composer sits in the middle of
+                // the canvas instead of pinned to the bottom.
+                Spacer()
+                ChatTranscriptView()
+                ComposerBar()
+                Spacer()
+            } else {
+                ChatTranscriptView()
+                ComposerBar()
+            }
         }
         .background(Color.ompCanvas)
         #if os(iOS)

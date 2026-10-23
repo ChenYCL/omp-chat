@@ -76,19 +76,19 @@ public struct ChatTranscriptView: View {
         if model.needsSetup {
             setupPrompt
         } else {
-            VStack(spacing: 0) {
+            VStack(spacing: 10) {
                 Image(systemName: "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 40, weight: .light))
+                    .font(.system(size: 28, weight: .light))
                     .foregroundStyle(Color.ompTextTertiary)
-                    .padding(.bottom, 20)
                 (Text("今天想在 ")
                     + Text(model.activeProvider?.name ?? "OMP Chat").underline()
                     + Text(" 里聊些什么？"))
-                    .font(.system(size: 24, weight: .medium))
+                    .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(Color.ompText)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity)
         }
     }
 

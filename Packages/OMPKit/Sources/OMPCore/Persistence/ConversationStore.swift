@@ -10,6 +10,8 @@ public protocol ConversationStoring: Sendable {
     func saveProviders(_ profiles: [ProviderProfile]) async throws
     func loadSettings() async throws -> AppSettings
     func saveSettings(_ settings: AppSettings) async throws
+    func loadProjects() async throws -> [Project]
+    func saveProjects(_ projects: [Project]) async throws
 }
 
 /// In-memory store used by tests and previews.
@@ -18,6 +20,7 @@ public actor InMemoryConversationStore: ConversationStoring {
     private var models: [ModelDescriptor] = []
     private var profiles: [ProviderProfile] = []
     private var settings = AppSettings()
+    private var projects: [Project] = []
 
     public init() {}
 
@@ -44,4 +47,8 @@ public actor InMemoryConversationStore: ConversationStoring {
     public func loadSettings() async throws -> AppSettings { settings }
 
     public func saveSettings(_ settings: AppSettings) async throws { self.settings = settings }
+
+    public func loadProjects() async throws -> [Project] { projects }
+
+    public func saveProjects(_ projects: [Project]) async throws { self.projects = projects }
 }

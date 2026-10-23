@@ -13,6 +13,7 @@ public final class ChatAppModel {
     public private(set) var providers: [ProviderProfile] = []
     public private(set) var models: [ModelDescriptor] = []
     public private(set) var settings = AppSettings()
+    public private(set) var projects: [Project] = []
     public private(set) var isStreaming = false
     public private(set) var streamingConversationID: UUID?
     public private(set) var errorMessage: String?
@@ -108,6 +109,7 @@ public final class ChatAppModel {
         providers = (try? await store.loadProviders()) ?? []
         models = (try? await store.loadModelCatalog()) ?? []
         settings = (try? await store.loadSettings()) ?? AppSettings()
+        projects = (try? await store.loadProjects()) ?? []
         for provider in providers {
             apiKeys[provider.id] = (try? secrets.secret(for: provider.keychainAccount)) ?? ""
         }
@@ -152,6 +154,65 @@ public final class ChatAppModel {
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
+    }
+
+    // MARK: Projects
+
+    public var orderedProjects: [Project] {
+        projects.sorted { $0.order < $1.order }
+    }
+
+    public func conversations(in projectID: UUID?) -> [Conversation] {
+        sortedConversations.filter { $0.projectID == projectID }
+    }
+
+    @discardableResult
+    public func createProject(name: String) -> Project {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let project = Project(name: trimmed.isEmpty ? "新项目" : trimmed, order: projects.count)
+        projects.append(project)
+        persistProjects()
+        return project
+    }
+
+    public func renameProject(_ id: UUID, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[index].name = trimmed
+        persistProjects()
+    }
+
+    public func deleteProject(_ id: UUID) {
+        projects.removeAll { $0.id == id }
+        for index in conversations.indices where conversations[index].projectID == id {
+            conversations[index].projectID = nil
+            persist(conversations[index])
+        }
+        persistProjects()
+    }
+
+    /// Moves a conversation into a project, or out of one when `projectID` is nil.
+    public func moveConversation(_ id: UUID, to projectID: UUID?) {
+        guard var conversation = conversation(id) else { return }
+        conversation.projectID = projectID
+        replace(conversation)
+        persist(conversation)
+    }
+
+    public func newConversation(in projectID: UUID?) -> Conversation {
+        var conversation = newConversation()
+        if projectID != nil {
+            conversation.projectID = projectID
+            replace(conversation)
+            persist(conversation)
+        }
+        return conversation
+    }
+
+    private func persistProjects() {
+        let store = self.store
+        let snapshot = projects
+        Task { try? await store.saveProjects(snapshot) }
     }
 
     public func togglePin(_ id: UUID) {

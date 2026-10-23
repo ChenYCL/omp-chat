@@ -11,6 +11,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var updatedAt: Date
     public var isPinned: Bool
     public var isArchived: Bool
+    /// Project this conversation belongs to; nil means ungrouped.
+    public var projectID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -22,7 +24,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isPinned: Bool = false,
-        isArchived: Bool = false
+        isArchived: Bool = false,
+        projectID: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,6 +37,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.isPinned = isPinned
         self.isArchived = isArchived
+        self.projectID = projectID
     }
 
     public var lastMessagePreview: String {
