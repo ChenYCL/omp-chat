@@ -704,6 +704,13 @@ public struct QuickSwitcherView: View {
         let title: String
         let shortcut: String?
         let action: (ChatAppModel, () -> Void) -> Void
+
+        init(icon: String, title: String, shortcut: String? = nil, action: @escaping (ChatAppModel, () -> Void) -> Void) {
+            self.icon = icon
+            self.title = title
+            self.shortcut = shortcut
+            self.action = action
+        }
     }
 
     private let allActions: [QuickAction] = [
@@ -721,6 +728,24 @@ public struct QuickSwitcherView: View {
         },
         QuickAction(icon: "folder", title: "新建项目", shortcut: nil) { model, dismiss in
             _ = model.createProject(name: "新项目")
+            dismiss()
+        },
+        QuickAction(icon: "sun.max", title: "切换到亮色主题") { model, dismiss in
+            var settings = model.settings
+            settings.appearance = .light
+            Task { await model.saveSettings(settings) }
+            dismiss()
+        },
+        QuickAction(icon: "moon", title: "切换到暗色主题") { model, dismiss in
+            var settings = model.settings
+            settings.appearance = .dark
+            Task { await model.saveSettings(settings) }
+            dismiss()
+        },
+        QuickAction(icon: "circle.lefthalf.filled", title: "跟随系统主题") { model, dismiss in
+            var settings = model.settings
+            settings.appearance = .system
+            Task { await model.saveSettings(settings) }
             dismiss()
         },
     ]
