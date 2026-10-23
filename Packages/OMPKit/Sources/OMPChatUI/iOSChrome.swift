@@ -428,27 +428,50 @@ public struct PaseoChatScreen: View {
 
                 // Status Chips Row (Frame 15s): ∠ +932 -288 | Ω 子代理 · 25
                 HStack(spacing: 8) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "angle")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.ompTextTertiary)
-                        Text("+932")
-                            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.green)
-                        Text("-288")
-                            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.red)
+                    if let diff = totalDiff {
+                        HStack(spacing: 5) {
+                            Image(systemName: "angle")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.ompTextTertiary)
+                            if diff.added > 0 {
+                                Text("+\(diff.added)")
+                                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.green)
+                            }
+                            if diff.removed > 0 {
+                                Text("-\(diff.removed)")
+                                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.ompCard, in: Capsule())
+                        .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
+                    } else if let usage = model.selectedConversation?.messages.compactMap(\.usage).last {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.green)
+                            Text(TokenFormat.compact(usage.inputTokens))
+                                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 8))
+                                .foregroundStyle(Color.accentColor)
+                            Text(TokenFormat.compact(usage.outputTokens))
+                                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.ompCard, in: Capsule())
+                        .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
                     }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.ompCard, in: Capsule())
-                    .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
 
                     HStack(spacing: 4) {
                         Image(systemName: "person.2")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.ompTextTertiary)
-                        Text("子代理 · 25")
+                        Text(toolCount > 0 ? "操作 · \(toolCount)" : "子代理 · \(model.sortedConversations.count)")
                             .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(Color.ompTextSecondary)
                     }
@@ -467,6 +490,34 @@ public struct PaseoChatScreen: View {
             .padding(.bottom, 8)
         }
     }
+
+    private var totalDiff: (added: Int, removed: Int)? {
+        guard let conversation = model.selectedConversation else { return nil }
+        var added = 0
+        var removed = 0
+        for msg in conversation.messages {
+            for part in msg.parts {
+                if case .toolResult(let result) = part {
+                    for line in result.outputText.split(separator: "\n", omittingEmptySubsequences: false) {
+                        if line.hasPrefix("+"), !line.hasPrefix("+++") { added += 1 }
+                        else if line.hasPrefix("-"), !line.hasPrefix("---") { removed += 1 }
+                    }
+                }
+            }
+        }
+        return (added == 0 && removed == 0) ? nil : (added, removed)
+    }
+
+    private var toolCount: Int {
+        guard let conversation = model.selectedConversation else { return 0 }
+        return conversation.messages.reduce(0) { count, msg in
+            count + msg.parts.filter {
+                if case .toolCall = $0 { return true }
+                return false
+            }.count
+        }
+    }
+
 }
 
 /// PaseoPro Pill Composer (Frame 15s)

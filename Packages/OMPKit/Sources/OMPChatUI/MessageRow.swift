@@ -55,7 +55,12 @@ public struct MessageRow: View {
             if message.role == .user {
                 userRow
             } else if message.role == .assistant {
-                assistantRow
+                VStack(alignment: .leading, spacing: 4) {
+                    if let duration = calculateDurationText() {
+                        durationDivider(duration)
+                    }
+                    assistantRow
+                }
             } else {
                 systemRow
             }
@@ -203,6 +208,44 @@ public struct MessageRow: View {
             .foregroundStyle(Color.ompTextSecondary)
         }
     }
+
+    private func durationDivider(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().opacity(0.4)
+            HStack(spacing: 4) {
+                Text("用时 \(text)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.ompTextTertiary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.bottom, 4)
+    }
+
+    private func calculateDurationText() -> String? {
+        guard let conversation = model.selectedConversation,
+              let index = conversation.messages.firstIndex(where: { $0.id == message.id }),
+              index > 0 else { return nil }
+        let prev = conversation.messages[index - 1]
+        guard prev.role == .user else { return nil }
+        let diff = message.createdAt.timeIntervalSince(prev.createdAt)
+        guard diff >= 2.0 else { return nil }
+        if diff < 60 {
+            return "\(Int(diff))秒"
+        } else if diff < 3600 {
+            let m = Int(diff) / 60
+            let s = Int(diff) % 60
+            return "\(m)分钟\(s)秒"
+        } else {
+            let h = Int(diff) / 3600
+            let m = (Int(diff) % 3600) / 60
+            return "\(h)小时\(m)分钟"
+        }
+    }
+
 
     private var systemRow: some View {
         HStack(spacing: Theme.Spacing.s) {

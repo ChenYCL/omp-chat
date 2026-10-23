@@ -7,6 +7,8 @@ public struct ComposerBar: View {
     @Environment(ChatAppModel.self) private var model
     @State private var importingFiles = false
     @State private var showImageSheet = false
+    @State private var showOptionsSheet = false
+    @State private var showMCPSheet = false
     @State private var hoveringSend = false
     @FocusState private var focused: Bool
     public init() {}
@@ -25,6 +27,7 @@ public struct ComposerBar: View {
                 templateList
             }
             VStack(alignment: .leading, spacing: 8) {
+                contextStrip
                 if let quoted = model.replyingTo {
                     replyPreview(quoted)
                 }
@@ -54,18 +57,67 @@ public struct ComposerBar: View {
                     }
 
                 HStack(spacing: 6) {
-                    circleButton("paperclip", help: "添加图片或文件") {
-                        importingFiles = true
-                    }
-
-                    modelPill
-
-                    if !model.imageModels.isEmpty {
-                        circleButton("photo.badge.plus", help: "生成图片") {
-                            showImageSheet = true
+                    // Codex-style + menu
+                    Menu {
+                        Button { importingFiles = true } label: {
+                            Label("添加图片或文件", systemImage: "paperclip")
                         }
+                        if !model.imageModels.isEmpty {
+                            Button { showImageSheet = true } label: {
+                                Label("生成图片", systemImage: "photo.badge.plus")
+                            }
+                        }
+                        Menu("提示词模板") {
+                            ForEach(Self.templates, id: \.title) { item in
+                                Button(item.title) { model.draft = item.prompt }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.ompText)
+                            .frame(width: 28, height: 28)
+                            .background(Color.ompFill, in: Circle())
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help("添加素材或快捷模板")
 
+                    // 自定义设置按钮
+                    Button {
+                        showOptionsSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 10))
+                            Text("自定义")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.ompFill, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("自定义指令与推理强度")
+
+                    // MCP 工具按钮
+                    Button {
+                        showMCPSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "powerplug")
+                                .font(.system(size: 10))
+                            Text("MCP")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.ompFill, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("查看已挂载的 MCP 工具")
                     Spacer(minLength: 0)
 
                     if model.isStreaming {
@@ -140,7 +192,68 @@ public struct ComposerBar: View {
             ImageGenerationSheet()
                 .environment(model)
         }
+        .sheet(isPresented: $showOptionsSheet) {
+            ConversationOptionsSheet().environment(model)
+        }
+        .sheet(isPresented: $showMCPSheet) {
+            MCPPluginsSheet()
+        }
     }
+
+    private var contextStrip: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "folder")
+                    .font(.system(size: 9))
+                Text(projectName)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Color.ompTextSecondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.ompFill, in: Capsule())
+
+            HStack(spacing: 3) {
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 9))
+                Text("本地")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Color.ompTextSecondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.ompFill, in: Capsule())
+
+            if let branch = currentBranch {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 8))
+                    Text(branch)
+                        .font(.system(size: 10).monospaced())
+                }
+                .foregroundStyle(Color.ompTextSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.ompFill, in: Capsule())
+            }
+
+            Spacer()
+        }
+        .padding(.bottom, 2)
+    }
+
+    private var projectName: String {
+        if let id = model.selectedConversation?.projectID,
+           let project = model.projects.first(where: { $0.id == id }) {
+            return project.name
+        }
+        return "默认工作区"
+    }
+
+    private var currentBranch: String? {
+        GitInfo.branch(at: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    }
+
 
     private var contextChips: some View {
         HStack(spacing: 6) {

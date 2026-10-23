@@ -346,6 +346,85 @@ public struct PaseoSessionHistorySheet: View {
     }
 }
 
+// MARK: - 5. MCP Plugins Sheet (插件与工具)
+
+public struct MCPPluginsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var plugins: [PluginItem] = [
+        PluginItem(name: "ccload-image", category: "生图与修改", desc: "OpenAI 兼容画图与图像编辑接口", icon: "photo", enabled: true),
+        PluginItem(name: "local-terminal", category: "本地终端执行", desc: "在受控沙盒中运行 zsh 命令", icon: "terminal", enabled: true),
+        PluginItem(name: "workspace-filesystem", category: "文件系统", desc: "读取和修改当前工作区文件树", icon: "folder", enabled: true),
+        PluginItem(name: "web-search", category: "联网搜索", desc: "实时抓取互联网最新公开资料与网页", icon: "globe", enabled: true),
+        PluginItem(name: "semgrep-security", category: "代码安全审计", desc: "静态安全分析与漏洞规则检查", icon: "shield.checkerboard", enabled: false),
+    ]
+
+    public init() {}
+
+    public var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach($plugins) { $plugin in
+                        HStack(spacing: 12) {
+                            Image(systemName: plugin.icon)
+                                .font(.system(size: 16))
+                                .foregroundStyle(plugin.enabled ? Color.accentColor : Color.ompTextTertiary)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(plugin.name)
+                                        .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+                                    Text(plugin.category)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(Color.ompFill, in: Capsule())
+                                }
+                                Text(plugin.desc)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Color.ompTextSecondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $plugin.enabled)
+                                .labelsHidden()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("已挂载的 MCP 服务器 (Connected MCP Tools)")
+                } footer: {
+                    Text("通过 Model Context Protocol (MCP) 扩展助手能力。开启后工具定义将自动注入到提示词中。")
+                        .font(.caption2)
+                }
+            }
+            .navigationTitle("MCP 扩展与工具")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, minHeight: 420)
+        #endif
+    }
+
+    struct PluginItem: Identifiable {
+        let id = UUID()
+        var name: String
+        var category: String
+        var desc: String
+        var icon: String
+        var enabled: Bool
+    }
+}
+
+
 private func ConversationRow_relativeTime(_ date: Date) -> String {
     let seconds = Date().timeIntervalSince(date)
     switch seconds {
