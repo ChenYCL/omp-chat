@@ -35,6 +35,9 @@ public struct ComposerBar: View {
                 templateList
             }
             contextStrip
+            if let token = mentionToken {
+                mentionList(token)
+            }
             VStack(alignment: .leading, spacing: 8) {
                 if let quoted = model.replyingTo {
                     replyPreview(quoted)
@@ -296,6 +299,89 @@ public struct ComposerBar: View {
         .padding(.vertical, 6)
         .background(Color.ompFill.opacity(0.7), in: UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
     }
+
+    /// Active @-mention query: the token after the last `@` when it contains no
+    /// whitespace (ChatGPT `composer.atMentionList`).
+    private var mentionToken: String? {
+        guard let at = model.draft.lastIndex(of: "@") else { return nil }
+        let tail = model.draft[model.draft.index(after: at)...]
+        guard !tail.contains(where: { $0.isWhitespace || $0.isNewline }) else { return nil }
+        return String(tail)
+    }
+
+    private struct MentionCandidate: Identifiable {
+        let id = UUID()
+        let icon: String
+        let title: String
+        let detail: String
+    }
+
+    private func mentionCandidates(_ token: String) -> [MentionCandidate] {
+        let q = token.lowercased()
+        var items: [MentionCandidate] = []
+        for conversation in model.sortedConversations.prefix(50) where q.isEmpty || conversation.title.lowercased().contains(q) {
+            items.append(MentionCandidate(icon: "bubble.left", title: conversation.title, detail: "会话"))
+        }
+        for project in model.orderedProjects where q.isEmpty || project.name.lowercased().contains(q) {
+            items.append(MentionCandidate(icon: "folder", title: project.name, detail: "项目"))
+        }
+        for custom in model.orderedCustomSections where q.isEmpty || custom.name.lowercased().contains(q) {
+            items.append(MentionCandidate(icon: "rectangle.3.group", title: custom.name, detail: "分区"))
+        }
+        return Array(items.prefix(8))
+    }
+
+    private func mentionList(_ token: String) -> some View {
+        let items = mentionCandidates(token)
+        return VStack(alignment: .leading, spacing: 0) {
+            if items.isEmpty {
+                Text("没有匹配的提及")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(10)
+            } else {
+                ForEach(items) { item in
+                    Button {
+                        insertMention(item.title)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.ompTextSecondary)
+                                .frame(width: 16)
+                            Text(item.title)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(Color.ompText)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(item.detail)
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.ompTextTertiary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.ompBorder.opacity(0.8), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.05), radius: 8, y: 2)
+        .padding(.horizontal, Theme.Layout.transcriptPadding)
+        .padding(.bottom, 6)
+    }
+
+    private func insertMention(_ title: String) {
+        guard let at = model.draft.lastIndex(of: "@") else { return }
+        model.draft = String(model.draft[..<at]) + "@" + title + " "
+    }
+
 
     private var projectName: String {
         if let id = model.selectedConversation?.projectID,
