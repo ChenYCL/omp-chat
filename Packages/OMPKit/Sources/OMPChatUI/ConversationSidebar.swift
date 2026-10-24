@@ -112,6 +112,16 @@ public struct ConversationSidebar: View {
                 Button("新建临时对话") {
                     _ = model.newTemporaryConversation()
                 }
+                Divider()
+                Button("折叠全部分组") {
+                    let ids = model.orderedProjects.map(\.id) + model.orderedCustomSections.map(\.id)
+                    collapsedProjects.formUnion(ids)
+                    collapsedCustomSections.formUnion(ids)
+                }
+                Button("展开全部分组") {
+                    collapsedProjects.removeAll()
+                    collapsedCustomSections.removeAll()
+                }
             } label: {
                 HStack(spacing: 4) {
                     Text("Codex")
@@ -304,6 +314,18 @@ public struct ConversationSidebar: View {
                 } label: {
                     Label("重命名分区", systemImage: "pencil")
                 }
+                Divider()
+                Button {
+                    model.archiveConversations(inCustomSection: custom.id)
+                } label: {
+                    Label("归档分区全部会话", systemImage: "archivebox")
+                }
+                Button {
+                    model.markCustomSectionRead(custom.id)
+                } label: {
+                    Label("标记分区已读", systemImage: "envelope.open")
+                }
+                Divider()
                 Button(role: .destructive) {
                     model.deleteCustomSection(custom.id)
                 } label: {

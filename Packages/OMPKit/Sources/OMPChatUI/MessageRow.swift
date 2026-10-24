@@ -51,6 +51,15 @@ public struct MessageRow: View {
         self.actions = actions
     }
 
+    /// All image refs in this message, for lightbox paging.
+    private var galleryRefs: [MediaRef] {
+        message.parts.compactMap {
+            if case .media(let ref) = $0, ref.kind == .image { return ref }
+            return nil
+        }
+    }
+
+
     public var body: some View {
         Group {
             if message.role == .user {
@@ -97,7 +106,7 @@ public struct MessageRow: View {
                             .foregroundStyle(Color.ompText)
                     }
                 case .media(let ref):
-                    MediaAttachmentView(ref: ref, library: mediaLibrary)
+                    MediaAttachmentView(ref: ref, library: mediaLibrary, gallery: galleryRefs)
                 default:
                     EmptyView()
                 }
@@ -564,11 +573,13 @@ public struct StreamingCaret: View {
 public struct MediaAttachmentView: View {
     private let ref: MediaRef
     private let library: MediaLibrary
+    private let gallery: [MediaRef]
     @State private var showingLightbox = false
 
-    public init(ref: MediaRef, library: MediaLibrary) {
+    public init(ref: MediaRef, library: MediaLibrary, gallery: [MediaRef] = []) {
         self.ref = ref
         self.library = library
+        self.gallery = gallery.isEmpty ? [ref] : gallery
     }
 
     public var body: some View {
@@ -590,7 +601,8 @@ public struct MediaAttachmentView: View {
                 }
                 .buttonStyle(.plain)
                 .sheet(isPresented: $showingLightbox) {
-                    ImageLightboxSheet(image: image, fileURL: library.url(for: ref))
+                    let startIndex = gallery.firstIndex(where: { $0.id == ref.id }) ?? 0
+                    ImageLightboxSheet(gallery: gallery, library: library, startIndex: startIndex)
                 }
             } else {
                 Label(ref.originalName ?? ref.relativePath, systemImage: icon)
@@ -639,18 +651,40 @@ extension Image {
     }
 }
 
-/// Fullscreen zoomable lightbox for attachments matching ChatGPT Desktop
+/// Fullscreen zoomable lightbox for attachments matching ChatGPT Desktop.
+/// Holds a gallery of image refs so multi-image messages can page through
+/// (imagePreviewDialog.nextImage / previousImage).
 struct ImageLightboxSheet: View {
-    let image: PlatformImageType
-    let fileURL: URL
+    let gallery: [MediaRef]
+    let library: MediaLibrary
+    let startIndex: Int
     @Environment(\.dismiss) private var dismiss
     @State private var saved = false
     @State private var copied = false
     @State private var zoom: CGFloat = 1.0
+    @State private var index: Int = 0
+    @State private var current: PlatformImageType?
 
-    init(image: PlatformImageType, fileURL: URL) {
-        self.image = image
-        self.fileURL = fileURL
+    init(gallery: [MediaRef], library: MediaLibrary, startIndex: Int) {
+        self.gallery = gallery
+        self.library = library
+        self.startIndex = startIndex
+    }
+
+    private var fileURL: URL { library.url(for: gallery[index]) }
+
+    private var canPage: Bool { gallery.count > 1 }
+
+    private func goTo(_ delta: Int) {
+        let next = index + delta
+        guard gallery.indices.contains(next) else { return }
+        index = next
+        zoom = 1.0
+        loadImage()
+    }
+
+    private func loadImage() {
+        current = PlatformImage.load(at: fileURL)
     }
 
     public var body: some View {
@@ -658,17 +692,61 @@ struct ImageLightboxSheet: View {
             ZStack {
                 Color.black.opacity(0.92).ignoresSafeArea()
 
-                Image(platformImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .scaleEffect(zoom)
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { val in zoom = max(0.8, min(4.0, val)) }
-                    )
-                    .padding(24)
+                if let image = current {
+                    Image(platformImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .id(index)
+                        .scaleEffect(zoom)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { val in zoom = max(0.8, min(4.0, val)) }
+                        )
+                        .padding(24)
+                }
+
+                if canPage {
+                    Button {
+                        goTo(-1)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white.opacity(index == 0 ? 0.25 : 0.9))
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.4), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(index == 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 18)
+
+                    Button {
+                        goTo(1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white.opacity(index == gallery.count - 1 ? 0.25 : 0.9))
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.4), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(index == gallery.count - 1)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 18)
+                }
             }
             .navigationTitle(fileURL.lastPathComponent)
+            .overlay(alignment: .bottom) {
+                if canPage {
+                    Text("\(index + 1) / \(gallery.count)")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.45), in: Capsule())
+                        .padding(.bottom, 14)
+                }
+            }
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -698,6 +776,7 @@ struct ImageLightboxSheet: View {
                             .help("恢复原始大小")
 
                         Button {
+                            guard let image = current else { return }
                             #if os(macOS)
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.writeObjects([image])
@@ -726,10 +805,21 @@ struct ImageLightboxSheet: View {
         }
         #if os(macOS)
         .frame(minWidth: 780, minHeight: 560)
+        .onKeyPress(phases: .down) { press in
+            guard canPage else { return .ignored }
+            if press.key == .leftArrow { goTo(-1); return .handled }
+            if press.key == .rightArrow { goTo(1); return .handled }
+            return .ignored
+        }
         #endif
+        .onAppear {
+            index = min(max(0, startIndex), max(0, gallery.count - 1))
+            loadImage()
+        }
     }
 
     private func saveImage() {
+        guard let image = current else { return }
         #if os(macOS)
         if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
             let target = downloads.appendingPathComponent(fileURL.lastPathComponent)

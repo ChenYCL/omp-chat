@@ -297,6 +297,25 @@ public final class ChatAppModel {
         return section
     }
 
+    /// Archives every conversation in a custom section (bulk `archiveAll`).
+    public func archiveConversations(inCustomSection sectionID: UUID) {
+        for index in conversations.indices
+        where conversations[index].projectID == sectionID && !conversations[index].isArchived {
+            conversations[index].isArchived = true
+            conversations[index].isPinned = false
+            persist(conversations[index])
+        }
+    }
+
+    /// Clears unread state for every conversation in a custom section.
+    public func markCustomSectionRead(_ sectionID: UUID) {
+        for index in conversations.indices
+        where conversations[index].projectID == sectionID && conversations[index].hasUnread {
+            conversations[index].hasUnread = false
+            persist(conversations[index])
+        }
+    }
+
     public func renameCustomSection(_ id: UUID, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
