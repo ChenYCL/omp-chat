@@ -94,8 +94,6 @@
 
 | 项 | 官方键位 | 说明 |
 |---|---|---|
-| @ 提及面板 | `composer.atMentionList.*` | 输入 `@` 弹出文件 / 会话 / 子代理候选 |
-| 粘贴长文本转附件 | `composer.pastedTextAttachment` | 超长粘贴折叠成附件芯片 |
 | 侧栏全部折叠 / 展开 | `collapseFolder` / `expandFolder` | 一键折叠所有项目与分区 |
 | 自定义分区批量归档 | `customSections.archiveAll` / `markRead` | 分区级批量操作 |
 | 图片灯箱多图翻页 | `imagePreviewDialog.nextImage` | 需要消息内图片序列 |

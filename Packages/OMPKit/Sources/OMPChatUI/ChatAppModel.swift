@@ -32,6 +32,7 @@ public final class ChatAppModel {
             if let id = selectedConversationID {
                 draft = draftsByConversation[id] ?? ""
                 draftAttachments = attachmentsByConversation[id] ?? []
+                pastedTexts = []
                 replyingTo = nil
                 selectedMessageIDs = []
                 if let index = conversations.firstIndex(where: { $0.id == id }), conversations[index].hasUnread {
@@ -41,11 +42,25 @@ public final class ChatAppModel {
             } else {
                 draft = ""
                 draftAttachments = []
+                pastedTexts = []
             }
         }
     }
     public var draft = ""
     public var draftAttachments: [MediaRef] = []
+    /// Long pastes folded into chips (ChatGPT `composer.pastedTextAttachment`).
+    public var pastedTexts: [PastedTextAttachment] = []
+
+    /// Folds a long paste into a chip instead of dumping it into the field.
+    public func addPastedText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        pastedTexts.append(PastedTextAttachment(text: trimmed))
+    }
+
+    public func removePastedText(_ id: UUID) {
+        pastedTexts.removeAll { $0.id == id }
+    }
     /// Message the next send will quote.
     public var replyingTo: ChatMessage?
     /// Messages checked for bulk actions; empty means selection mode is off.
@@ -409,17 +424,19 @@ public final class ChatAppModel {
         let text = draft
         let attachments = draftAttachments
         guard !isStreaming else { return }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || !pastedTexts.isEmpty else { return }
         draft = ""
         draftAttachments = []
+        let pastes = pastedTexts
+        pastedTexts = []
         if let id = selectedConversationID {
             draftsByConversation.removeValue(forKey: id)
             attachmentsByConversation.removeValue(forKey: id)
         }
-        Task { await sendNow(text: text, attachments: attachments) }
+        Task { await sendNow(text: text, attachments: attachments, pastes: pastes) }
     }
 
-    public func sendNow(text: String, attachments: [MediaRef]) async {
+    public func sendNow(text: String, attachments: [MediaRef], pastes: [PastedTextAttachment] = []) async {
         guard var conversation = selectedConversation else { return }
         guard resolveProvider(for: conversation) != nil else {
             errorMessage = "先在设置中添加供应商"
@@ -429,6 +446,9 @@ public final class ChatAppModel {
 
         var parts: [ContentPart] = []
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(text)) }
+        for paste in pastes {
+            parts.append(.text("\n\n```\n\(paste.text)\n```"))
+        }
         parts.append(contentsOf: attachments.map { .media($0) })
 
         conversation.messages.append(ChatMessage(role: .user, parts: parts, replyToID: replyingTo?.id))
@@ -1050,4 +1070,11 @@ public final class ChatAppModel {
 
     public func dismissError() { errorMessage = nil }
     public func dismissStatus() { statusMessage = nil }
+}
+
+/// A long clipboard paste kept as a chip instead of inline draft text.
+public struct PastedTextAttachment: Identifiable, Hashable, Sendable {
+    public let id = UUID()
+    public var text: String
+    public var lineCount: Int { text.split(separator: "\n", omittingEmptySubsequences: false).count }
 }

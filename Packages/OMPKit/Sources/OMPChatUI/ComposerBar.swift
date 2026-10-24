@@ -45,6 +45,9 @@ public struct ComposerBar: View {
                 if !model.draftAttachments.isEmpty {
                     attachmentStrip
                 }
+                if !model.pastedTexts.isEmpty {
+                    pastedTextStrip
+                }
 
                 TextField("随心输入", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -60,27 +63,7 @@ public struct ComposerBar: View {
                         return .handled
                     }
                     .onKeyPress(phases: .down) { press in
-                        if press.key == .upArrow && (model.draft.isEmpty || promptHistoryIndex > 0) {
-                            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
-                                if promptHistoryIndex == 0 { originalDraft = model.draft }
-                                if promptHistoryIndex < prompts.count {
-                                    promptHistoryIndex += 1
-                                    model.draft = prompts[prompts.count - promptHistoryIndex]
-                                    return .handled
-                                }
-                            }
-                        } else if press.key == .downArrow && promptHistoryIndex > 0 {
-                            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
-                                promptHistoryIndex -= 1
-                                if promptHistoryIndex == 0 {
-                                    model.draft = originalDraft
-                                } else {
-                                    model.draft = prompts[prompts.count - promptHistoryIndex]
-                                }
-                                return .handled
-                            }
-                        }
-                        return .ignored
+                        handleHistoryKey(press)
                     }
 
                 HStack(spacing: 6) {
@@ -251,6 +234,9 @@ public struct ComposerBar: View {
         .onAppear {
             focused = true
         }
+        .onChange(of: model.draft) { _, newValue in
+            foldLongPaste(newValue)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ompVoiceMode)) { _ in
             showVoiceSheet = true
         }
@@ -382,6 +368,33 @@ public struct ComposerBar: View {
         model.draft = String(model.draft[..<at]) + "@" + title + " "
     }
 
+    private var pastedTextStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(model.pastedTexts) { paste in
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.plaintext")
+                            .font(.system(size: 10))
+                        Text("粘贴的文本 · \(paste.lineCount) 行")
+                            .font(.system(size: 11, weight: .medium))
+                        Button {
+                            model.removePastedText(paste.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.ompFill, in: Capsule())
+                    .help(String(paste.text.prefix(200)))
+                }
+            }
+        }
+    }
+
 
     private var projectName: String {
         if let id = model.selectedConversation?.projectID,
@@ -395,6 +408,32 @@ public struct ComposerBar: View {
         GitInfo.branch(at: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
     }
 
+    private func handleHistoryKey(_ press: KeyPress) -> KeyPress.Result {
+        if press.key == .upArrow && (model.draft.isEmpty || promptHistoryIndex > 0) {
+            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
+                if promptHistoryIndex == 0 { originalDraft = model.draft }
+                if promptHistoryIndex < prompts.count {
+                    promptHistoryIndex += 1
+                    model.draft = prompts[prompts.count - promptHistoryIndex]
+                    return .handled
+                }
+            }
+        } else if press.key == .downArrow && promptHistoryIndex > 0 {
+            if let prompts = model.selectedConversation?.messages.filter({ $0.role == .user }).map(\.concatenatedText), !prompts.isEmpty {
+                promptHistoryIndex -= 1
+                model.draft = promptHistoryIndex == 0 ? originalDraft : prompts[prompts.count - promptHistoryIndex]
+                return .handled
+            }
+        }
+        return .ignored
+    }
+
+    /// Folds a single oversized paste into a chip (ChatGPT pastedTextAttachment).
+    private func foldLongPaste(_ value: String) {
+        guard value.count > 1500, value.contains("\n") else { return }
+        model.draft = ""
+        model.addPastedText(value)
+    }
 
     private var contextChips: some View {
         HStack(spacing: 6) {
