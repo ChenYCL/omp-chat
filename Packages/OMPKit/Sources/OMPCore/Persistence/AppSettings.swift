@@ -36,6 +36,16 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var speechVoiceLanguage: String
     /// Sidebar ordering: "updated" (default), "created", or "manual".
     public var conversationSort: String
+    /// Global custom instructions appended after the base system prompt
+    /// (ChatGPT `settings.personalization.customInstructions`).
+    public var customInstructions: String
+    /// Remember context between chats (memory.enableMemories).
+    public var enableMemories: Bool
+    /// Custom accent color hex; empty means follow the system tint.
+    public var accentColorHex: String
+    /// Notify when a reply finishes while the app is in the background.
+    public var completionNotifications: Bool
+
     public init(
         version: Int = 1,
         defaultProviderID: UUID? = nil,
@@ -51,7 +61,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
         codeFontName: String = "SF Mono",
         speechRateMultiplier: Double = 1.0,
         speechVoiceLanguage: String = "zh-CN",
-        conversationSort: String = "updated"
+        conversationSort: String = "updated",
+        customInstructions: String = "",
+        enableMemories: Bool = false,
+        accentColorHex: String = "",
+        completionNotifications: Bool = false
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -68,7 +82,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.speechRateMultiplier = speechRateMultiplier
         self.speechVoiceLanguage = speechVoiceLanguage
         self.conversationSort = conversationSort
+        self.customInstructions = customInstructions
+        self.enableMemories = enableMemories
+        self.accentColorHex = accentColorHex
+        self.completionNotifications = completionNotifications
     }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
@@ -86,5 +105,17 @@ public struct AppSettings: Codable, Hashable, Sendable {
         speechRateMultiplier = try container.decodeIfPresent(Double.self, forKey: .speechRateMultiplier) ?? 1.0
         speechVoiceLanguage = try container.decodeIfPresent(String.self, forKey: .speechVoiceLanguage) ?? "zh-CN"
         conversationSort = try container.decodeIfPresent(String.self, forKey: .conversationSort) ?? "updated"
+        customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
+        enableMemories = try container.decodeIfPresent(Bool.self, forKey: .enableMemories) ?? false
+        accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex) ?? ""
+        completionNotifications = try container.decodeIfPresent(Bool.self, forKey: .completionNotifications) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, defaultProviderID, defaultModelID, sendOnReturn, appearance
+        case systemPrompt, temperature, maxOutputTokens, fontSize, soundEffects
+        case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage
+        case conversationSort, customInstructions, enableMemories, accentColorHex
+        case completionNotifications
     }
 }

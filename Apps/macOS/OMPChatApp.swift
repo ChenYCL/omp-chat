@@ -10,6 +10,7 @@ struct OMPChatApp: App {
         WindowGroup {
             ChatRootView()
                 .environment(model)
+                .tint(customAccent)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.hiddenTitleBar)
@@ -80,5 +81,12 @@ struct OMPChatApp: App {
             ProviderSettingsView()
                 .environment(model)
         }
+    }
+
+    private var customAccent: Color? {
+        let hex = model.settings.accentColorHex
+        guard hex.count == 7, hex.hasPrefix("#"),
+              let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return Color.ompFlat(rgb: value)
     }
 }

@@ -10,6 +10,14 @@ struct OMPChatiOSApp: App {
         WindowGroup {
             ChatRootView()
                 .environment(model)
+                .tint(customAccent)
         }
+    }
+
+    private var customAccent: Color? {
+        let hex = model.settings.accentColorHex
+        guard hex.count == 7, hex.hasPrefix("#"),
+              let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return Color.ompFlat(rgb: value)
     }
 }

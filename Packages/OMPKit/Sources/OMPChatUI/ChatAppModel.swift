@@ -862,6 +862,10 @@ public final class ChatAppModel {
         }
         if failure == nil && !cancelled {
             AudioFeedback.playComplete(enabled: settings.soundEffects)
+            if settings.completionNotifications, selectedConversationID != conversationID {
+                let title = conversation(conversationID)?.title ?? "新回复"
+                CompletionNotifier.notify(title: title)
+            }
         }
         isStreaming = false
         streamingConversationID = nil
@@ -1033,9 +1037,12 @@ public final class ChatAppModel {
     }
 
     private func systemPrompt(for conversation: Conversation) -> String? {
-        let prompt = (conversation.systemPrompt ?? "").isEmpty ? settings.systemPrompt : (conversation.systemPrompt ?? "")
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        let base = (conversation.systemPrompt ?? "").isEmpty ? settings.systemPrompt : (conversation.systemPrompt ?? "")
+        let custom = settings.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let combined = [base.trimmingCharacters(in: .whitespacesAndNewlines), custom]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        return combined.isEmpty ? nil : combined
     }
 
     private func conversation(_ id: UUID) -> Conversation? {
@@ -1089,6 +1096,35 @@ public final class ChatAppModel {
 
     public func dismissError() { errorMessage = nil }
     public func dismissStatus() { statusMessage = nil }
+
+    /// Workspace-wide counts for the data controls settings pane.
+    public var workspaceStats: (conversations: Int, messages: Int, mediaFiles: Int, formattedSize: String) {
+        let messageCount = conversations.reduce(0) { $0 + $1.messages.count }
+        let mediaCount = conversations.reduce(0) { total, conversation in
+            total + conversation.messages.reduce(0) { $0 + $1.parts.filter { if case .media = $0 { true } else { false } }.count }
+        }
+        let size = directorySize(mediaLibrary.rootURL.deletingLastPathComponent())
+        return (conversations.count, messageCount, mediaCount, ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+    }
+
+    private func directorySize(_ url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        return total
+    }
+
+    /// Full workspace dump for the "导出全部数据" action.
+    public func exportWorkspaceJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        struct Dump: Codable { var conversations: [Conversation]; var projects: [Project] }
+        let data = (try? encoder.encode(Dump(conversations: conversations, projects: projects))) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
 }
 
 /// A long clipboard paste kept as a chip instead of inline draft text.
@@ -1096,4 +1132,27 @@ public struct PastedTextAttachment: Identifiable, Hashable, Sendable {
     public let id = UUID()
     public var text: String
     public var lineCount: Int { text.split(separator: "\n", omittingEmptySubsequences: false).count }
+}
+
+import UserNotifications
+
+/// Posts a local notification when a reply finishes while the user is in
+/// another conversation or the app is backgrounded.
+enum CompletionNotifier {
+    static func notify(title: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "回复已完成"
+            content.body = title
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: UUID().uuidString,
+                content: content,
+                trigger: nil
+            )
+            center.add(request)
+        }
+    }
 }

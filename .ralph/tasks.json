@@ -3,49 +3,77 @@
   "updatedAt": "2026-10-24",
   "tasks": [
     {
-      "id": "p1-collapse-all",
-      "title": "侧栏全部折叠/展开（collapseFolder / expandFolder）",
-      "status": "completed",
-      "files": [
-        "Packages/OMPKit/Sources/OMPChatUI/ConversationSidebar.swift"
-      ],
-      "acceptance": [
-        "侧栏出现一键折叠全部项目与分区的控件",
-        "折叠状态即时生效可再展开",
-        "swift test 27 个全绿",
-        "macOS+iOS 构建通过"
-      ]
-    },
-    {
-      "id": "p1-section-bulk",
-      "title": "自定义分区批量归档/标记已读（customSections.archiveAll / markRead）",
+      "id": "p2-personalization",
+      "title": "设置新增「个性化」分区：自定义指令（全局）+ 记忆开关（memory.enableMemories）",
       "category": "frontend",
       "complexity": "standard",
       "status": "completed",
       "files": [
-        "Packages/OMPKit/Sources/OMPChatUI/ConversationSidebar.swift",
+        "Packages/OMPKit/Sources/OMPCore/Persistence/AppSettings.swift",
+        "Packages/OMPKit/Sources/OMPChatUI/ProviderSettingsView.swift",
         "Packages/OMPKit/Sources/OMPChatUI/ChatAppModel.swift"
       ],
       "acceptance": [
-        "分区右键菜单含『归档分区全部会话』与『标记分区已读』",
-        "操作落盘且侧栏即时刷新",
+        "设置左导航出现「个性化」入口",
+        "全局自定义指令可编辑并作为系统提示词基底（对话级留空时生效）",
+        "记忆开关持久化",
+        "旧设置文档解码不受影响",
         "swift test 全绿",
         "双端构建通过"
       ]
     },
     {
-      "id": "p1-lightbox-paging",
-      "title": "图片灯箱多图翻页（imagePreviewDialog.nextImage / previousImage）",
+      "id": "p2-accent-color",
+      "title": "外观分区增加自定义强调色（settings.appearance.customAccent）",
+      "category": "frontend",
+      "complexity": "simple",
+      "status": "completed",
+      "files": [
+        "Packages/OMPKit/Sources/OMPCore/Persistence/AppSettings.swift",
+        "Packages/OMPKit/Sources/OMPDesign/Theme.swift",
+        "Packages/OMPKit/Sources/OMPChatUI/ProviderSettingsView.swift"
+      ],
+      "acceptance": [
+        "外观分区提供 5-6 个强调色圆点选择",
+        "选择即时生效并持久化",
+        "发送键/选中态等 accent 处跟随变化",
+        "旧文档兼容",
+        "双端构建通过"
+      ]
+    },
+    {
+      "id": "p2-notifications",
+      "title": "设置新增「通知」分区：生成完成系统通知（settings.nav.notifications）",
       "category": "frontend",
       "complexity": "standard",
       "status": "completed",
       "files": [
-        "Packages/OMPKit/Sources/OMPChatUI/MessageRow.swift"
+        "Packages/OMPKit/Sources/OMPCore/Persistence/AppSettings.swift",
+        "Packages/OMPKit/Sources/OMPChatUI/ChatAppModel.swift",
+        "Packages/OMPKit/Sources/OMPChatUI/ProviderSettingsView.swift"
       ],
       "acceptance": [
-        "同一条消息多张图片可在灯箱内左右翻页",
-        "翻页保留缩放状态重置",
-        "键盘左右箭头可翻页",
+        "通知开关持久化",
+        "流式完成时 App 不在前台则发用户通知（UNUserNotificationCenter）",
+        "macOS 与 iOS 双端可用",
+        "swift test 全绿",
+        "双端构建通过"
+      ]
+    },
+    {
+      "id": "p2-data-controls",
+      "title": "设置新增「数据控制」分区：存储占用统计 + 导出全部数据",
+      "category": "frontend",
+      "complexity": "standard",
+      "status": "completed",
+      "files": [
+        "Packages/OMPKit/Sources/OMPChatUI/ProviderSettingsView.swift",
+        "Packages/OMPKit/Sources/OMPChatUI/ChatAppModel.swift"
+      ],
+      "acceptance": [
+        "显示会话数/消息数/媒体数与存储目录体积",
+        "一键导出全部会话为 JSON 到用户选择位置",
+        "swift test 全绿",
         "双端构建通过"
       ]
     }

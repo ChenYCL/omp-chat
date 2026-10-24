@@ -17,15 +17,19 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, appearance, voice, archived, shortcuts, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
             case .general: "常规"
+            case .personalization: "个性化"
             case .appearance: "外观"
             case .voice: "语音"
+            case .notifications: "通知"
             case .archived: "已归档的聊天"
             case .shortcuts: "键盘快捷键"
+            case .sorting: "会话排序"
+            case .dataControls: "数据控制"
             case .providers: "连接"
             case .about: "关于"
             }
@@ -33,16 +37,19 @@ public struct ProviderSettingsView: View {
         var symbol: String {
             switch self {
             case .general: "gearshape"
+            case .personalization: "person.crop.circle"
             case .appearance: "sparkles"
             case .voice: "waveform"
+            case .notifications: "bell.badge"
             case .archived: "archivebox"
             case .shortcuts: "keyboard"
+            case .sorting: "arrow.up.arrow.down"
+            case .dataControls: "externaldrive"
             case .providers: "point.3.connected.trianglepath.dotted"
             case .about: "info.circle"
             }
         }
     }
-
     public init() {}
 
     public var body: some View {
@@ -187,14 +194,23 @@ public struct ProviderSettingsView: View {
         case .general:
             settingsCard { generationSection }
             settingsCard { defaultModelSection }
+        case .personalization:
+            settingsCard { personalizationSection }
         case .appearance:
             settingsCard { appearanceSection }
+            settingsCard { accentColorContent }
         case .voice:
             settingsCard { speechSection }
+        case .notifications:
+            settingsCard { notificationsSection }
         case .archived:
             archivedContent
         case .shortcuts:
             shortcutsContent
+        case .sorting:
+            settingsCard { sortingSection }
+        case .dataControls:
+            dataControlsContent
         case .providers:
             settingsCard { providersSection }
         case .about:
@@ -303,6 +319,111 @@ public struct ProviderSettingsView: View {
             Text("侧栏会话排序")
         } footer: {
             Text("手动排序时，拖拽会话行调整的顺序会被保留；置顶会话始终排在最前。")
+        }
+    }
+
+    private var personalizationSection: some View {
+        Section {
+            TextField("全局自定义指令", text: $draft.customInstructions, axis: .vertical)
+                .lineLimit(3...8)
+            Toggle("记忆上下文（跨对话记住要点）", isOn: $draft.enableMemories)
+        } header: {
+            Text("个性化")
+        } footer: {
+            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效；「ChatGPT → 设置 → 个性化 → 自定义指令」同款。")
+        }
+    }
+
+    private var notificationsSection: some View {
+        Section {
+            Toggle("后台生成完成时通知我", isOn: $draft.completionNotifications)
+        } header: {
+            Text("通知")
+        } footer: {
+            Text("App 在后台时，回复生成完毕会发送系统通知。首次开启需要授权通知权限。")
+        }
+    }
+
+    private var accentColorContent: some View {
+        HStack(spacing: 12) {
+            ForEach(AccentOption.all) { option in
+                Button {
+                    draft.accentColorHex = option.hex
+                } label: {
+                    Circle()
+                        .fill(option.color)
+                        .frame(width: 26, height: 26)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(
+                                    draft.accentColorHex == option.hex ? Color.primary : Color.clear,
+                                    lineWidth: 2
+                                )
+                                .padding(-4)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(option.name)
+            }
+            Spacer()
+            Text(draft.accentColorHex.isEmpty ? "跟随系统" : draft.accentColorHex)
+                .font(.system(size: 11).monospaced())
+                .foregroundStyle(Color.ompTextTertiary)
+        }
+    }
+
+    struct AccentOption: Identifiable {
+        let name: String
+        let rgb: UInt32
+        var id: String { name }
+        var hex: String { String(format: "#%06X", rgb) }
+        var color: Color { Color.ompFlat(rgb: rgb) }
+        static let all: [AccentOption] = [
+            .init(name: "系统", rgb: 0),
+            .init(name: "蓝", rgb: 0x0A84FF),
+            .init(name: "紫", rgb: 0x7D5AFF),
+            .init(name: "绿", rgb: 0x30B15C),
+            .init(name: "橙", rgb: 0xF59E0B),
+            .init(name: "粉", rgb: 0xFF375F),
+        ]
+    }
+
+    private var dataControlsContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            let stats = model.workspaceStats
+            VStack(alignment: .leading, spacing: 6) {
+                statRow("会话", "\(stats.conversations) 个")
+                statRow("消息", "\(stats.messages) 条")
+                statRow("媒体", "\(stats.mediaFiles) 个")
+                statRow("存储目录", stats.formattedSize)
+            }
+            Divider()
+            Button {
+                exportAllData()
+            } label: {
+                Label("导出全部数据 (JSON)", systemImage: "square.and.arrow.up.on.square")
+            }
+        }
+    }
+
+    private func statRow(_ name: String, _ value: String) -> some View {
+        HStack {
+            Text(name)
+                .font(.system(size: 13))
+            Spacer()
+            Text(value)
+                .font(.system(size: 12.5).monospacedDigit())
+                .foregroundStyle(Color.ompTextSecondary)
+        }
+    }
+
+    private func exportAllData() {
+        let payload = model.exportWorkspaceJSON()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "ompchat-export.json"
+        if panel.runModal() == .OK, let url = panel.url {
+            try? payload.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 
