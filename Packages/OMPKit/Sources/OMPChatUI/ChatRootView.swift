@@ -13,6 +13,7 @@ public extension Notification.Name {
     static let ompToggleSidebar = Notification.Name("omp.toggleSidebar")
     static let ompVoiceMode = Notification.Name("omp.voiceMode")
     static let ompScrollToBottom = Notification.Name("omp.scrollToBottom")
+    static let ompToggleTerminal = Notification.Name("omp.toggleTerminal")
 }
 
 public struct ChatRootView: View {
@@ -59,6 +60,7 @@ public struct ChatRootView: View {
 
     #if os(macOS)
     @State private var sidebarWidth: CGFloat = 260
+    @State private var showTerminal = false
 
     private var macOSRoot: some View {
         HStack(spacing: 0) {
@@ -68,11 +70,27 @@ public struct ChatRootView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 SidebarResizer(width: $sidebarWidth)
             }
-            ChatDetailView(onQuickSwitch: { showSwitcher = true }, onToggleSidebar: toggleSidebar)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ChatDetailView(
+                onQuickSwitch: { showSwitcher = true },
+                onToggleSidebar: toggleSidebar,
+                onToggleTerminal: { showTerminal.toggle() }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // A terminal that really runs commands on this Mac. It has existed
+            // unwired; the thread header's ⌘J button now opens it.
+            if showTerminal {
+                Divider()
+                TerminalView()
+                    .frame(width: 460)
+                    .transition(.move(edge: .trailing))
+            }
         }
         .background(Color.ompCanvas)
         .animation(Theme.Motion.quick, value: sidebarVisible)
+        .animation(Theme.Motion.quick, value: showTerminal)
+        .onReceive(NotificationCenter.default.publisher(for: .ompToggleTerminal)) { _ in
+            showTerminal.toggle()
+        }
     }
 
     private func toggleSidebar() {
@@ -86,6 +104,7 @@ public struct ChatDetailView: View {
     @Environment(ChatAppModel.self) private var model
     let onQuickSwitch: () -> Void
     let onToggleSidebar: () -> Void
+    let onToggleTerminal: () -> Void
 
     @State private var showExporter = false
     @State private var exportDocument: MarkdownDocument?
@@ -97,9 +116,14 @@ public struct ChatDetailView: View {
     @State private var renamingTitle = ""
     @ObservedObject private var network = NetworkMonitor.shared
 
-    public init(onQuickSwitch: @escaping () -> Void = {}, onToggleSidebar: @escaping () -> Void = {}) {
+    public init(
+        onQuickSwitch: @escaping () -> Void = {},
+        onToggleSidebar: @escaping () -> Void = {},
+        onToggleTerminal: @escaping () -> Void = {}
+    ) {
         self.onQuickSwitch = onQuickSwitch
         self.onToggleSidebar = onToggleSidebar
+        self.onToggleTerminal = onToggleTerminal
     }
 
     public var body: some View {
@@ -314,6 +338,7 @@ public struct ChatDetailView: View {
             Spacer()
 
             headerIconButton("square.and.arrow.up", "分享对话") { shareConversation() }
+            headerIconButton("terminal", "终端 (⌘J)") { onToggleTerminal() }
             headerIconButton("sidebar.left", "切换侧栏 (⌘B)") { onToggleSidebar() }
             headerIconButton("xmark", "关闭窗口") {
                 NSApp.keyWindow?.close()

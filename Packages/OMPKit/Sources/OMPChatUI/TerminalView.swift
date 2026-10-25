@@ -61,7 +61,9 @@ public struct TerminalView: View {
             Text(promptText)
                 .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(.green)
-            TextField("", text: $input, axis: .vertical)
+            // Single line, no `axis`: a vertical-axis field treats Return as a
+            // newline, so `onSubmit` never fired and commands could not run.
+            TextField("", text: $input)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(.white)
@@ -70,6 +72,18 @@ public struct TerminalView: View {
                 .onSubmit { run() }
             if running {
                 ProgressView().controlSize(.mini)
+            } else if !input.trimmingCharacters(in: .whitespaces).isEmpty {
+                // A visible run button: Return alone was unreliable inside the
+                // scroll view, and Moshi's terminal has one too.
+                Button(action: run) {
+                    Image(systemName: "return")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .frame(width: 20, height: 18)
+                        .background(Color(white: 0.16), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("运行")
             }
         }
         .padding(.top, 2)
