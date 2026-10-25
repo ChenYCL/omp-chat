@@ -47,6 +47,16 @@ final class DevicesUITests: XCTestCase {
         XCTAssertEqual(saved, ["公司 Mac"], "落盘的 workspace.json 应只剩一台设备")
     }
 
+    func testUnreachableDevicesAreMarkedOfflineWithAReason() {
+        openDevices()
+        XCTAssertTrue(app.staticTexts["书房 Mac"].waitForExistence(timeout: 5))
+        let offline = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '离线 · '"))
+        let deadline = Date().addingTimeInterval(10)
+        while offline.count < 2, Date() < deadline { Thread.sleep(forTimeInterval: 0.3) }
+        XCTAssertEqual(offline.count, 2, "两台都连不上，应各自显示离线原因")
+        XCTAssertFalse(app.staticTexts["已连接"].exists, "没有配对时不应出现「已连接」")
+    }
+
     func testForgettingTheLastDeviceShowsTheEmptyState() throws {
         openDevices()
         for name in ["书房 Mac", "公司 Mac"] {
@@ -92,8 +102,10 @@ final class DevicesUITests: XCTestCase {
 
     private func seed() throws {
         let providerID = "11111111-1111-1111-1111-111111111111"
-        func device(_ name: String, _ host: String, _ stamp: String) -> [String: Any] {
-            ["id": UUID().uuidString, "name": name, "transport": "lan", "host": host, "port": 8795,
+        // Ports 9 and 10 refuse connections at once, so the reachability probe
+        // gives a deterministic "offline" without waiting for a timeout.
+        func device(_ name: String, _ port: Int, _ stamp: String) -> [String: Any] {
+            ["id": UUID().uuidString, "name": name, "transport": "lan", "host": "127.0.0.1", "port": port,
              "token": "", "hubURL": "", "roomCode": "", "lastConnectedAt": stamp]
         }
         let workspace: [String: Any] = [
@@ -106,8 +118,8 @@ final class DevicesUITests: XCTestCase {
             "settings": [
                 "defaultModelID": "m", "defaultProviderID": providerID, "version": 1,
                 "pairedDevices": [
-                    device("书房 Mac", "192.168.1.8", "2026-10-25T12:00:00Z"),
-                    device("公司 Mac", "192.168.1.9", "2026-10-24T12:00:00Z"),
+                    device("书房 Mac", 9, "2026-10-25T12:00:00Z"),
+                    device("公司 Mac", 10, "2026-10-24T12:00:00Z"),
                 ],
             ],
             "version": 1,

@@ -455,6 +455,10 @@ public struct PaseoDevicesSheet: View {
 
     private var devices: [PairedDevice] { model.settings.pairedDevices }
 
+    /// Live answers from `DeviceReachability`; a device without an entry has
+    /// not been probed yet and shows no dot.
+    @State private var reachability: [UUID: DeviceReachability] = [:]
+
     public var body: some View {
         NavigationStack {
             List {
@@ -479,11 +483,13 @@ public struct PaseoDevicesSheet: View {
                     } header: {
                         Text("我的 Mac")
                     } footer: {
-                        Text("点一台即可切换并重新连接；左滑可忘记设备。令牌只保存在这部手机上。")
+                        Text("点一台即可切换并重新连接；下拉刷新在线状态，左滑可忘记设备。令牌只保存在这部手机的保管库里。")
                     }
                 }
             }
             .navigationTitle("可控设备")
+            .task(id: devices.map(\.id)) { await probe() }
+            .refreshable { await probe() }
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -517,8 +523,15 @@ public struct PaseoDevicesSheet: View {
                         .font(.system(size: 11.5))
                         .foregroundStyle(Color.ompTextTertiary)
                         .lineLimit(1)
+                    if case .offline(let reason) = reachability[device.id], !active {
+                        Text("离线 · \(reason)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
+                statusDot(for: device)
                 if active {
                     Text("已连接")
                         .font(.system(size: 11, weight: .medium))
@@ -534,6 +547,30 @@ public struct PaseoDevicesSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("device.\(device.id.uuidString)")
+    }
+
+    @ViewBuilder
+    private func statusDot(for device: PairedDevice) -> some View {
+        switch reachability[device.id] {
+        case .checking:
+            ProgressView().controlSize(.mini)
+        case .online:
+            Circle().fill(Color.green).frame(width: 7, height: 7)
+                .accessibilityLabel("在线")
+        case .offline:
+            Circle().fill(Color.ompTextTertiary.opacity(0.5)).frame(width: 7, height: 7)
+                .accessibilityLabel("离线")
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private func probe() async {
+        let current = devices
+        for device in current { reachability[device.id] = .checking }
+        await DeviceReachability.check(current) { id, state in
+            await MainActor.run { reachability[id] = state }
+        }
     }
 
     private func forget(at offsets: IndexSet) {
