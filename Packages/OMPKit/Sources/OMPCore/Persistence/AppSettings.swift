@@ -55,6 +55,14 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var relayPort: UInt16
     /// LAN relay host side (macOS): whether the relay server is enabled.
     public var relayEnabled: Bool
+    /// Relay hub host side (macOS): public hub base URL. Empty = LAN-only mode.
+    public var relayHubURL: String
+    /// Relay hub host side (macOS): 6-character room code shared with the phone.
+    public var relayRoomCode: String
+    /// Relay hub controller side (iOS): hub base URL.
+    public var remoteHubURL: String
+    /// Relay hub controller side (iOS): room code typed by the user.
+    public var remoteRoomCode: String
 
     public init(
         version: Int = 1,
@@ -81,7 +89,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remoteToken: String = "",
         relayToken: String = "",
         relayPort: UInt16 = 8790,
-        relayEnabled: Bool = false
+        relayEnabled: Bool = false,
+        relayHubURL: String = "",
+        relayRoomCode: String = "",
+        remoteHubURL: String = "",
+        remoteRoomCode: String = ""
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -108,6 +120,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.relayToken = relayToken
         self.relayPort = relayPort
         self.relayEnabled = relayEnabled
+        self.relayHubURL = relayHubURL
+        self.relayRoomCode = relayRoomCode
+        self.remoteHubURL = remoteHubURL
+        self.remoteRoomCode = remoteRoomCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -137,6 +153,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayToken = try container.decodeIfPresent(String.self, forKey: .relayToken) ?? ""
         relayPort = try container.decodeIfPresent(UInt16.self, forKey: .relayPort) ?? 8790
         relayEnabled = try container.decodeIfPresent(Bool.self, forKey: .relayEnabled) ?? false
+        relayHubURL = try container.decodeIfPresent(String.self, forKey: .relayHubURL) ?? ""
+        relayRoomCode = try container.decodeIfPresent(String.self, forKey: .relayRoomCode) ?? ""
+        remoteHubURL = try container.decodeIfPresent(String.self, forKey: .remoteHubURL) ?? ""
+        remoteRoomCode = try container.decodeIfPresent(String.self, forKey: .remoteRoomCode) ?? ""
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -147,5 +167,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case completionNotifications
         case remoteHost, remotePort, remoteToken
         case relayToken, relayPort, relayEnabled
+        case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
     }
 }

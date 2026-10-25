@@ -128,8 +128,10 @@ enum IOSShellMetrics {
     static let composerMaxHeight: CGFloat = 132      // multi-line cap
     static let composerRadius: CGFloat = 22
     static let sendButtonSize: CGFloat = 32
-    /// Official iOS colors; no token exists for hairline-over-white tab bar.
-    static let tabBarBackground = Color.ompFlat(rgb: 0xF9F9F9)
+    /// Official iOS tab bar tracks the surface token, not a fixed white:
+    /// light #f9f9f9, dark #212121 (the earlier fixed colour left white bands
+    /// under the composer in dark mode).
+    static let tabBarBackground = Color.ompDynamic(light: 0xF9F9F9, dark: 0x212121)
 }
 
 // MARK: - Chat Screen
@@ -411,8 +413,8 @@ struct HostScreen: View {
         VStack(spacing: 0) {
             hostTopBar
             Divider().opacity(0.6)
-            // Pane pills (four-state switch), directly under the top bar.
-            HStack(spacing: 4) {
+            // Pane segmented control (official iOS look: grey track, white thumb).
+            HStack(spacing: 3) {
                 ForEach(IOSShell.HostPane.allCases, id: \.self) { item in
                     Button {
                         withAnimation(Theme.Motion.quick) { pane = item }
@@ -420,16 +422,19 @@ struct HostScreen: View {
                         Text(item.rawValue)
                             .font(.system(size: 12.5, weight: pane == item ? .semibold : .medium))
                             .foregroundStyle(pane == item ? Color.ompText : Color.ompTextSecondary)
-                            .padding(.horizontal, 14)
+                            .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(pane == item ? Color.ompCard : Color.clear)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(pane == item ? Color.ompCard : Color.clear)
                             )
-                            .shadow(color: pane == item ? Color.black.opacity(0.05) : .clear, radius: 3, y: 1)
+                            .shadow(color: pane == item ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
                     }
                     .buttonStyle(.plain)
                 }
             }
+            .padding(3)
+            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 

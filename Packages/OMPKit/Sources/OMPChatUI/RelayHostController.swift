@@ -26,14 +26,27 @@ public final class RelayHostController {
     private var pushTimer: Timer?
     private var lastPushAt = Date.distantPast
 
+    /// Cross-network mode: when a hub URL is configured both the LAN server and
+    /// the hub publisher run, so the phone can connect either way.
+    private var hubClient: RelayHubClient?
+    private var hubPublishTask: Task<Void, Never>?
+
     public private(set) var isRunning = false
     public private(set) var lastError: String?
+    /// Hub-specific failure (LAN relay may still be healthy).
+    public private(set) var hubError: String?
 
     /// Listen port while running; `nil` when stopped.
     public var port: UInt16? { isRunning ? server.port : nil }
 
-    /// Pairing token handed out to remote controllers.
+    /// Pairing token handed out to remote controllers (LAN mode).
     public private(set) var token: String
+
+    /// Room code for the public relay hub; `nil` when hub mode is off.
+    public private(set) var roomCode: String?
+
+    /// Hub base URL while hub mode is on.
+    public private(set) var hubURL: URL?
 
     public init(model: ChatAppModel, token: String) {
         self.model = model
@@ -87,6 +100,49 @@ public final class RelayHostController {
         pushSnapshotIfDue(force: true)
     }
 
+    /// Adds cross-network reachability on top of the LAN relay: register the
+    /// room with the hub and keep pushing snapshots upstream.
+    public func startHub(roomCode: String, hubURL: URL) {
+        stopHub()
+        self.roomCode = roomCode.uppercased()
+        self.hubURL = hubURL
+        hubError = nil
+        let client = RelayHubClient(hubURL: hubURL, roomCode: roomCode)
+        hubClient = client
+        do {
+            try client.startHost { [weak self] command in
+                await self?.model?.handleRelayCommand(command)
+            }
+        } catch {
+            hubError = "中继连接失败：\(relayErrorDescription(error))"
+            hubClient = nil
+            return
+        }
+        hubPublishTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let client = self.hubClient, let model = self.model else { break }
+                do {
+                    try await client.publish(model.relaySnapshot())
+                    self.hubError = nil
+                } catch {
+                    self.hubError = "状态上报失败：\(self.relayErrorDescription(error))"
+                }
+                let interval = model.isStreaming ? UInt64(800_000_000) : UInt64(2_000_000_000)
+                try? await Task.sleep(nanoseconds: interval)
+            }
+        }
+    }
+
+    /// Drops the hub registration; the LAN server (if running) is untouched.
+    public func stopHub() {
+        hubPublishTask?.cancel()
+        hubPublishTask = nil
+        hubClient?.stopHost()
+        hubClient = nil
+        roomCode = nil
+        hubURL = nil
+    }
+
     /// Stops the relay, the Bonjour advertisement and the push timer.
     public func stop() {
         pushTimer?.invalidate()
@@ -94,6 +150,7 @@ public final class RelayHostController {
         advertiser?.stop()
         advertiser = nil
         server.stop()
+        stopHub()
         isRunning = false
     }
 

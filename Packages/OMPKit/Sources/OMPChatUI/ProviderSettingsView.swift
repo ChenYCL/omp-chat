@@ -457,6 +457,7 @@ public struct ProviderSettingsView: View {
     }
 
     @State private var portDraft = ""
+    @State private var hubURLDraft = ""
     private var remoteControlSection: some View {
         Section {
             Toggle("启用远程控制", isOn: Binding(
@@ -510,15 +511,85 @@ public struct ProviderSettingsView: View {
                     Spacer()
                     relayStatusLine
                 }
-                Text("同一 Wi-Fi 下的 iPhone 打开 OMPChat，用配对码连接本机。请勿把配对码泄露给局域网外的人。")
+
+                Divider()
+
+                // MARK: Cross-network (relay hub)
+                Toggle("跨网络（房间码 + 公网中继）", isOn: Binding(
+                    get: { !draft.relayHubURL.isEmpty },
+                    set: { on in
+                        draft.relayHubURL = on ? (hubURLDraft.isEmpty ? Self.defaultHubURL : hubURLDraft) : ""
+                        if on, draft.relayRoomCode.isEmpty {
+                            draft.relayRoomCode = RelayHubClient.newRoomCode()
+                        }
+                        hubURLDraft = draft.relayHubURL
+                        applyRelaySettings()
+                    }
+                ))
+
+                if !draft.relayHubURL.isEmpty {
+                    HStack {
+                        Text("中继地址")
+                        Spacer()
+                        TextField("https://hub.example.com", text: $hubURLDraft)
+                            .frame(width: 220)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit {
+                                draft.relayHubURL = hubURLDraft.trimmingCharacters(in: .whitespaces)
+                                applyRelaySettings()
+                            }
+                    }
+                    HStack {
+                        Text("房间码")
+                        Spacer()
+                        Text(draft.relayRoomCode.isEmpty ? "—" : draft.relayRoomCode)
+                            .font(.system(size: 15, weight: .semibold).monospaced())
+                            .textSelection(.enabled)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(draft.relayRoomCode, forType: .string)
+                        } label: {
+                            Label("复制", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(draft.relayRoomCode.isEmpty)
+                        Button("换一个") { regenerateRoom() }
+                            .buttonStyle(.borderless)
+                    }
+                    Text("在 iPhone 的「远程」页输入这 6 位房间码即可连接，不需要同一 Wi-Fi，也不需要公网 IP。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let hubError = model.relayController?.hubError {
+                        Label(hubError, systemImage: "exclamationmark.triangle")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Text("同一 Wi-Fi 下的 iPhone 可用配对码直连；开了跨网络后，蜂窝网络也能用房间码连上。配对码与房间码都不要外传。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("远程控制")
         } footer: {
-            Text("局域网内设备可浏览会话并发送消息；所有请求都携带配对码鉴权。")
+            Text("局域网直连 + 可选公网中继；中继只转发结构化会话状态，不保存聊天内容。")
         }
+    }
+
+    static let defaultHubURL = "http://127.0.0.1:8899"
+
+    private func applyRelaySettings() {
+        var updated = draft
+        Task {
+            await model.saveSettings(updated)
+            await model.syncRelayController()
+        }
+    }
+
+    private func regenerateRoom() {
+        model.regenerateRelayRoomCode()
+        draft = model.settings
     }
 
     private var maskedToken: String {

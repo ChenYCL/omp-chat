@@ -187,8 +187,10 @@ final class IOSShellUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
 
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-        let url = dir.appendingPathComponent("\(name).png")
-        try? shot.pngRepresentation.write(to: url)
+        // Exported to a host-visible location so the shots can be reviewed
+        // outside Xcode's result bundle as well.
+        let shared = URL(fileURLWithPath: "/tmp/ompchat-uitest-shots")
+        try? FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        try? shot.pngRepresentation.write(to: shared.appendingPathComponent("\(name).png"))
     }
 }

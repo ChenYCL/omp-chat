@@ -192,6 +192,18 @@ public final class RemoteRelayClient: Sendable {
     }
 }
 
+extension RemoteRelayClient: RelayCommandSink {
+    /// LAN transport adapter so both connection modes share the remote screens.
+    public func submit(_ command: RelayCommand) async throws {
+        switch command {
+        case .input(let conversationID, let text):
+            _ = try await send(text: text, conversationID: conversationID)
+        case .stop(let conversationID):
+            try await stop(conversationID: conversationID)
+        }
+    }
+}
+
 public enum RelayClientError: LocalizedError, Sendable {
     case unauthorized
     case badResponse

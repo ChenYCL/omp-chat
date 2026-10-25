@@ -350,7 +350,8 @@ public struct MarkdownTableView: View {
                 }
             }
         }
-        .background(Color.ompCard)
+        // Official tables sit on the transcript surface with only a hairline
+        // border; a filled card read as a black slab in dark mode.
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)

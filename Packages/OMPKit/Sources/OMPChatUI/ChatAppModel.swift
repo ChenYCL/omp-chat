@@ -1158,14 +1158,39 @@ public final class ChatAppModel {
             settings.relayToken = token
             Task { await saveSettings(settings) }
         }
-        if let controller = relayController {
-            controller.updateToken(token)
-            controller.start(port: settings.relayPort)
+        // Hub mode needs a stable room code so the phone can remember it.
+        if !settings.relayHubURL.isEmpty, settings.relayRoomCode.isEmpty {
+            settings.relayRoomCode = RelayHubClient.newRoomCode()
+            Task { await saveSettings(settings) }
+        }
+
+        let controller: RelayHostController
+        if let existing = relayController {
+            existing.updateToken(token)
+            existing.start(port: settings.relayPort)
+            controller = existing
         } else {
-            let controller = RelayHostController(model: self, token: token)
+            controller = RelayHostController(model: self, token: token)
             relayController = controller
             controller.start(port: settings.relayPort)
         }
+
+        // Cross-network reachability runs alongside the LAN listener, so the
+        // phone works both on the same Wi-Fi and from cellular.
+        if !settings.relayHubURL.isEmpty,
+           let hubURL = URL(string: settings.relayHubURL),
+           RelayHubClient.isValidRoomCode(settings.relayRoomCode) {
+            controller.startHub(roomCode: settings.relayRoomCode, hubURL: hubURL)
+        } else {
+            controller.stopHub()
+        }
+    }
+
+    /// Regenerates the pairing room code (host side).
+    public func regenerateRelayRoomCode() {
+        settings.relayRoomCode = RelayHubClient.newRoomCode()
+        Task { await saveSettings(settings) }
+        syncRelayController()
     }
 
 

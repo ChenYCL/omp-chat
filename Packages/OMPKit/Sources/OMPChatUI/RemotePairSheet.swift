@@ -21,6 +21,17 @@ public struct RemoteScreen: View {
     @State private var selectedItem: ConversationSheetItem?
     @State private var client: RemoteRelayClient?
     @State private var revisionsTask: Task<Void, Never>?
+    /// Connection mode: same Wi-Fi (IP + token) or cross-network (room code).
+    @State private var mode: ConnectMode = .room
+    @State private var hubClient: RelayHubClient?
+    @State private var persistedRoom = ""
+    @State private var roomField = ""
+    @State private var hubField = ""
+
+    private enum ConnectMode: String, CaseIterable {
+        case room = "房间码"
+        case lan = "局域网"
+    }
 
     public init() {}
 
@@ -53,7 +64,7 @@ public struct RemoteScreen: View {
             NavigationStack {
                 RemoteConversationScreen(
                     conversationID: item.id,
-                    client: client,
+                    client: activeSink,
                     hostName: hostName,
                     conversationProvider: currentConversation
                 )
@@ -68,13 +79,49 @@ public struct RemoteScreen: View {
         VStack(spacing: 0) {
             headerBar(title: "远程") { EmptyView() }
 
-            Spacer(minLength: 24)
+            Spacer(minLength: 12)
+
+            HStack(spacing: 10) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Color.ompTextSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("连接你的 Mac")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                    Text("镜像同一份会话，手机可直接继续对话")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 14)
+
+            Picker("连接方式", selection: $mode) {
+                ForEach(ConnectMode.allCases, id: \.self) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+            .accessibilityIdentifier("remote.mode")
+
             VStack(alignment: .leading, spacing: 14) {
-                field("主机地址", text: $hostField, placeholder: "例如 192.168.1.8 或 macbook.local", autocapitalization: false, identifier: "remote.host")
-                HStack(alignment: .top, spacing: 12) {
-                    field("端口", text: $portField, placeholder: "8790", keyboard: .numberPad, identifier: "remote.port")
-                        .frame(width: 110)
-                    field("配对 Token", text: $tokenField, placeholder: "Mac 端生成的 UUID", autocapitalization: false, identifier: "remote.token")
+                if mode == .room {
+                    field("房间码", text: $roomField, placeholder: "Mac 设置页里的 6 位码", autocapitalization: true, identifier: "remote.room")
+                    field("中继地址", text: $hubField, placeholder: "https://hub.example.com", keyboard: .URL, autocapitalization: false, identifier: "remote.hub")
+                    Text("两端都连中继，用房间码相遇——不需要同一 Wi-Fi，也不需要公网 IP。")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.ompTextTertiary)
+                } else {
+                    field("主机地址", text: $hostField, placeholder: "例如 192.168.1.8 或 macbook.local", autocapitalization: false, identifier: "remote.host")
+                    HStack(alignment: .top, spacing: 12) {
+                        field("端口", text: $portField, placeholder: "8790", keyboard: .numberPad, identifier: "remote.port")
+                            .frame(width: 110)
+                        field("配对 Token", text: $tokenField, placeholder: "Mac 端生成的 UUID", autocapitalization: false, identifier: "remote.token")
+                    }
                 }
             }
             .padding(18)
@@ -116,6 +163,7 @@ public struct RemoteScreen: View {
 
             Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: Host Browser (conversation list)
@@ -247,12 +295,26 @@ public struct RemoteScreen: View {
     }
 
     private var canConnect: Bool {
-        !hostField.trimmingCharacters(in: .whitespaces).isEmpty
-            && !tokenField.trimmingCharacters(in: .whitespaces).isEmpty
-            && UInt16(portField) != nil
+        switch mode {
+        case .room:
+            return RelayHubClient.isValidRoomCode(roomField)
+                && !hubField.trimmingCharacters(in: .whitespaces).isEmpty
+        case .lan:
+            return !hostField.trimmingCharacters(in: .whitespaces).isEmpty
+                && !tokenField.trimmingCharacters(in: .whitespaces).isEmpty
+                && UInt16(portField) != nil
+        }
+    }
+
+    private var trimmedRoom: String {
+        roomField.trimmingCharacters(in: .whitespaces).uppercased()
     }
 
     private func connect() {
+        if mode == .room {
+            connectViaHub()
+            return
+        }
         let host = hostField.trimmingCharacters(in: .whitespaces)
         let token = tokenField.trimmingCharacters(in: .whitespaces)
         guard let port = UInt16(portField) else { return }
@@ -274,8 +336,65 @@ public struct RemoteScreen: View {
         }
     }
 
+    private func connectViaHub() {
+        let room = trimmedRoom
+        let raw = hubField.trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: raw), RelayHubClient.isValidRoomCode(room) else {
+            status = .failed("房间码或中继地址无效")
+            return
+        }
+        status = .connecting
+        Task {
+            let hub = RelayHubClient(hubURL: url, roomCode: room)
+            do {
+                let first = try await hub.connectClient()
+                hubClient = hub
+                hostName = first.host
+                snapshot = first
+                persistedRoom = room
+                status = .connected
+                persistRoom(room: room, hub: raw)
+                revisionsTask = Task { await watchHubRevisions() }
+            } catch {
+                hubClient = nil
+                status = .failed(describe(error))
+            }
+        }
+    }
+
+    private func watchHubRevisions() async {
+        guard let hub = hubClient else { return }
+        for await rev in hub.revisions() {
+            guard !Task.isCancelled else { return }
+            if let current = snapshot, rev <= current.rev { continue }
+            if let fresh = try? await hub.snapshot() {
+                snapshot = fresh
+                hostName = fresh.host
+            }
+        }
+    }
+
+    private func persistRoom(room: String, hub: String) {
+        var settings = model.settings
+        settings.remoteRoomCode = room
+        settings.remoteHubURL = hub
+        Task { await model.saveSettings(settings) }
+    }
+
+    /// Whichever transport is live (LAN or hub) for the remote screens.
+    private var activeSink: (any RelayCommandSink)? {
+        if let hubClient { return hubClient }
+        return client
+    }
+
     private func loadSavedConnection() {
         let settings = model.settings
+        if roomField.isEmpty {
+            roomField = settings.remoteRoomCode
+            hubField = settings.remoteHubURL
+            if !settings.remoteRoomCode.isEmpty { mode = .room }
+            else if !settings.remoteHost.isEmpty { mode = .lan }
+        }
         guard hostField.isEmpty, !settings.remoteHost.isEmpty else { return }
         hostField = settings.remoteHost
         portField = String(settings.remotePort)
@@ -295,6 +414,8 @@ public struct RemoteScreen: View {
         revisionsTask?.cancel()
         revisionsTask = nil
         client = nil
+        hubClient?.stopHost()
+        hubClient = nil
         if status == .connected { status = .idle }
     }
 
@@ -384,7 +505,7 @@ struct RemoteConversationRow: View {
 /// it re-reads the conversation through `conversationProvider` on every render.
 struct RemoteConversationScreen: View {
     let conversationID: String
-    let client: RemoteRelayClient?
+    let client: (any RelayCommandSink)?
     let hostName: String
     let conversationProvider: (String) -> RelayConversation?
     @State private var draft = ""
@@ -458,7 +579,7 @@ struct RemoteConversationScreen: View {
                     guard let client, !stopInFlight else { return }
                     stopInFlight = true
                     Task {
-                        try? await client.stop(conversationID: conversationID)
+                        try? await client.submit(.stop(conversationID: conversationID))
                         stopInFlight = false
                     }
                 } label: {
@@ -503,7 +624,7 @@ struct RemoteConversationScreen: View {
         Task {
             defer { sending = false }
             do {
-                _ = try await client.send(text: text, conversationID: conversationID)
+                try await client.submit(.input(conversationID: conversationID, text: text))
                 draft = ""
             } catch {
                 // Keep the draft; the next rev brings the authoritative host state.
