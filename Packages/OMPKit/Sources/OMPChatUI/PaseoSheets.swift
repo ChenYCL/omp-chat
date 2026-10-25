@@ -154,6 +154,7 @@ public struct PaseoUsageSheet: View {
                     statRow(title: "总消息数", value: "\(totalMessages)")
                     statRow(title: "输入 Token (Prompt)", value: TokenFormat.compact(totalInputTokens))
                     statRow(title: "输出 Token (Completion)", value: TokenFormat.compact(totalOutputTokens))
+                    statRow(title: "推理 Token", value: TokenFormat.compact(totalReasoningTokens))
                     statRow(title: "累计消耗 Token", value: TokenFormat.compact(totalTokens))
                 }
 
@@ -217,8 +218,14 @@ public struct PaseoUsageSheet: View {
         }
     }
 
+    private var totalReasoningTokens: Int {
+        model.conversations.reduce(0) { sum, conv in
+            sum + conv.messages.compactMap(\.usage).reduce(0) { $0 + $1.reasoningTokens }
+        }
+    }
+
     private var totalTokens: Int {
-        totalInputTokens + totalOutputTokens
+        totalInputTokens + totalOutputTokens + totalReasoningTokens
     }
 
     private func statRow(title: String, value: String) -> some View {
