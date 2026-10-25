@@ -566,6 +566,20 @@ public struct ProviderSettingsView: View {
                     }
                 }
 
+                Divider()
+
+                Toggle("允许手机访问文件与终端", isOn: Binding(
+                    get: { draft.relayAllowShell },
+                    set: { allowed in
+                        draft.relayAllowShell = allowed
+                        applyRelaySettings()
+                    }
+                ))
+                Text("开启后，持有配对码或房间码的手机可以浏览这台 Mac 的文件并执行终端命令。默认关闭，只在你信任这台手机时打开。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                remoteOperationDisclosure
+
                 Text("同一 Wi-Fi 下的 iPhone 可用配对码直连；开了跨网络后，蜂窝网络也能用房间码连上。配对码与房间码都不要外传。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -610,6 +624,32 @@ public struct ProviderSettingsView: View {
             Text("已停止")
                 .foregroundStyle(.secondary)
         }
+    }
+
+    @ViewBuilder
+    private var remoteOperationDisclosure: some View {
+        let records = model.remoteOperationLog.snapshot()
+        DisclosureGroup("最近的远程操作（\(records.count)）") {
+            if records.isEmpty {
+                Text("还没有来自手机的文件或终端操作。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(records.reversed()) { record in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(record.at.formatted(date: .omitted, time: .standard))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Text(record.summary)
+                            .font(.caption2.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        .font(.caption)
     }
 
     private func commitRelayPort() {

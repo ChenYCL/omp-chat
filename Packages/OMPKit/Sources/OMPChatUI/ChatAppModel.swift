@@ -13,6 +13,9 @@ public final class ChatAppModel {
     public private(set) var providers: [ProviderProfile] = []
     public private(set) var models: [ModelDescriptor] = []
     public private(set) var settings = AppSettings()
+    /// In-memory log of the last remote file and shell operations.
+    public let remoteOperationLog = RemoteOperationLog()
+    private var hostExecutor: HostExecutor
     public private(set) var projects: [Project] = []
     public private(set) var isStreaming = false
     public private(set) var streamingConversationID: UUID?
@@ -87,6 +90,7 @@ public final class ChatAppModel {
         self.secrets = secrets
         self.mediaLibrary = mediaLibrary
         self.transport = transport
+        self.hostExecutor = HostExecutor(shellAllowed: false, log: remoteOperationLog)
     }
 
     // MARK: Derived state
@@ -1324,6 +1328,13 @@ public final class ChatAppModel {
             guard let id = uuid(conversationID) else { return }
             setUnread(id, unread: unread)
         }
+    }
+
+    /// Answers one host RPC from a paired phone. `info` always runs; file and
+    /// shell operations require `settings.relayAllowShell`.
+    public func handleHostRPC(_ request: HostRPCRequest) async -> HostRPCResponse {
+        hostExecutor.shellAllowed = settings.relayAllowShell
+        return await hostExecutor.handle(request)
     }
 }
 

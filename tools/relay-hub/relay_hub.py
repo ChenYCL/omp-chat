@@ -25,6 +25,9 @@ ROOM_TTL_SECONDS = 600
 MAX_ROOM_CODE_ATTEMPTS_PER_MINUTE = 5
 MAX_COMMAND_LOG = 200
 PING_INTERVAL = 15.0
+RPC_TIMEOUT_SECONDS = 130.0
+MAX_PENDING_RPC = 32
+KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "exec"}
 
 
 def new_room_code() -> str:
@@ -48,6 +51,7 @@ class Room:
     host_writer: asyncio.StreamWriter | None = None
     client_writers: set[asyncio.StreamWriter] = field(default_factory=set)
     commands: list[dict[str, Any]] = field(default_factory=list)
+    pending_rpc: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     host_offline_since: float | None = field(default=None)
 
     def host_online(self) -> bool:
@@ -99,6 +103,14 @@ class Hub:
             writer.write(payload)
         return room.rev
 
+
+    def fail_pending_rpc(self, room: Room) -> None:
+        """主机断开：挂起的 RPC 以 host offline 结束，客户端拿到 409。"""
+        pending = list(room.pending_rpc.items())
+        room.pending_rpc.clear()
+        for _, future in pending:
+            if not future.done():
+                future.set_result({"ok": False, "error": "host offline"})
 
 HUB = Hub()
 
@@ -251,6 +263,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 if room.host_writer is writer:
                     room.host_writer = None
                     room.host_offline_since = time.time()
+                    HUB.fail_pending_rpc(room)
                 writer.close()
             return
 
@@ -329,6 +342,94 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             writer.write(response("200 OK", {"ok": True}))
             await writer.drain()
             writer.close()
+            return
+
+        # MARK: Client RPC (held open until the host answers)
+        if method == "POST" and path == "/v1/client/rpc":
+            host = room.host_writer
+            if host is None:
+                writer.write(response("409 Conflict", {"error": "host offline"}))
+                await writer.drain()
+                writer.close()
+                return
+            try:
+                rpc_request = json.loads(body.decode() or "{}")
+            except json.JSONDecodeError:
+                writer.write(response("400 Bad Request", {"error": "bad json"}))
+                await writer.drain()
+                writer.close()
+                return
+            op = rpc_request.get("op")
+            if op not in KNOWN_RPC_OPS:
+                writer.write(response("400 Bad Request", {"error": "bad op"}))
+                await writer.drain()
+                writer.close()
+                return
+            request_id = rpc_request.get("id")
+            if not isinstance(request_id, str) or not request_id:
+                writer.write(response("400 Bad Request", {"error": "bad id"}))
+                await writer.drain()
+                writer.close()
+                return
+            if len(room.pending_rpc) >= MAX_PENDING_RPC:
+                writer.write(response("429 Too Many Requests", {"error": "too many pending rpc"}))
+                await writer.drain()
+                writer.close()
+                return
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[dict[str, Any]] = loop.create_future()
+            room.pending_rpc[request_id] = future
+            host.write(
+                f"event: rpc\ndata: {json.dumps(rpc_request, ensure_ascii=False)}\n\n".encode()
+            )
+            try:
+                await host.drain()
+            except ConnectionResetError:
+                room.host_writer = None
+                room.pending_rpc.pop(request_id, None)
+                if not future.done():
+                    future.cancel()
+                writer.write(response("409 Conflict", {"error": "host gone"}))
+                await writer.drain()
+                writer.close()
+                return
+            try:
+                result = await asyncio.wait_for(future, timeout=RPC_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                room.pending_rpc.pop(request_id, None)
+                writer.write(response("504 Gateway Timeout", {"error": "timeout"}))
+                await writer.drain()
+                writer.close()
+                return
+            if result.get("error") == "host offline" and result.get("ok") is False and "id" not in result:
+                writer.write(response("409 Conflict", {"error": "host offline"}))
+                await writer.drain()
+                writer.close()
+                return
+            writer.write(response("200 OK", result))
+            await writer.drain()
+            writer.close()
+            return
+
+        # MARK: Host RPC result
+        if method == "POST" and path == "/v1/host/rpc-result":
+            try:
+                rpc_result = json.loads(body.decode() or "{}")
+            except json.JSONDecodeError:
+                writer.write(response("400 Bad Request", {"error": "bad json"}))
+                await writer.drain()
+                writer.close()
+                return
+            request_id = rpc_result.get("id")
+            future = room.pending_rpc.pop(request_id, None) if isinstance(request_id, str) else None
+            if future is None or future.done():
+                writer.write(response("404 Not Found", {"error": "no pending rpc"}))
+            else:
+                future.set_result(rpc_result)
+                writer.write(response("200 OK", {"ok": True}))
+            await writer.drain()
+            writer.close()
+            return
             return
 
         # MARK: Health / info

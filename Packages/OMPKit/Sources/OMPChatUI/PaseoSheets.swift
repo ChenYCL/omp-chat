@@ -6,6 +6,9 @@ import OMPDesign
 
 public struct PaseoProjectsSheet: View {
     @Environment(ChatAppModel.self) private var model
+    #if os(iOS)
+    @Environment(RemoteSession.self) private var session
+    #endif
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingNewProject = false
@@ -17,6 +20,11 @@ public struct PaseoProjectsSheet: View {
         NavigationStack {
             List {
                 Section("活跃项目") {
+                    if model.projects.isEmpty {
+                        Text("还没有项目")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
                     ForEach(model.projects) { project in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -41,13 +49,15 @@ public struct PaseoProjectsSheet: View {
                         }
                     }
                 }
-
-                Section("工作区 (Workspaces)") {
-                    workspaceRow(name: "ai-command-center", branch: "main", host: "Mac mini", status: "活跃")
-                    workspaceRow(name: "omp-chat", branch: "feature/paseo", host: "Mac mini", status: "就绪")
-                    workspaceRow(name: "polymarket-research", branch: "master", host: "macbook", status: "就绪")
+                #if os(iOS)
+                if session.isConnected {
+                    Section("已连接的主机") {
+                        hostRow
+                    }
                 }
+                #endif
             }
+
             .navigationTitle("项目与工作区")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -80,31 +90,37 @@ public struct PaseoProjectsSheet: View {
         #endif
     }
 
-    private func workspaceRow(name: String, branch: String, host: String, status: String) -> some View {
+    #if os(iOS)
+    /// The paired Mac, from the live session — never a hardcoded workspace.
+    private var hostRow: some View {
         HStack(spacing: 10) {
-            Image(systemName: "macmini")
+            Image(systemName: "desktopcomputer")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.ompTextSecondary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(name)
+                    Text(session.info?.cwd.split(separator: "/").last.map(String.init) ?? (session.hostName.isEmpty ? "Mac" : session.hostName))
                         .font(.system(size: 13.5, weight: .medium))
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 8))
-                        Text(branch)
-                            .font(.system(size: 10).monospaced())
+                        .lineLimit(1)
+                    if let branch = session.info?.gitBranch, !branch.isEmpty {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 8))
+                            Text(branch)
+                                .font(.system(size: 10).monospaced())
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.ompFill, in: Capsule())
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.ompFill, in: Capsule())
                 }
-                Text("主机: \(host)")
+                Text(session.hostName.isEmpty ? session.mode.rawValue : "\(session.hostName) · \(session.mode.rawValue)")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.ompTextTertiary)
+                    .lineLimit(1)
             }
             Spacer()
-            Text(status)
+            Text("已连接")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.green)
                 .padding(.horizontal, 8)
@@ -113,6 +129,7 @@ public struct PaseoProjectsSheet: View {
         }
         .padding(.vertical, 4)
     }
+    #endif
 }
 
 // MARK: - 2. Scheduled Tasks Sheet (计划任务)
@@ -425,127 +442,55 @@ public struct MCPPluginsSheet: View {
 }
 
 
-// MARK: - 6. Controllable Devices Sheet (可控设备 - Frame 45s)
+#if os(iOS)
 
+/// The only device the phone can actually reach is the paired Mac, so the
+/// sheet shows that one host — or says plainly that nothing is paired.
 public struct PaseoDevicesSheet: View {
+    @Environment(RemoteSession.self) private var session
     @Environment(\.dismiss) private var dismiss
-    @Binding var selectedDeviceName: String
-    @State private var bottomTab = 0
 
-    public init(selectedDeviceName: Binding<String>) {
-        _selectedDeviceName = selectedDeviceName
-    }
-
-    private let devices: [(name: String, platform: String, icon: String, gradient: [Color], status: String, ip: String)] = [
-        ("Mac mini", "macOS", "applelogo", [Color.orange.opacity(0.7), Color.pink.opacity(0.5)], "在线", "10.110.18.30"),
-        ("macbook", "macOS", "applelogo", [Color.blue.opacity(0.7), Color.teal.opacity(0.5)], "在线", "192.168.1.124"),
-        ("win11", "Windows", "window.casement", [Color.teal.opacity(0.7), Color.cyan.opacity(0.5)], "在线", "192.168.1.188"),
-    ]
+    public init() {}
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Text("在线设备 3")
-                                .font(.system(size: 13, weight: .medium))
+            List {
+                if session.isConnected {
+                    Section("已配对") {
+                        HStack(spacing: 12) {
+                            Image(systemName: "desktopcomputer")
+                                .font(.system(size: 16))
                                 .foregroundStyle(Color.ompTextSecondary)
-                            Image(systemName: "chevron.up")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Color.ompTextSecondary)
+                                .frame(width: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(session.hostName.isEmpty ? "Mac" : session.hostName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Color.ompText)
+                                Text(session.mode.rawValue)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Color.ompTextTertiary)
+                            }
                             Spacer()
-                            HStack(spacing: 4) {
-                                Image(systemName: "rectangle.badge.checkmark")
-                                    .font(.system(size: 12))
-                                Text("全部设备")
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundStyle(Color.ompTextTertiary)
+                            Text("在线")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.green)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-
-                        ForEach(devices, id: \.name) { dev in
-                            Button {
-                                selectedDeviceName = dev.name
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 14) {
-                                    // Screen Thumbnail Preview
-                                    ZStack(alignment: .topLeading) {
-                                        LinearGradient(colors: dev.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
-                                            .frame(width: 96, height: 62)
-                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                                        // Status badge
-                                        HStack(spacing: 3) {
-                                            Circle()
-                                                .fill(Color.green)
-                                                .frame(width: 5, height: 5)
-                                            Text(dev.status)
-                                                .font(.system(size: 9, weight: .semibold))
-                                                .foregroundStyle(.white)
-                                        }
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.black.opacity(0.35), in: Capsule())
-                                        .padding(5)
-                                    }
-
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(dev.name)
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(Color.ompText)
-                                        HStack(spacing: 4) {
-                                            Image(systemName: dev.icon)
-                                                .font(.system(size: 11))
-                                            Text(dev.ip)
-                                                .font(.system(size: 11).monospacedDigit())
-                                        }
-                                        .foregroundStyle(Color.accentColor)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(Color.ompTextTertiary)
-                                }
-                                .padding(10)
-                                .background(
-                                    selectedDeviceName == dev.name
-                                        ? Color.ompFill
-                                        : Color.ompCard,
-                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .strokeBorder(
-                                            selectedDeviceName == dev.name
-                                                ? Color.accentColor.opacity(0.4)
-                                                : Color.ompBorder.opacity(0.6),
-                                            lineWidth: 1
-                                        )
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 16)
-                        }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.bottom, 20)
+                } else {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("还没有配对的设备")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color.ompText)
+                            Text("到「远程」页配对一台 Mac 后，它会出现在这里。")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(Color.ompTextSecondary)
+                        }
+                        .padding(.vertical, 6)
+                    }
                 }
-
-                // Bottom Tab Bar (Frame 45s): [ 我的设备 | 远程协助 | 我的 ]
-                HStack(spacing: 0) {
-                    bottomTabItem(index: 0, icon: "macbook.and.iphone", title: "我的设备")
-                    bottomTabItem(index: 1, icon: "person.crop.rectangle", title: "远程协助")
-                    bottomTabItem(index: 2, icon: "person", title: "我的")
-                }
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
             }
-            .background(Color.ompCanvas)
             .navigationTitle("可控设备")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -560,26 +505,8 @@ public struct PaseoDevicesSheet: View {
         .frame(minWidth: 480, minHeight: 460)
         #endif
     }
-
-    private func bottomTabItem(index: Int, icon: String, title: String) -> some View {
-        Button {
-            bottomTab = index
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 15))
-                Text(title)
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .foregroundStyle(bottomTab == index ? Color.accentColor : Color.ompTextSecondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(bottomTab == index ? Color.accentColor.opacity(0.12) : Color.clear, in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
 }
-
+#endif
 // MARK: - 8. Subagents Inspector Sheet (子代理管理 - Frame 15s)
 
 public struct PaseoSubagentsSheet: View {

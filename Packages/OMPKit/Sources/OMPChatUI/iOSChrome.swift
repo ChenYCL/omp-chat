@@ -3,510 +3,993 @@ import OMPCore
 import OMPDesign
 
 #if os(iOS)
-/// iOS host panes (文件 / 终端 / 脚本) rendered inside `IOSShell`'s 主机 tab.
-/// The unified shell, drawer, chat screen and composer live in IOSShell.swift.
-// MARK: - Files Pane (Frame 60s)
+/// iOS host panes (文件 / 终端 / 脚本 / 配置) rendered inside `IOSShell`'s 主机 tab.
+/// Every row comes from the paired Mac over `RemoteSession`; unpaired, each pane
+/// shows the same honest empty state instead of anything invented.
 
-struct PaseoFilesPane: View {
-    @Binding var directory: URL
-    @State private var viewingURL: IdentifiableURL?
-    @State private var bookmarks: [(icon: String, name: String, path: String)] = [
-        ("folder", "根目录", "/"),
-        ("house", "个人目录", NSHomeDirectory()),
-        ("internaldrive", "系统卷", "/System/Volumes/Data"),
-    ]
+// MARK: - Shared empty state
+
+/// Shown whenever the phone has no live Mac, or the Mac refused shell access.
+struct HostUnavailableView: View {
+    /// `nil` means "not paired"; a string is the host's own refusal.
+    let reason: String?
+    let onOpenRemote: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Bookmark pills row: [📁 根目录] [🏠 个人目录] [💽 根目录] [+]
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(bookmarks, id: \.path) { bm in
-                        Button {
-                            directory = URL(fileURLWithPath: bm.path)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: bm.icon)
-                                    .font(.system(size: 11))
-                                Text(bm.name)
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .foregroundStyle(directory.path == bm.path ? Color.ompText : Color.ompTextSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule().strokeBorder(Color.ompBorder, lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    Button {
-                        let name = directory.lastPathComponent.isEmpty ? "根目录" : directory.lastPathComponent
-                        if !bookmarks.contains(where: { $0.path == directory.path }) {
-                            bookmarks.append(("folder.fill", name, directory.path))
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.ompText)
-                            .frame(width: 28, height: 28)
-                            .background(Circle().strokeBorder(Color.ompBorder, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+        VStack(spacing: 14) {
+            Spacer()
+            Image(systemName: reason == nil ? "desktopcomputer" : "lock")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(Color.ompTextTertiary)
+            Text(reason == nil ? "还没有连接 Mac" : "Mac 没有开放文件与终端")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.ompText)
+            Text(reason ?? "到「远程」页配对后，这里显示那台 Mac 的真实文件和终端。")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color.ompTextSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 36)
+            Button(action: onOpenRemote) {
+                Text("打开远程")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Color.ompInverseText)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background(Color.ompPrimarySolid, in: Capsule())
             }
-
-            // Path Header row: / on left, ≡: and Q on right
-            HStack {
-                Text(directory.path)
-                    .font(.system(size: 13, weight: .medium).monospaced())
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                Spacer()
-                HStack(spacing: 12) {
-                    Image(systemName: "list.bullet")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.ompText)
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.ompText)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-
-            Divider()
-
-            // File / Folder rows
-            List {
-                ForEach(entries, id: \.path) { entry in
-                    HStack(spacing: 10) {
-                        Image(systemName: entry.isDir ? "folder.fill" : "doc")
-                            .font(.system(size: 13))
-                            .foregroundStyle(entry.isDir ? Color.ompText : Color.ompTextTertiary)
-                            .frame(width: 20)
-                        Text(entry.name)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.ompText)
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.ompTextTertiary)
-                    }
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if entry.isDir {
-                            directory = URL(fileURLWithPath: entry.path)
-                        } else {
-                            viewingURL = IdentifiableURL(url: URL(fileURLWithPath: entry.path))
-                        }
-                    }
-                    .contextMenu {
-                        if !entry.isDir {
-                            Button {
-                                viewingURL = IdentifiableURL(url: URL(fileURLWithPath: entry.path))
-                            } label: {
-                                Label("查看内容", systemImage: "eye")
-                            }
-                        }
-                        Button {
-                            #if os(macOS)
-                            copyToPasteboard(entry.path)
-                            #else
-                            UIPasteboard.general.string = entry.path
-                            #endif
-                        } label: {
-                            Label("复制路径", systemImage: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.ompCanvas)
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+            Spacer()
         }
-        .sheet(item: $viewingURL) { item in
-            FileViewerSheet(url: item.url)
-        }
-    }
-
-    private var entries: [(name: String, path: String, isDir: Bool)] {
-        let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
-        return items
-            .filter { !$0.hasPrefix(".") || $0 == ".vol" }
-            .sorted { lhs, rhs in
-                let lDir = isDir(lhs), rDir = isDir(rhs)
-                if lDir != rDir { return lDir }
-                return lhs.localizedStandardCompare(rhs) == .orderedAscending
-            }
-            .map { (name: $0, path: directory.appendingPathComponent($0).path, isDir: isDir($0)) }
-    }
-
-    private func isDir(_ name: String) -> Bool {
-        var flag: ObjCBool = false
-        FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path, isDirectory: &flag)
-        return flag.boolValue
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Terminal Pane (Frame 75s)
+// MARK: - Files Pane
 
-struct PaseoTerminalPane: View {
-    let directory: URL
-    @State private var currentDir: URL
-    @State private var lines: [String] = [
-        "> ls",
-        "__pycache__          infra",
-        "AGENTS.md            machines",
-        "aicc.egg-info        memories",
-        "archive              pyproject.toml",
-        "CLAUDE.bak.md        README.md",
-        "CLAUDE.md            requirements-heavy.txt",
-        "conftest.py          requirements.txt",
-        "data                 test_aac",
-        "docs                 test_aac.cpp",
-        "experiments          uv.lock",
-        "harness",
-    ]
-    @State private var input = ""
-    @State private var history: [String] = ["ls"]
-    @State private var historyIndex = 1
-    @FocusState private var isInputFocused: Bool
+struct PaseoFilesPane: View {
+    @Environment(RemoteSession.self) private var session
+    let onOpenRemote: () -> Void
 
-    init(directory: URL) {
-        self.directory = directory
-        _currentDir = State(initialValue: directory)
+    /// Directory currently shown. Nil until the first `info` answers with a cwd.
+    @State private var path: String?
+    /// Crumbs from the session root down to `path`, each a full path.
+    @State private var crumbs: [String] = []
+    @State private var entries: [HostFSEntry] = []
+    @State private var loading = false
+    @State private var refusal: String?
+    @State private var failure: String?
+    @State private var viewing: ViewingFile?
+
+    private struct ViewingFile: Identifiable {
+        let id = UUID()
+        let name: String
+        let path: String
     }
+
     var body: some View {
+        Group {
+            if session.sink == nil {
+                HostUnavailableView(reason: nil, onOpenRemote: onOpenRemote)
+            } else if let refusal {
+                HostUnavailableView(reason: refusal, onOpenRemote: onOpenRemote)
+            } else {
+                listing
+            }
+        }
+        .task(id: session.isConnected) { await reload(reset: true) }
+        .sheet(item: $viewing) { item in
+            RemoteFileViewer(name: item.name, path: item.path)
+        }
+    }
+
+    private var listing: some View {
         VStack(spacing: 0) {
-            // Top bookmark pills: [>_ ~/Documents/ai-command-center] + •••
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 11))
-                    Text(GitInfo.tildified(directory.path))
-                        .font(.system(size: 11.5, weight: .medium).monospaced())
-                        .lineLimit(1)
-                }
-                .foregroundStyle(Color.ompText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.ompFill, in: Capsule())
-
-                Spacer()
-
-                Button {
-                    lines.append("> 会话已就绪")
-                    lines.append("> ls")
-                    input = ""
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.ompText)
-                }
-                .buttonStyle(.plain)
-
-                Menu {
-                    Button("清屏 (Clear)") {
-                        lines = []
+            breadcrumb
+            Divider()
+            if let failure, entries.isEmpty {
+                failureNote(failure)
+            } else if loading, entries.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
+                Text(path == nil ? "" : "空目录")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(entries, id: \.name) { entry in
+                        row(entry)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     }
-                    Button("复制控制台输出") {
-                        #if os(macOS)
-                        copyToPasteboard(lines.joined(separator: "\n"))
-                        #else
-                        UIPasteboard.general.string = lines.joined(separator: "\n")
-                        #endif
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .refreshable { await reload(reset: false) }
+            }
+        }
+        .background(Color.ompCanvas)
+        .overlay(alignment: .top) {
+            if loading, !entries.isEmpty {
+                ProgressView().controlSize(.mini).padding(.top, 4)
+            }
+        }
+    }
+
+    private var breadcrumb: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(Array(crumbs.enumerated()), id: \.offset) { index, crumb in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.ompTextTertiary)
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.ompText)
+                    Button {
+                        Task { await open(crumb, replacingTail: true) }
+                    } label: {
+                        Text(label(for: crumb, at: index))
+                            .font(.system(size: 12.5, weight: index == crumbs.count - 1 ? .semibold : .regular).monospaced())
+                            .foregroundStyle(index == crumbs.count - 1 ? Color.ompText : Color.ompTextSecondary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+        }
+    }
 
-            Divider()
+    private func row(_ entry: HostFSEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
+                .font(.system(size: 13))
+                .foregroundStyle(entry.isDirectory ? Color.ompText : Color.ompTextTertiary)
+                .frame(width: 20)
+            Text(entry.name)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.ompText)
+                .lineLimit(1)
+            Spacer()
+            if let size = entry.size, !entry.isDirectory {
+                Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.ompTextTertiary)
+        }
+        .frame(height: 36)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let base = path else { return }
+            let child = joined(base, entry.name)
+            if entry.isDirectory {
+                Task { await open(child, replacingTail: false) }
+            } else {
+                viewing = ViewingFile(name: entry.name, path: child)
+            }
+        }
+    }
 
-            // Terminal canvas: ompCanvas background, prompt-green / token-text monospace.
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(line.hasPrefix(">") ? Color.green : Color.ompText)
-                            .textSelection(.enabled)
-                    }
+    private func failureNote(_ text: String) -> some View {
+        VStack(spacing: 8) {
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.ompTextSecondary)
+                .multilineTextAlignment(.center)
+            Button("重试") { Task { await reload(reset: false) } }
+                .font(.system(size: 13, weight: .medium))
+        }
+        .padding(.horizontal, 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
-                    // Prompt row (Frame 75s): ~/Documents/c/ai-command-center main !19 ?25 > █
-                    HStack(spacing: 6) {
-                        Text("\(GitInfo.tildified(currentDir.path))  main  !19  ?25  >")
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(Color.blue.opacity(0.8))
-                        TextField("", text: $input)
-                .accessibilityIdentifier("host.terminal.input")
-                .accessibilityLabel("终端命令输入")
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .focused($isInputFocused)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .onSubmit {
-                                executeCommand(input)
-                            }
-                    }
-                    .padding(.top, 4)
+    /// `reset` drops back to the host's cwd/home; otherwise it refetches `path`.
+    private func reload(reset: Bool) async {
+        guard let sink = session.sink else { return }
+        loading = true
+        defer { loading = false }
+        if reset || path == nil {
+            guard await resolveRoot(sink) else { return }
+        }
+        guard let path else { return }
+        await list(path, sink: sink, resetCrumbs: crumbs.isEmpty)
+    }
+
+    /// Asks the host who it is, then anchors the browser at its cwd (or home).
+    private func resolveRoot(_ sink: any RelayRPCSink) async -> Bool {
+        do {
+            let response = try await HostRPC.call(sink, op: "info")
+            guard response.ok, let info = response.info else {
+                refusal = response.error == "shell_disabled" ? HostRPC.message(for: response) : nil
+                failure = response.error == "shell_disabled" ? nil : HostRPC.message(for: response)
+                return false
+            }
+            refusal = nil
+            session.info = info
+            let root = info.cwd.isEmpty ? info.home : info.cwd
+            path = root
+            crumbs = [root]
+            return true
+        } catch {
+            failure = error.localizedDescription
+            return false
+        }
+    }
+
+    private func list(_ directory: String, sink: any RelayRPCSink, resetCrumbs: Bool) async {
+        do {
+            let response = try await HostRPC.call(sink, op: "fs.list", path: directory)
+            guard response.ok else {
+                if response.error == "shell_disabled" {
+                    refusal = HostRPC.message(for: response)
+                } else {
+                    failure = HostRPC.message(for: response)
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                return
             }
-            .background(Color.ompCanvas)
-
-            // Keyboard accessory row (Frame 75s)
-            HStack(spacing: 4) {
-                ForEach(["Esc", "Tab", "Ctrl", "Alt", "Shift", "↑", "↓", "←", "→", "⌨"], id: \.self) { key in
-                    Button {
-                        handleKey(key)
-                    } label: {
-                        Text(key)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Color.ompText)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 26)
-                            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
+            failure = nil
+            entries = (response.entries ?? []).sorted { lhs, rhs in
+                if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .background(Color.ompCard)
+            if resetCrumbs { crumbs = [directory] }
+        } catch {
+            failure = error.localizedDescription
         }
     }
 
-    private func executeCommand(_ raw: String) {
-        let cmd = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cmd.isEmpty else { return }
-        lines.append("> \(cmd)")
-        history.append(cmd)
-        historyIndex = history.count
-        input = ""
-
-        if cmd == "clear" {
-            lines = []
-            return
-        }
-        if cmd == "pwd" {
-            lines.append(currentDir.path)
-            return
-        }
-        if cmd == "ls" {
-            let fm = FileManager.default
-            if let items = try? fm.contentsOfDirectory(atPath: currentDir.path) {
-                let filtered = items.filter { !$0.hasPrefix(".") }.sorted()
-                lines.append(filtered.joined(separator: "    "))
-            } else {
-                lines.append("(空目录或无权访问)")
+    private func open(_ directory: String, replacingTail: Bool) async {
+        guard let sink = session.sink else { return }
+        path = directory
+        if replacingTail {
+            if let index = crumbs.firstIndex(of: directory) {
+                crumbs = Array(crumbs.prefix(index + 1))
             }
-            return
+        } else {
+            crumbs.append(directory)
         }
-        if cmd.hasPrefix("cd ") {
-            let target = String(cmd.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-            if target == ".." {
-                currentDir = currentDir.deletingLastPathComponent()
-            } else if target.hasPrefix("/") {
-                currentDir = URL(fileURLWithPath: target)
-            } else {
-                currentDir = currentDir.appendingPathComponent(target)
-            }
-            return
-        }
-        if cmd.hasPrefix("cat ") {
-            let filename = String(cmd.dropFirst(4)).trimmingCharacters(in: .whitespaces)
-            let fileURL = currentDir.appendingPathComponent(filename)
-            if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-                lines.append(String(content.prefix(500)) + (content.count > 500 ? "\n...(已截断)" : ""))
-            } else {
-                lines.append("cat: \(filename): 无法读取文件")
-            }
-            return
-        }
-        if cmd == "date" {
-            lines.append(Date().description)
-            return
-        }
-        if cmd == "whoami" {
-            lines.append(NSUserName())
-            return
-        }
-        if cmd.hasPrefix("echo ") {
-            lines.append(String(cmd.dropFirst(5)))
-            return
-        }
-        lines.append("zsh: command completed: \(cmd)")
+        loading = true
+        defer { loading = false }
+        await list(directory, sink: sink, resetCrumbs: false)
     }
 
-    private func handleKey(_ key: String) {
-        switch key {
-        case "Esc":
-            input = ""
-        case "Tab":
-            let fm = FileManager.default
-            if let items = try? fm.contentsOfDirectory(atPath: currentDir.path),
-               let match = items.first(where: { $0.hasPrefix(input) }) {
-                input = match
-            }
-        case "↑":
-            if historyIndex > 0 {
-                historyIndex -= 1
-                input = history[historyIndex]
-            }
-        case "↓":
-            if historyIndex < history.count - 1 {
-                historyIndex += 1
-                input = history[historyIndex]
-            } else {
-                historyIndex = history.count
-                input = ""
-            }
-        case "⌨":
-            isInputFocused.toggle()
-        default:
-            break
+    private func label(for crumb: String, at index: Int) -> String {
+        if index == 0 {
+            if let home = session.info?.home, crumb == home { return "~" }
+            return crumb.split(separator: "/").last.map(String.init) ?? crumb
         }
+        return crumb.split(separator: "/").last.map(String.init) ?? crumb
     }
 
+    private func joined(_ base: String, _ name: String) -> String {
+        base == "/" ? "/\(name)" : "\(base)/\(name)"
+    }
 }
 
-// MARK: - Scripts Pane (Paseo Workspace Scripts)
+/// Reads one remote file over `fs.read` and shows it, noting truncation.
+struct RemoteFileViewer: View {
+    @Environment(RemoteSession.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let name: String
+    let path: String
 
-struct PaseoScriptsPane: View {
-    let selectedHost: String
-    @State private var scripts: [ScriptItem] = [
-        ScriptItem(name: "dev", command: "bun run dev", desc: "启动本地开发热重载服务器", port: "3000", status: "运行中"),
-        ScriptItem(name: "build", command: "swift build -c release", desc: "编译全平台生产版本二进制", port: nil, status: "就绪"),
-        ScriptItem(name: "test", command: "swift test --jobs 4", desc: "运行全套自动化单元测试", port: nil, status: "通过"),
-        ScriptItem(name: "sync", command: "paseo project sync", desc: "同步远程主机工作区变更", port: nil, status: "就绪"),
-    ]
-    @State private var outputLog: String
-
-    init(selectedHost: String) {
-        self.selectedHost = selectedHost
-        _outputLog = State(initialValue: "已连接到主机 \(selectedHost)。运行环境就绪。\n> bun run dev\n[ready] Next.js dev server listening on http://localhost:3000\n")
-    }
+    @State private var text = ""
+    @State private var truncated = false
+    @State private var notice: String?
+    @State private var copied = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("工作区脚本 (Paseo Scripts)")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.ompText)
-                Spacer()
-                Text(selectedHost)
-                    .font(.system(size: 11).monospaced())
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.ompFill, in: Capsule())
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            Divider()
-
-            List {
-                Section("可用脚本") {
-                    ForEach($scripts) { $script in
-                        HStack(spacing: 12) {
-                            Image(systemName: script.status == "运行中" ? "play.circle.fill" : "terminal")
-                                .font(.system(size: 16))
-                                .foregroundStyle(script.status == "运行中" ? Color.green : Color.ompTextSecondary)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(script.name)
-                                        .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
-                                    Text(script.command)
-                                        .font(.system(size: 10.5, design: .monospaced))
-                                        .foregroundStyle(Color.ompTextTertiary)
-                                }
-                                Text(script.desc)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Color.ompTextSecondary)
-                            }
-
-                            Spacer()
-
-                            if let port = script.port {
-                                Text(":\(port)")
-                                    .font(.system(size: 10).monospaced())
-                                    .foregroundStyle(Color.accentColor)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.accentColor.opacity(0.1), in: Capsule())
-                            }
-
-                            Button {
-                                if script.status == "运行中" {
-                                    script.status = "已停止"
-                                    outputLog += "\n[stop] 脚本 \(script.name) 已停止。\n"
-                                } else {
-                                    script.status = "运行中"
-                                    outputLog += "\n[start] 启动 \(script.command)...\n"
-                                }
-                            } label: {
-                                Image(systemName: script.status == "运行中" ? "stop.fill" : "play.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(script.status == "运行中" ? Color.red : Color.ompText)
-                                    .frame(width: 28, height: 28)
-                                    .background(Color.ompFill, in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-
-                Section("输出日志 (Live Logs)") {
-                    Text(outputLog)
-                        .font(.system(size: 10.5, design: .monospaced))
+        NavigationStack {
+            ScrollView {
+                if let notice, text.isEmpty {
+                    Text(notice)
+                        .font(.system(size: 13))
                         .foregroundStyle(Color.ompTextSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                } else {
+                    Text(text.isEmpty ? " " : text)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Color.ompText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
                         .textSelection(.enabled)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
             .background(Color.ompCanvas)
+            .safeAreaInset(edge: .bottom) {
+                if truncated {
+                    Text("文件超过 256 KB，只显示了前面的部分")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.ompFill)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        Text(path)
+                            .font(.system(size: 10).monospaced())
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        UIPasteboard.general.string = text
+                        copied = true
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+            }
+            .task { await load() }
         }
     }
 
-    struct ScriptItem: Identifiable {
-        let id = UUID()
-        var name: String
-        var command: String
-        var desc: String
-        var port: String?
-        var status: String
+    private func load() async {
+        guard let sink = session.sink else {
+            notice = "连接已断开"
+            return
+        }
+        do {
+            let response = try await HostRPC.call(sink, op: "fs.read", path: path)
+            guard response.ok else {
+                notice = HostRPC.message(for: response)
+                return
+            }
+            text = response.text ?? ""
+            truncated = response.truncated ?? false
+        } catch {
+            notice = error.localizedDescription
+        }
     }
 }
 
+// MARK: - Terminal Pane
 
-struct ProviderSettingsEmbedded: View {
-    @Environment(ChatAppModel.self) private var model
+struct PaseoTerminalPane: View {
+    @Environment(RemoteSession.self) private var session
+    let onOpenRemote: () -> Void
+
+    /// One finished or in-flight command plus what it printed.
+    private struct Entry: Identifiable {
+        let id = UUID()
+        var command: String
+        var output: String
+        var exitCode: Int?
+        var running: Bool
+    }
+
+    @State private var entries: [Entry] = []
+    @State private var cwd = ""
+    @State private var prompt = ""
+    @State private var input = ""
+    @State private var history: [String] = []
+    @State private var historyIndex: Int?
+    @State private var refusal: String?
+    @State private var failure: String?
+    /// The command currently on the wire; cancelling it is what Ctrl-C does.
+    @State private var inflight: Task<Void, Never>?
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
-        ScrollView {
-            ProviderSettingsView()
-                .environment(model)
+        Group {
+            if session.sink == nil {
+                HostUnavailableView(reason: nil, onOpenRemote: onOpenRemote)
+            } else if let refusal {
+                HostUnavailableView(reason: refusal, onOpenRemote: onOpenRemote)
+            } else {
+                console
+            }
+        }
+        .task(id: session.isConnected) { await refreshPrompt() }
+    }
+
+    private var console: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let failure {
+                            Text(failure)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(.red)
+                        }
+                        ForEach(entries) { entry in
+                            entryView(entry)
+                        }
+                        promptRow.id("prompt")
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: entries.count) { _, _ in
+                    withAnimation(.linear(duration: 0.1)) { proxy.scrollTo("prompt", anchor: .bottom) }
+                }
+            }
+            .background(Color.ompCanvas)
+            accessoryRow
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11))
+            Text(prompt.isEmpty ? "…" : prompt)
+                .font(.system(size: 11.5, weight: .medium).monospaced())
+                .lineLimit(1)
+                .truncationMode(.head)
+            Spacer()
+            Menu {
+                Button("清屏") { entries.removeAll() }
+                Button("复制全部输出") { UIPasteboard.general.string = transcript }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompText)
+            }
+        }
+        .foregroundStyle(Color.ompText)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func entryView(_ entry: Entry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("$ \(entry.command)")
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Color.ompText)
+                if entry.running {
+                    ProgressView().controlSize(.mini)
+                } else if let code = entry.exitCode {
+                    Text("\(code)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(code == 0 ? Color.ompTextTertiary : Color.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(code == 0 ? Color.ompFill : Color.red, in: Capsule())
+                }
+            }
+            if !entry.output.isEmpty {
+                Text(entry.output)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var promptRow: some View {
+        HStack(spacing: 6) {
+            Text(prompt.isEmpty ? ">" : "\(prompt) >")
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(Color.accentColor)
+                .lineLimit(1)
+            TextField("", text: $input)
+                .accessibilityIdentifier("host.terminal.input")
+                .accessibilityLabel("终端命令输入")
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5, design: .monospaced))
+                .focused($inputFocused)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .disabled(inflight != nil)
+                .onSubmit { run(input) }
+        }
+    }
+
+    private var accessoryRow: some View {
+        HStack(spacing: 4) {
+            accessoryKey("Esc") { input = "" }
+            accessoryKey("Tab") { completePrefix() }
+            accessoryKey("Ctrl-C") { interrupt() }
+            accessoryKey("↑") { recallOlder() }
+            accessoryKey("↓") { recallNewer() }
+            accessoryKey("⌨") { inputFocused.toggle() }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(Color.ompCard)
+    }
+
+    private func accessoryKey(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Color.ompText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 26)
+                .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var transcript: String {
+        entries.map { entry in
+            "$ \(entry.command)\n\(entry.output)"
+        }.joined(separator: "\n")
+    }
+
+    private func refreshPrompt() async {
+        guard let sink = session.sink else { return }
+        do {
+            let response = try await HostRPC.call(sink, op: "info", cwd: cwd.isEmpty ? nil : cwd)
+            guard response.ok, let info = response.info else {
+                if response.error == "shell_disabled" { refusal = HostRPC.message(for: response) }
+                else { failure = HostRPC.message(for: response) }
+                return
+            }
+            refusal = nil
+            failure = nil
+            session.info = info
+            cwd = info.cwd
+            prompt = Self.promptLine(info)
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    private func run(_ raw: String) {
+        let command = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty, inflight == nil, let sink = session.sink else { return }
+        if command == "clear" {
+            entries.removeAll()
+            input = ""
+            return
+        }
+        history.append(command)
+        historyIndex = nil
+        input = ""
+        let index = entries.count
+        entries.append(Entry(command: command, output: "", exitCode: nil, running: true))
+        let working = cwd
+        inflight = Task {
+            defer { inflight = nil }
+            do {
+                let response = try await HostRPC.call(
+                    sink, op: "exec", command: command, cwd: working.isEmpty ? nil : working, timeout: 30
+                )
+                guard !Task.isCancelled else { return }
+                guard response.ok else {
+                    if response.error == "shell_disabled" { refusal = HostRPC.message(for: response) }
+                    finish(index, output: HostRPC.message(for: response), exitCode: nil)
+                    return
+                }
+                finish(index, output: Self.rendered(response), exitCode: response.exitCode)
+                if let next = response.cwd, !next.isEmpty { cwd = next }
+                await refreshPrompt()
+            } catch is CancellationError {
+                finish(index, output: "^C", exitCode: nil)
+            } catch {
+                guard !Task.isCancelled else { return }
+                finish(index, output: error.localizedDescription, exitCode: nil)
+            }
+        }
+    }
+
+    private func finish(_ index: Int, output: String, exitCode: Int?) {
+        guard entries.indices.contains(index) else { return }
+        entries[index].output = output
+        entries[index].exitCode = exitCode
+        entries[index].running = false
+    }
+
+    /// Ctrl-C: drop the request. The host keeps running until its own timeout,
+    /// which is the best a stateless RPC can do.
+    private func interrupt() {
+        guard let inflight else { return }
+        inflight.cancel()
+        self.inflight = nil
+        if let index = entries.indices.last, entries[index].running {
+            finish(index, output: "^C", exitCode: nil)
+        }
+    }
+
+    /// Completes the current token against the names in `cwd`, via `fs.list`.
+    private func completePrefix() {
+        guard let sink = session.sink else { return }
+        let token = input.split(separator: " ").last.map(String.init) ?? ""
+        guard !token.isEmpty else { return }
+        Task {
+            guard let response = try? await HostRPC.call(sink, op: "fs.list", path: cwd.isEmpty ? nil : cwd),
+                  response.ok else { return }
+            let names = (response.entries ?? []).map(\.name)
+            guard let match = names.first(where: { $0.hasPrefix(token) }) else { return }
+            if let range = input.range(of: token, options: .backwards) {
+                input.replaceSubrange(range, with: match)
+            }
+        }
+    }
+
+    private func recallOlder() {
+        guard !history.isEmpty else { return }
+        let next = (historyIndex ?? history.count) - 1
+        guard next >= 0 else { return }
+        historyIndex = next
+        input = history[next]
+    }
+
+    private func recallNewer() {
+        guard let current = historyIndex else { return }
+        if current + 1 >= history.count {
+            historyIndex = nil
+            input = ""
+        } else {
+            historyIndex = current + 1
+            input = history[current + 1]
+        }
+    }
+
+    private static func promptLine(_ info: HostInfo) -> String {
+        var line = "\(info.user)@\(info.hostName)"
+        let directory = info.cwd.hasPrefix(info.home) && !info.home.isEmpty
+            ? "~" + info.cwd.dropFirst(info.home.count)
+            : info.cwd
+        line += " \(directory)"
+        if let branch = info.gitBranch, !branch.isEmpty { line += " \(branch)" }
+        return line
+    }
+
+    static func rendered(_ response: HostRPCResponse) -> String {
+        var parts: [String] = []
+        if let stdout = response.stdout, !stdout.isEmpty { parts.append(ANSIStripping.strip(stdout)) }
+        if let stderr = response.stderr, !stderr.isEmpty { parts.append(ANSIStripping.strip(stderr)) }
+        if response.truncated == true { parts.append("…输出超过 256 KB，已截断") }
+        return parts.joined(separator: "\n").trimmingCharacters(in: .newlines)
+    }
+}
+
+// MARK: - Scripts Pane
+
+struct PaseoScriptsPane: View {
+    @Environment(RemoteSession.self) private var session
+    let onOpenRemote: () -> Void
+
+    private struct Script: Identifiable {
+        let id: String
+        let name: String
+        /// What `exec` actually runs.
+        let command: String
+        var running: Bool = false
+        var lastExit: Int?
+    }
+
+    @State private var scripts: [Script] = []
+    @State private var cwd = ""
+    @State private var loaded = false
+    @State private var refusal: String?
+    @State private var failure: String?
+    @State private var log = ""
+
+    var body: some View {
+        Group {
+            if session.sink == nil {
+                HostUnavailableView(reason: nil, onOpenRemote: onOpenRemote)
+            } else if let refusal {
+                HostUnavailableView(reason: refusal, onOpenRemote: onOpenRemote)
+            } else {
+                content
+            }
+        }
+        .task(id: session.isConnected) { await load() }
+    }
+
+    private var content: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(cwd.isEmpty ? "脚本" : cwd.split(separator: "/").last.map(String.init) ?? "脚本")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    Task { await load() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            Divider()
+            if !loaded {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let failure {
+                Text(failure)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if scripts.isEmpty {
+                Text("这个目录没有 package.json 脚本，也没有 Makefile 目标。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 36)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    Section("可运行") {
+                        ForEach($scripts) { $script in
+                            scriptRow($script)
+                        }
+                    }
+                    if !log.isEmpty {
+                        Section("输出") {
+                            Text(log)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(Color.ompTextSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .background(Color.ompCanvas)
+    }
+
+    private func scriptRow(_ script: Binding<Script>) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(script.wrappedValue.name)
+                    .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.ompText)
+                Text(script.wrappedValue.command)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if let code = script.wrappedValue.lastExit {
+                Text("\(code)")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(code == 0 ? Color.ompTextTertiary : .red)
+            }
+            Button {
+                run(script)
+            } label: {
+                Group {
+                    if script.wrappedValue.running {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompText)
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .background(Color.ompFill, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(script.wrappedValue.running)
+            .accessibilityLabel("运行 \(script.wrappedValue.name)")
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func load() async {
+        guard let sink = session.sink else { return }
+        loaded = false
+        defer { loaded = true }
+        do {
+            let info = try await HostRPC.call(sink, op: "info")
+            guard info.ok, let host = info.info else {
+                if info.error == "shell_disabled" { refusal = HostRPC.message(for: info) }
+                else { failure = HostRPC.message(for: info) }
+                return
+            }
+            refusal = nil
+            session.info = host
+            cwd = host.cwd
+            async let package = HostRPC.call(sink, op: "fs.read", path: joined(host.cwd, "package.json"))
+            async let makefile = HostRPC.call(sink, op: "fs.read", path: joined(host.cwd, "Makefile"))
+            let (packageResponse, makefileResponse) = try await (package, makefile)
+            if packageResponse.error == "shell_disabled" || makefileResponse.error == "shell_disabled" {
+                refusal = HostRPC.message(for: packageResponse.error == "shell_disabled" ? packageResponse : makefileResponse)
+                return
+            }
+            var found: [Script] = []
+            if packageResponse.ok, let text = packageResponse.text {
+                found += Self.packageScripts(text)
+            }
+            if makefileResponse.ok, let text = makefileResponse.text {
+                found += Self.makeTargets(text)
+            }
+            scripts = found
+            failure = nil
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    private func run(_ script: Binding<Script>) {
+        guard let sink = session.sink, !script.wrappedValue.running else { return }
+        let command = script.wrappedValue.command
+        let working = cwd
+        script.wrappedValue.running = true
+        log += "\n$ \(command)\n"
+        Task {
+            defer { script.wrappedValue.running = false }
+            do {
+                let response = try await HostRPC.call(
+                    sink, op: "exec", command: command, cwd: working.isEmpty ? nil : working, timeout: 120
+                )
+                guard response.ok else {
+                    log += HostRPC.message(for: response) + "\n"
+                    return
+                }
+                let rendered = PaseoTerminalPane.rendered(response)
+                if !rendered.isEmpty { log += rendered + "\n" }
+                script.wrappedValue.lastExit = response.exitCode
+            } catch {
+                log += error.localizedDescription + "\n"
+            }
+        }
+    }
+
+    /// `"scripts"` values of a package.json, read leniently so a trailing
+    /// comment or odd formatting degrades to "no scripts" instead of an error.
+    private static func packageScripts(_ text: String) -> [Script] {
+        guard let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let scripts = root["scripts"] as? [String: Any] else { return [] }
+        return scripts.compactMap { name, value -> Script? in
+            guard let body = value as? String, !body.isEmpty else { return nil }
+            return Script(id: "npm:\(name)", name: name, command: "npm run \(shellQuoted(name))")
+        }
+        .sorted { $0.name < $1.name }
+    }
+
+    /// Makefile rule names: a line whose first token ends in `:` and is not a
+    /// variable assignment, dot directive, or pattern rule.
+    private static func makeTargets(_ text: String) -> [Script] {
+        var targets: [Script] = []
+        var seen = Set<String>()
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.hasPrefix("\t") ? "" : String(raw)
+            guard !line.isEmpty, !line.hasPrefix("#"), !line.hasPrefix("."), !line.hasPrefix("\t") else { continue }
+            guard !line.contains("=") || line.firstIndex(of: ":").map({ $0 < (line.firstIndex(of: "=") ?? line.endIndex) }) == true else { continue }
+            guard let head = line.split(separator: ":").first else { continue }
+            for token in head.split(separator: " ") {
+                let name = String(token)
+                guard !name.isEmpty, !name.contains("%"), seen.insert(name).inserted else { continue }
+                targets.append(Script(id: "make:\(name)", name: name, command: "make \(shellQuoted(name))"))
+            }
+        }
+        return targets
+    }
+
+    private static func shellQuoted(_ token: String) -> String {
+        token.allSatisfy({ $0.isLetter || $0.isNumber || "-_.".contains($0) }) ? token : "'\(token.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private func joined(_ base: String, _ name: String) -> String {
+        base == "/" ? "/\(name)" : "\(base)/\(name)"
+    }
+}
+
+// MARK: - Config Pane
+
+struct PaseoConfigPane: View {
+    @Environment(RemoteSession.self) private var session
+    let onOpenRemote: () -> Void
+
+    @State private var loading = false
+    @State private var failure: String?
+
+    var body: some View {
+        Group {
+            if session.sink == nil {
+                HostUnavailableView(reason: nil, onOpenRemote: onOpenRemote)
+            } else {
+                details
+            }
+        }
+        .task(id: session.isConnected) { await refresh() }
+    }
+
+    private var details: some View {
+        List {
+            if let info = session.info {
+                Section("主机") {
+                    row("主机名", info.hostName)
+                    row("用户", info.user)
+                    row("家目录", info.home)
+                    row("当前目录", info.cwd)
+                    row("分支", info.gitBranch ?? "不在 git 仓库里")
+                    if let dirty = info.gitDirty {
+                        row("未提交改动", "\(dirty)")
+                    }
+                }
+            } else if loading {
+                Section { ProgressView() }
+            } else if let failure {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(failure)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.ompTextSecondary)
+                        Button("重试") { Task { await refresh() } }
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
+            }
+            Section("连接") {
+                row("方式", session.mode.rawValue)
+                Button(action: onOpenRemote) {
+                    HStack {
+                        Text("管理连接")
+                            .foregroundStyle(Color.ompText)
+                        Spacer()
+                        Text("远程")
+                            .foregroundStyle(Color.ompTextTertiary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.ompCanvas)
+        .refreshable { await refresh() }
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.system(size: 13.5))
+                .foregroundStyle(Color.ompTextSecondary)
+            Spacer(minLength: 12)
+            Text(value.isEmpty ? "—" : value)
+                .font(.system(size: 13.5).monospaced())
+                .foregroundStyle(Color.ompText)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func refresh() async {
+        guard let sink = session.sink else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let response = try await HostRPC.call(sink, op: "info", cwd: session.info?.cwd)
+            guard response.ok, let info = response.info else {
+                failure = HostRPC.message(for: response)
+                return
+            }
+            failure = nil
+            session.info = info
+        } catch {
+            failure = error.localizedDescription
         }
     }
 }

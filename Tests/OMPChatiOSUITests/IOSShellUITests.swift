@@ -68,34 +68,31 @@ final class IOSShellUITests: XCTestCase {
         }
         attachScreenshot(named: "03-host-files")
 
-        // Terminal pane must actually present a command surface, not a stub.
-        // Several controls share the "终端" label (pane switch + tool strip),
-        // so pick the one inside the pane switcher by position and retry once.
+        // The simulator is not paired with a Mac, so every pane must show the
+        // honest empty state (no invented files / shell output). The live path
+        // is covered by real /rpc calls against the installed Mac app.
         let terminalButtons = app.buttons.matching(NSPredicate(format: "label == '终端'"))
         XCTAssertTrue(terminalButtons.count > 0, "主机页必须有终端切换")
+        terminalButtons.element(boundBy: 0).tap()
 
-        let commandField = app.textFields["host.terminal.input"].firstMatch
-        let accessoryTab = app.buttons["Tab"].firstMatch
-
-        var opened = false
-        for index in 0..<min(terminalButtons.count, 3) {
-            terminalButtons.element(boundBy: index).tap()
-            if commandField.waitForExistence(timeout: 4) || accessoryTab.waitForExistence(timeout: 2) {
-                opened = true
-                break
-            }
-        }
-        XCTAssertTrue(opened, "点击「终端」后应出现命令输入框或快捷键行")
-
-        let promptRow = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS '>' OR label CONTAINS 'main'")
-        ).firstMatch
         XCTAssertTrue(
-            promptRow.exists || commandField.exists,
-            "终端面板应显示真实提示符或命令输入框"
+            app.staticTexts["还没有连接 Mac"].waitForExistence(timeout: 5),
+            "未配对时终端面板应显示「还没有连接 Mac」空态，而不是假数据"
         )
-        XCTAssertTrue(app.buttons["Esc"].firstMatch.exists, "终端快捷键行应包含 Esc")
-        attachScreenshot(named: "04-host-terminal")
+        XCTAssertFalse(app.textFields["host.terminal.input"].exists, "未配对时不应出现命令输入框")
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'aicc.egg-info' OR label CONTAINS 'main !19'")).firstMatch.exists,
+            "不得残留写死的假终端输出"
+        )
+
+        // The call to action must lead to the pairing page.
+        let openRemote = app.buttons["打开远程"].firstMatch
+        XCTAssertTrue(openRemote.waitForExistence(timeout: 3), "空态必须有「打开远程」入口")
+        openRemote.tap()
+        let pairingVisible = app.textFields["remote.host"].waitForExistence(timeout: 5)
+            || app.textFields["remote.room"].waitForExistence(timeout: 3)
+        XCTAssertTrue(pairingVisible, "点「打开远程」应切到远程配对页")
+        attachScreenshot(named: "04-host-unpaired")
     }
 
     func testRemoteTabStartsWithPairingForm() {

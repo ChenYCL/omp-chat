@@ -15,6 +15,7 @@ public final class RelayHubClient: @unchecked Sendable {
     private let lock = NSLock()
     private var hostConnection: NWConnection?
     private var commandHandler: (@Sendable (RelayCommand) async -> Void)?
+    private var rpcHandler: (@Sendable (HostRPCRequest) async -> HostRPCResponse)?
     private var hostLineBuffer = Data()
     private var pendingEventName = "message"
     private var pendingEventData = ""
@@ -32,10 +33,14 @@ public final class RelayHubClient: @unchecked Sendable {
 
     /// Opens the host upstream stream and delivers relay commands as they
     /// arrive. Safe to call again; an existing connection is closed first.
-    public func startHost(onCommand: @escaping @Sendable (RelayCommand) async -> Void) throws {
+    public func startHost(
+        onCommand: @escaping @Sendable (RelayCommand) async -> Void,
+        onRPC: (@Sendable (HostRPCRequest) async -> HostRPCResponse)? = nil
+    ) throws {
         stopHost()
         lock.lock()
         commandHandler = onCommand
+        rpcHandler = onRPC
         lock.unlock()
 
         guard let url = streamURL(path: "/v1/host/stream") else {
@@ -250,6 +255,22 @@ public final class RelayHubClient: @unchecked Sendable {
                 Task { await handler(command) }
             }
         }
+        for (name, payload) in events where name == "rpc" {
+            guard let rpcRequest = try? JSONDecoder().decode(HostRPCRequest.self, from: Data(payload.utf8)) else {
+                continue
+            }
+            lock.lock()
+            let handler = rpcHandler
+            lock.unlock()
+            guard let handler else { continue }
+            let hubURL = self.hubURL
+            let roomCode = self.roomCode
+            let session = self.session
+            Task {
+                let rpcResponse = await handler(rpcRequest)
+                await Self.postRPCResult(rpcResponse, hubURL: hubURL, roomCode: roomCode, session: session)
+            }
+        }
     }
 
     private static func assertOK(data: Data, response: URLResponse) throws {
@@ -274,6 +295,42 @@ public final class RelayHubClient: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }
+
+    /// Controller-side RPC. The hub holds the request open (≤ 130s) until the
+    /// host posts a matching result. `409` is host offline; `504` is timeout.
+    public func rpc(_ request: HostRPCRequest) async throws -> HostRPCResponse {
+        guard let url = URL(string: "\(hubURL.absoluteString)/v1/client/rpc?room=\(roomCode)") else {
+            throw RelayHubError.badHubURL
+        }
+        var http = URLRequest(url: url)
+        http.httpMethod = "POST"
+        http.timeoutInterval = 140
+        http.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        http.httpBody = try encoder.encode(request)
+        let (data, response) = try await session.data(for: http)
+        try Self.assertOK(data: data, response: response)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(HostRPCResponse.self, from: data)
+    }
+
+    private static func postRPCResult(
+        _ response: HostRPCResponse,
+        hubURL: URL,
+        roomCode: String,
+        session: URLSession
+    ) async {
+        guard let url = URL(string: "\(hubURL.absoluteString)/v1/host/rpc-result?room=\(roomCode)") else { return }
+        var http = URLRequest(url: url)
+        http.httpMethod = "POST"
+        http.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        http.httpBody = try? encoder.encode(response)
+        _ = try? await session.data(for: http)
+    }
 }
 
 /// Transport-agnostic way to push a command at the Mac, so the remote screens
@@ -285,6 +342,12 @@ public protocol RelayCommandSink: Sendable {
 extension RelayHubClient: RelayCommandSink {
     public func submit(_ command: RelayCommand) async throws {
         try await send(command)
+    }
+}
+
+extension RelayHubClient: RelayRPCSink {
+    public func call(_ request: HostRPCRequest) async throws -> HostRPCResponse {
+        try await rpc(request)
     }
 }
 

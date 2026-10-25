@@ -24,7 +24,9 @@ public struct IOSShell: View {
     @State private var drawerOpen = false
     @State private var route: IOSShellRoute?
     @State private var hostPane: HostPane = .files
-    @State private var selectedHost = "Mac mini"
+    /// The single shared link to the paired Mac; the 远程 tab publishes into it
+    /// and every 主机 pane reads through it.
+    @State private var remoteSession = RemoteSession()
 
     public init() {}
 
@@ -50,7 +52,7 @@ public struct IOSShell: View {
                     .tabItem { Label(ShellTab.chat.rawValue, systemImage: "bubble.left") }
                     .tag(ShellTab.chat)
 
-                HostScreen(pane: $hostPane, selectedHost: $selectedHost, onOpenDrawer: openDrawer)
+                HostScreen(pane: $hostPane, onOpenDrawer: openDrawer, onOpenRemote: { tab = .remote })
                     .toolbarBackground(.hidden, for: .tabBar)
                     .tabItem { Label(ShellTab.host.rawValue, systemImage: "desktopcomputer") }
                     .tag(ShellTab.host)
@@ -60,6 +62,7 @@ public struct IOSShell: View {
                     .tag(ShellTab.remote)
             }
             .tint(.accentColor)
+            .environment(remoteSession)
 
             if drawerOpen {
                 Color.black.opacity(0.25)
@@ -97,7 +100,7 @@ public struct IOSShell: View {
             }
         case .schedules: PaseoScheduledTasksSheet()
         case .usage: PaseoUsageSheet()
-        case .devices: PaseoDevicesSheet(selectedDeviceName: $selectedHost)
+        case .devices: PaseoDevicesSheet()
         case .subagents: PaseoSubagentsSheet()
         }
     }
@@ -367,18 +370,16 @@ struct ComposerToolBar: View {
 
 /// 主机 tab: four panes (文件 / 终端 / 脚本 / 配置) with a 44pt top bar.
 struct HostScreen: View {
-    @Environment(ChatAppModel.self) private var model
+    @Environment(RemoteSession.self) private var session
     @Binding var pane: IOSShell.HostPane
-    @Binding var selectedHost: String
     let onOpenDrawer: () -> Void
-
-    @State private var directory: URL = URL(fileURLWithPath: "/")
+    /// Switches the shell to the 远程 tab so the user can pair.
+    let onOpenRemote: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             hostTopBar
             Divider().opacity(0.6)
-            // Pane segmented control (official iOS look: grey track, white thumb).
             HStack(spacing: 3) {
                 ForEach(IOSShell.HostPane.allCases, id: \.self) { item in
                     Button {
@@ -404,10 +405,10 @@ struct HostScreen: View {
             .padding(.vertical, 8)
 
             switch pane {
-            case .files: PaseoFilesPane(directory: $directory)
-            case .terminal: PaseoTerminalPane(directory: directory)
-            case .scripts: PaseoScriptsPane(selectedHost: selectedHost)
-            case .config: ProviderSettingsEmbedded()
+            case .files: PaseoFilesPane(onOpenRemote: onOpenRemote)
+            case .terminal: PaseoTerminalPane(onOpenRemote: onOpenRemote)
+            case .scripts: PaseoScriptsPane(onOpenRemote: onOpenRemote)
+            case .config: PaseoConfigPane(onOpenRemote: onOpenRemote)
             }
         }
         .background(Color.ompCanvas)
@@ -427,21 +428,21 @@ struct HostScreen: View {
 
             Spacer()
 
-            Text("主机")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.ompText)
+            VStack(spacing: 0) {
+                Text("主机")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+                if session.isConnected, !session.hostName.isEmpty {
+                    Text(session.hostName)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer()
 
-            Button {
-                _ = model.newConversation()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.ompText)
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.plain)
+            Color.clear.frame(width: 36, height: 36)
         }
         .padding(.horizontal, 8)
         .frame(height: IOSShellMetrics.topBarHeight)

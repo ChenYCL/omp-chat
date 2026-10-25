@@ -60,11 +60,17 @@ public enum RelayServerError: Error, Sendable {
 /// - `POST /command` → flat [`RelayCommandWire`] body; the full action
 ///   surface (select/new/rename/delete/regenerate/edit/branch/feedback/
 ///   setModel/pin/archive/lock/unread) goes through this one route.
-/// - `POST /input` / `POST /stop` → legacy shortcuts, same serial dispatch.
+/// - `POST /rpc` → [`HostRPCRequest`] JSON; answered with [`HostRPCResponse`]
+///   JSON at `200` even when `ok` is false. Unset `onRPC` answers
+///   `ok: false, error: "unsupported"`.
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
     public var onInput: (@Sendable (RelayCommand) async -> Void)?
+    /// Host-RPC hook. Unlike `onInput` this is request/response: the HTTP
+    /// handler awaits the closure and writes its [`HostRPCResponse`] back.
+    /// `nil` answers every `POST /rpc` with `error: "unsupported"`.
+    public var onRPC: (@Sendable (HostRPCRequest) async -> HostRPCResponse)?
 
 
     /// Internal: the bound listener, exposed so `RelayAdvertiser` can attach
@@ -349,6 +355,22 @@ public final class RelayServer: @unchecked Sendable {
             lastBroadcastAt = Date()
             send(Data(head.utf8), id: id)
             send(Data("event: hello\ndata: {\"rev\":\(snapshot.rev)}\n\n".utf8), id: id)
+        case ("POST", "/rpc"):
+            guard let rpcRequest = decode(HostRPCRequest.self, from: request.body) else {
+                send(json(HostRPCResponse(id: "", ok: false, error: "bad_request"), status: "200 OK"), id: id)
+                return
+            }
+            let handler = onRPC
+            if let handler {
+                Task {
+                    let rpcResponse = await handler(rpcRequest)
+                    self.queue.async {
+                        self.send(self.json(rpcResponse, status: "200 OK"), id: id)
+                    }
+                }
+            } else {
+                send(json(HostRPCResponse(id: rpcRequest.id, ok: false, error: "unsupported"), status: "200 OK"), id: id)
+            }
         case ("POST", "/command"):
             guard let wire = decode(RelayCommandWire.self, from: request.body),
                   let command = wire.command else {

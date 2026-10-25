@@ -54,6 +54,13 @@ public final class RelayHostController {
         server.onInput = { [weak self] command in
             await self?.model?.handleRelayCommand(command)
         }
+        server.onRPC = { [weak self] request in
+            guard let self else {
+                return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+            }
+            return await self.model?.handleHostRPC(request)
+                ?? HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+        }
     }
 
     deinit {
@@ -110,9 +117,18 @@ public final class RelayHostController {
         let client = RelayHubClient(hubURL: hubURL, roomCode: roomCode)
         hubClient = client
         do {
-            try client.startHost { [weak self] command in
-                await self?.model?.handleRelayCommand(command)
-            }
+            try client.startHost(
+                onCommand: { [weak self] command in
+                    await self?.model?.handleRelayCommand(command)
+                },
+                onRPC: { [weak self] request in
+                    guard let self else {
+                        return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+                    }
+                    return await self.model?.handleHostRPC(request)
+                        ?? HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+                }
+            )
         } catch {
             hubError = "中继连接失败：\(relayErrorDescription(error))"
             hubClient = nil

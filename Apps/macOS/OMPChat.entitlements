@@ -10,5 +10,15 @@
     <true/>
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+    <!-- Opt-in remote host access (设置 → 远程控制 → 允许手机访问文件与终端).
+         Measured with a signed probe (HostExecutor sandbox study): the home-relative
+         exception lets `ls`/read work but `git` still fails; only the absolute-path
+         exception for "/" makes the phone-driven terminal behave like a real shell.
+         This build is self-signed and not for the App Store. Requests are still
+         refused unless AppSettings.relayAllowShell is on (default off). -->
+    <key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+    <array>
+        <string>/</string>
+    </array>
 </dict>
 </plist>

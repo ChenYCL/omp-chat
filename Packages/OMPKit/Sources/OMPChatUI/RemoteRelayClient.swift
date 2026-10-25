@@ -202,6 +202,25 @@ extension RemoteRelayClient: RelayCommandSink {
     }
 }
 
+extension RemoteRelayClient: RelayRPCSink {
+    /// `POST /rpc` — one host operation. The host answers `200` even when
+    /// `ok` is false, so the body is returned untouched and the pane decides.
+    /// An RPC may legitimately run for the full exec timeout, so this call
+    /// gets its own long deadline instead of the 10s used for snapshots.
+    public func call(_ request: HostRPCRequest) async throws -> HostRPCResponse {
+        var urlRequest = URLRequest(url: url("/rpc"))
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue(token, forHTTPHeaderField: "X-OMP-Token")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.timeoutInterval = 150
+        urlRequest.httpBody = try jsonEncoder().encode(request)
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        try assertOK(response)
+        return try jsonDecoder().decode(HostRPCResponse.self, from: data)
+    }
+}
+
+
 public enum RelayClientError: LocalizedError, Sendable {
     case unauthorized
     case badResponse

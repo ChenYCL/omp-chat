@@ -12,6 +12,7 @@ import OMPDesign
 
 public struct RemoteScreen: View {
     @Environment(ChatAppModel.self) private var model
+    @Environment(RemoteSession.self) private var remoteSession
     @State private var hostField = ""
     @State private var portField = "8790"
     @State private var tokenField = ""
@@ -324,6 +325,7 @@ public struct RemoteScreen: View {
             do {
                 let pair = try await client.pair()
                 self.client = client
+                remoteSession.attach(sink: client, hostName: pair.host, mode: .lan)
                 hostName = pair.host
                 snapshot = try await client.snapshot()
                 status = .connected
@@ -349,6 +351,7 @@ public struct RemoteScreen: View {
             do {
                 let first = try await hub.connectClient()
                 hubClient = hub
+                remoteSession.attach(sink: hub, hostName: first.host, mode: .room)
                 hostName = first.host
                 snapshot = first
                 persistedRoom = room
@@ -416,6 +419,7 @@ public struct RemoteScreen: View {
         client = nil
         hubClient?.stopHost()
         hubClient = nil
+        remoteSession.detach()
         if status == .connected { status = .idle }
     }
 

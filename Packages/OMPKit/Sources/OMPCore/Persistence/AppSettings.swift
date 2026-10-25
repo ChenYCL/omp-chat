@@ -63,6 +63,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var remoteHubURL: String
     /// Relay hub controller side (iOS): room code typed by the user.
     public var remoteRoomCode: String
+    /// Relay host side (macOS): allow a paired phone to read files and run
+    /// shell commands. Off by default; `info` stays available either way.
+    public var relayAllowShell: Bool
 
     public init(
         version: Int = 1,
@@ -93,7 +96,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayHubURL: String = "",
         relayRoomCode: String = "",
         remoteHubURL: String = "",
-        remoteRoomCode: String = ""
+        remoteRoomCode: String = "",
+        relayAllowShell: Bool = false
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -124,6 +128,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.relayRoomCode = relayRoomCode
         self.remoteHubURL = remoteHubURL
         self.remoteRoomCode = remoteRoomCode
+        self.relayAllowShell = relayAllowShell
     }
 
     public init(from decoder: Decoder) throws {
@@ -157,6 +162,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayRoomCode = try container.decodeIfPresent(String.self, forKey: .relayRoomCode) ?? ""
         remoteHubURL = try container.decodeIfPresent(String.self, forKey: .remoteHubURL) ?? ""
         remoteRoomCode = try container.decodeIfPresent(String.self, forKey: .remoteRoomCode) ?? ""
+        relayAllowShell = try container.decodeIfPresent(Bool.self, forKey: .relayAllowShell) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -168,5 +174,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case remoteHost, remotePort, remoteToken
         case relayToken, relayPort, relayEnabled
         case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
+        case relayAllowShell
     }
 }

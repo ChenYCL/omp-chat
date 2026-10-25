@@ -98,6 +98,15 @@ iPhone 不是只读镜像，而是能完成全部交互的远程控制台。所�
 - 设置 → 远程控制「跨网络」开关 + 中继地址 + 房间码（复制/换一个）；LAN 与中继**并行运行**
 - 协议 `docs/relay-hub.md`；中继只转发结构化会话状态，不保存聊天内容
 
+### 2.10 手机操作 Mac 的文件与终端（Host RPC）
+
+- 「主机」页四个面板（文件/终端/脚本/配置）全部走真实 Mac：`info` / `fs.list` / `fs.read` / `exec` 四个 RPC，LAN `POST /rpc` 与中继 `/v1/client/rpc`（按 id 关联、130s 超时 504、主机掉线 409）
+- 未配对或 Mac 未放行：统一空态，不展示任何演示数据
+- 安全：设置 → 远程控制「允许手机访问文件与终端」**默认关闭**；关闭时 `exec` / `fs.*` 返回 `shell_disabled`；令牌或房间码门控；Mac 端保留最近 20 条操作记录
+- 沙盒结论（签名探针实测）：仅 home-relative 例外能读文件但 `git` 失败；只有 `absolute-path.read-write = /` 能让登录 shell 的 git 正常。因此 macOS entitlements 含该临时例外——自签名本机构建，**不适合上架 App Store**
+- 子进程 `HOME` 取 `getpwuid`（沙盒内 `NSHomeDirectory()` 是容器路径）
+- 已知限制：手机侧 Ctrl-C 只取消等待，Mac 进程跑到超时（≤120s）；协议见 `docs/host-rpc.md`
+
 ## 3. 架构约束（不可破坏）
 
 - 会话解码一律 `decodeIfPresent`，新增字段必须有默认值，旧 `workspace.json` 必须能打开。
