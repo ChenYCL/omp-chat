@@ -11,7 +11,6 @@ public struct ComposerBar: View {
     @State private var showMCPSheet = false
     @State private var showVoiceSheet = false
     @State private var showModelPicker = false
-    @State private var webSearchEnabled = false
     @State private var promptHistoryIndex = 0
     @State private var originalDraft = ""
     @FocusState private var focused: Bool
@@ -247,7 +246,7 @@ public struct ComposerBar: View {
     /// 🌐 联网 toggle pill (real `webSearchEnabled` state).
     private var webSearchPill: some View {
         Button {
-            webSearchEnabled.toggle()
+            model.webSearchEnabled.toggle()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "globe")
@@ -255,10 +254,10 @@ public struct ComposerBar: View {
                 Text("联网")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(webSearchEnabled ? Color.ompInverseText : Color.ompTextSecondary)
+            .foregroundStyle(model.webSearchEnabled ? Color.ompInverseText : Color.ompTextSecondary)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(webSearchEnabled ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
+            .background(model.webSearchEnabled ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
         }
         .buttonStyle(.plain)
         .help("启用联网搜索参考")

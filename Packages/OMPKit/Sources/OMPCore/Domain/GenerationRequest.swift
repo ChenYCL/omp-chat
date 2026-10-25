@@ -15,12 +15,16 @@ public struct TokenUsage: Codable, Hashable, Sendable {
 }
 
 public struct ToolSpec: Codable, Hashable, Sendable {
+    /// Wire `type`. `function` carries a JSON schema; `web_search` is a bare
+    /// tool the gateway runs server-side and does not call back for.
+    public var type: String
     public var name: String
     public var description: String
     /// JSON Schema encoded as a JSON object string.
     public var parametersJSON: String
 
-    public init(name: String, description: String, parametersJSON: String) {
+    public init(name: String, description: String, parametersJSON: String, type: String = "function") {
+        self.type = type
         self.name = name
         self.description = description
         self.parametersJSON = parametersJSON

@@ -14,7 +14,7 @@ final class RequestBuilderTests: XCTestCase {
             request,
             media: [ref.id: MediaPayload(mimeType: "image/png", base64: "QUJD")]
         )
-        let json = try Self.jsonObject(from: body)
+        let json = try RequestBuilderTests.jsonObject(from: body)
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.first?["role"] as? String, "system")
 
@@ -33,7 +33,7 @@ final class RequestBuilderTests: XCTestCase {
         let ref = MediaRef(kind: .file, relativePath: "spec.pdf", mimeType: "application/pdf", originalName: "spec.pdf")
         let message = ChatMessage(role: .user, parts: [.media(ref)])
         let body = OpenAIRequestBuilder.build(GenerationRequest(modelID: "m1", messages: [message]))
-        let json = try Self.jsonObject(from: body)
+        let json = try RequestBuilderTests.jsonObject(from: body)
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.first?["content"] as? String, "[附件] spec.pdf")
     }
@@ -46,7 +46,7 @@ final class RequestBuilderTests: XCTestCase {
             request,
             media: [ref.id: MediaPayload(mimeType: "image/png", base64: "QUJD")]
         )
-        let json = try Self.jsonObject(from: body)
+        let json = try RequestBuilderTests.jsonObject(from: body)
         XCTAssertEqual(json["max_tokens"] as? Int, 1024)
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
@@ -62,13 +62,13 @@ final class RequestBuilderTests: XCTestCase {
         let spec = ToolSpec(name: "search", description: "web", parametersJSON: #"{"type":"object","properties":{}}"#)
         let request = GenerationRequest(modelID: "claude", messages: [], tools: [spec])
         let body = AnthropicRequestBuilder.build(request)
-        let json = try Self.jsonObject(from: body)
+        let json = try RequestBuilderTests.jsonObject(from: body)
         let tools = try XCTUnwrap(json["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.first?["name"] as? String, "search")
         XCTAssertNotNil(tools.first?["input_schema"])
     }
 
-    private static func jsonObject<T: Encodable>(from value: T) throws -> [String: Any] {
+    static func jsonObject<T: Encodable>(from value: T) throws -> [String: Any] {
         let data = try JSONEncoder().encode(value)
         let object = try JSONSerialization.jsonObject(with: data)
         return try XCTUnwrap(object as? [String: Any])
@@ -100,5 +100,22 @@ final class StreamAssemblyTests: XCTestCase {
         XCTAssertEqual(message.thinkingText, "想一想")
         XCTAssertEqual(message.concatenatedText, "答案")
         XCTAssertEqual(message.usage?.totalTokens, 5)
+    }
+
+    func testWebSearchToolIsSentBare() throws {
+        var request = GenerationRequest(modelID: "m1", messages: [ChatMessage(role: .user, parts: [.text("hi")])])
+        request.tools = [ToolSpec(name: "web_search", description: "", parametersJSON: "{}", type: "web_search")]
+        let body = OpenAIRequestBuilder.build(request)
+        let json = try RequestBuilderTests.jsonObject(from: body)
+        let tools = try XCTUnwrap(json["tools"] as? [[String: Any]])
+        XCTAssertEqual(tools.count, 1)
+        XCTAssertEqual(tools[0]["type"] as? String, "web_search")
+        XCTAssertNil(tools[0]["function"], "联网搜索是服务端工具，不能带 function 定义")
+    }
+
+    func testNoToolsKeyWhenSearchIsOff() throws {
+        let body = OpenAIRequestBuilder.build(GenerationRequest(modelID: "m1", messages: [ChatMessage(role: .user, parts: [.text("hi")])]))
+        let json = try RequestBuilderTests.jsonObject(from: body)
+        XCTAssertNil(json["tools"], "没开联网时不应发送 tools")
     }
 }

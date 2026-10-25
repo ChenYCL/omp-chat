@@ -50,6 +50,9 @@ public final class ChatAppModel {
         }
     }
     public var draft = ""
+    /// The composer's 联网 pill. When on, the next request asks the gateway
+    /// to search the web server-side (`tools: [{type: web_search}]`).
+    public var webSearchEnabled = false
     public var draftAttachments: [MediaRef] = []
     /// Long pastes folded into chips (ChatGPT `composer.pastedTextAttachment`).
     public var pastedTexts: [PastedTextAttachment] = []
@@ -548,6 +551,9 @@ public final class ChatAppModel {
             temperature: settings.temperature,
             maxOutputTokens: settings.maxOutputTokens ?? model.limits.maxOutputTokens
         )
+        if webSearchEnabled {
+            request.tools = [ToolSpec(name: "web_search", description: "", parametersJSON: "{}", type: "web_search")]
+        }
         if model.capabilities.thinking, let budget = request.maxOutputTokens {
             let effort = conversation.reasoningEffort ?? "medium"
             let fraction: Int = effort == "high" ? 2 : (effort == "low" ? 8 : 4)

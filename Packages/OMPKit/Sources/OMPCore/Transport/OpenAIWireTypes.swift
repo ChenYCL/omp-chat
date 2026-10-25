@@ -165,12 +165,21 @@ struct OpenAIRequestBuilder {
 
         struct WireTool: Encodable {
             var type: String = "function"
-            var function: Function
+            var function: Function?
             struct Function: Encodable {
                 var name: String
                 var description: String
                 var parameters: JSONValue
             }
+
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(type, forKey: .type)
+                // Omit the key for a server-side tool rather than sending null.
+                try c.encodeIfPresent(function, forKey: .function)
+            }
+
+            enum CodingKeys: String, CodingKey { case type, function }
         }
     }
 
@@ -243,7 +252,9 @@ struct OpenAIRequestBuilder {
             ))
         }
         let tools = request.tools.isEmpty ? nil : request.tools.map { spec in
-            Body.WireTool(function: .init(
+            // A server-side tool (web_search) has no function schema.
+            if spec.type != "function" { return Body.WireTool(type: spec.type, function: nil) }
+            return Body.WireTool(function: .init(
                 name: spec.name,
                 description: spec.description,
                 parameters: (try? JSONDecoder().decode(JSONValue.self, from: Data(spec.parametersJSON.utf8))) ?? .object([:])
