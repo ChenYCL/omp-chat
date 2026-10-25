@@ -136,47 +136,23 @@ public struct PaseoProjectsSheet: View {
 
 public struct PaseoScheduledTasksSheet: View {
     @Environment(\.dismiss) private var dismiss
-
-    @State private var tasks: [ScheduledTask] = [
-        ScheduledTask(name: "构建检查与测试", cron: "*/15 * * * *", desc: "每15分钟检查 main 分支构建", enabled: true),
-        ScheduledTask(name: "每日代码审查总结", cron: "0 18 * * 1-5", desc: "工作日 18:00 汇总 PR 动态", enabled: true),
-        ScheduledTask(name: "心跳监控 (Heartbeat)", cron: "*/30 * * * *", desc: "定时健康探测并回传状态", enabled: false)
-    ]
-
     public init() {}
 
     public var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach($tasks) { $task in
-                        HStack(spacing: 12) {
-                            Image(systemName: task.enabled ? "clock.fill" : "clock")
-                                .font(.system(size: 16))
-                                .foregroundStyle(task.enabled ? Color.accentColor : Color.ompTextTertiary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(task.name)
-                                    .font(.system(size: 14, weight: .medium))
-                                Text(task.desc)
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(Color.ompTextSecondary)
-                                Text("Cron: \(task.cron)")
-                                    .font(.system(size: 10.5).monospaced())
-                                    .foregroundStyle(Color.ompTextTertiary)
-                            }
-                            Spacer()
-                            Toggle("", isOn: $task.enabled)
-                                .labelsHidden()
-                        }
-                        .padding(.vertical, 4)
-                    }
-                } header: {
-                    Text("定时任务 (Schedules & Heartbeats)")
-                } footer: {
-                    Text("Paseo 守护进程在后台自动调度这些任务，不需要保持前台。")
-                        .font(.caption2)
-                }
+            VStack(spacing: 10) {
+                Image(systemName: "clock")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.ompTextTertiary)
+                Text("定时任务暂不可用")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Mac 开了沙盒后读不到 crontab：`crontab -l` 被系统拒绝，任务文件只有 root 能读，沙盒例外也绕不过去。这里不再显示编造的任务。")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("计划任务")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -188,16 +164,8 @@ public struct PaseoScheduledTasksSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 420, minHeight: 280)
         #endif
-    }
-
-    struct ScheduledTask: Identifiable {
-        let id = UUID()
-        var name: String
-        var cron: String
-        var desc: String
-        var enabled: Bool
     }
 }
 
