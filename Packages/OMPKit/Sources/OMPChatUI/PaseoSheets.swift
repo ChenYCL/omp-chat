@@ -488,7 +488,17 @@ public struct PaseoDevicesSheet: View {
                 }
             }
             .navigationTitle("可控设备")
-            .task(id: devices.map(\.id)) { await probe() }
+            // Re-probe while the sheet is open, so a Mac that wakes up or goes
+            // to sleep flips its dot without a manual pull. The task ends with
+            // the sheet, so nothing polls in the background.
+            .task(id: devices.map(\.id)) {
+                await probe()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Self.refreshInterval)
+                    guard !Task.isCancelled else { return }
+                    await probe(showSpinner: false)
+                }
+            }
             .refreshable { await probe() }
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -565,9 +575,15 @@ public struct PaseoDevicesSheet: View {
         }
     }
 
-    private func probe() async {
+    static let refreshInterval: Duration = .seconds(15)
+
+    /// `showSpinner: false` keeps the previous dot until the new answer lands,
+    /// so the periodic refresh does not flicker every row to a spinner.
+    private func probe(showSpinner: Bool = true) async {
         let current = devices
-        for device in current { reachability[device.id] = .checking }
+        if showSpinner {
+            for device in current { reachability[device.id] = .checking }
+        }
         await DeviceReachability.check(current) { id, state in
             await MainActor.run { reachability[id] = state }
         }
