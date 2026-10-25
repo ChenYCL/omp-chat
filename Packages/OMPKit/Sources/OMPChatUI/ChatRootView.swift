@@ -25,7 +25,7 @@ public struct ChatRootView: View {
     public var body: some View {
         @Bindable var bindable = model
         #if os(iOS)
-        iOSRootView()
+        IOSShell()
             .sheet(isPresented: $bindable.showSettings) {
                 ProviderSettingsView().environment(model)
             }
@@ -55,18 +55,18 @@ public struct ChatRootView: View {
         }
     }
 
-    // MARK: - macOS (Codex-style: icon rail + sidebar + detail)
+    // MARK: - macOS (official ChatGPT desktop: single sidebar + main content)
 
     #if os(macOS)
+    @State private var sidebarWidth: CGFloat = 260
+
     private var macOSRoot: some View {
         HStack(spacing: 0) {
-            IconRail()
-            Divider().opacity(0.6)
             if sidebarVisible {
                 ConversationSidebar()
-                    .frame(width: Theme.Layout.sidebarIdeal)
+                    .frame(width: sidebarWidth)
                     .transition(.move(edge: .leading).combined(with: .opacity))
-                Divider().opacity(0.6)
+                SidebarResizer(width: $sidebarWidth)
             }
             ChatDetailView(onQuickSwitch: { showSwitcher = true }, onToggleSidebar: toggleSidebar)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,128 +81,6 @@ public struct ChatRootView: View {
     #endif
 }
 
-#if os(macOS)
-/// Minimalist activity rail matching Codex desktop exactly (44pt).
-struct IconRail: View {
-    @Environment(ChatAppModel.self) private var model
-    @State private var activeSheet: ActiveSheet?
-
-    enum ActiveSheet: Identifiable {
-        case history
-        var id: Self { self }
-    }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Button {
-                // Home view
-            } label: {
-                Image(systemName: "house.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.ompText)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 38)
-
-            Button {
-                activeSheet = .history
-            } label: {
-                Image(systemName: "clock")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .help("会话历史")
-
-            Button {
-                // Mentions
-            } label: {
-                Image(systemName: "at")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .help("提醒与提及")
-
-            Menu {
-                Button("项目与工作区") {
-                    NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
-                }
-                Button("偏好设置 (⌘,)") {
-                    model.showSettings = true
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 32, height: 32)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("更多")
-
-            Spacer()
-
-            Button {
-                model.showSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .help("偏好设置 (⌘,)")
-            .padding(.bottom, 16)
-        }
-        .frame(width: 44)
-        .background(Color.ompCanvas)
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .history:
-                PaseoSessionHistorySheet(onSelectConversation: { id in
-                    model.selectedConversationID = id
-                }).environment(model)
-            }
-        }
-    }
-
-    private func railButton(_ symbol: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
-        RailButton(symbol: symbol, help: help, active: active, action: action)
-    }
-}
-
-/// Icon-rail button with a hover wash and an accent-tinted active state.
-struct RailButton: View {
-    let symbol: String
-    let help: String
-    var active: Bool
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(active ? Color.accentColor : Color.ompTextSecondary)
-                .frame(width: 32, height: 32)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(active ? Color.accentColor.opacity(0.16) : (hovering ? Color.ompHover : Color.clear))
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .onHover { hovering = $0 }
-        .animation(Theme.Motion.fade, value: hovering)
-    }
-}
-#endif
 
 public struct ChatDetailView: View {
     @Environment(ChatAppModel.self) private var model
@@ -228,7 +106,6 @@ public struct ChatDetailView: View {
         VStack(spacing: 0) {
             #if os(macOS)
             header
-            Divider().opacity(0.5)
             #endif
 
             if showInChatSearch { inChatSearchBar }
@@ -253,25 +130,17 @@ public struct ChatDetailView: View {
                 .padding(.vertical, 4)
             }
 
-            if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {
-                // Codex-style empty state: headline + composer vertically centered
-                Spacer(minLength: 40)
-                VStack(spacing: 18) {
-                    ChatEmptyStateView()
-                    ComposerBar()
-                }
-                .frame(maxWidth: Theme.Layout.transcriptMax + Theme.Layout.transcriptPadding * 2)
-                Spacer(minLength: 40)
-            } else {
-                ChatTranscriptView()
-                ComposerBar()
+            // Official three layers: Surface → Viewport(scroll) → Frame(768 centered).
+            #if os(macOS)
+            ZStack(alignment: .top) {
+                mainViewport
+                MainContentTopFade()
             }
+            #else
+            mainViewport
+            #endif
         }
         .background(Color.ompCanvas)
-        #if os(iOS)
-        .navigationTitle(model.selectedConversation?.title ?? "OMP Chat")
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
         .onReceive(NotificationCenter.default.publisher(for: .ompFindInChat)) { _ in
             showInChatSearch = true
         }
@@ -296,6 +165,25 @@ public struct ChatDetailView: View {
                 }
             }
         }
+    }
+
+    /// `MainContentViewport`: everything scrollable, composer pinned at bottom.
+    private var mainViewport: some View {
+        VStack(spacing: 0) {
+            if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {
+                Spacer(minLength: 24)
+                VStack(spacing: 24) {
+                    ChatEmptyStateView()
+                    ComposerBar()
+                }
+                .padding(.horizontal, Theme.Layout.transcriptPadding)
+                Spacer(minLength: 24)
+            } else {
+                ChatTranscriptView()
+                ComposerBar()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: macOS header
@@ -460,22 +348,12 @@ public struct ChatDetailView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 28)
-        .frame(height: 60)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .frame(minHeight: 44)
         .background(Color.ompCanvas)
         .contentShape(Rectangle())
-    }
-
-    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.ompTextSecondary)
-                .frame(width: 26, height: 26)
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
     #endif
 
@@ -563,25 +441,20 @@ struct ChatEmptyStateView: View {
     @Environment(ChatAppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 18) {
-            ZStack {
-                Circle()
-                    .fill(Color.ompFill.opacity(0.6))
-                    .frame(width: 62, height: 62)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(Color.ompTextTertiary)
-            }
-
+        VStack(spacing: 6) {
             (Text("你想让我们在 ")
                 + Text(currentProjectName).underline()
                 + Text(" 中构建什么？"))
-                .font(.system(size: 23, weight: .semibold))
+                .font(Theme.Typography.display) // official 2xl 24 semibold
                 .foregroundStyle(Color.ompText)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+
+            Text("在 \(currentProjectName) 中随时开始一条新对话")
+                .font(Theme.Typography.sm) // official 14
+                .foregroundStyle(Color.ompTextSecondary)
+                .multilineTextAlignment(.center)
         }
-        .padding(.bottom, 4)
     }
 
     private var currentProjectName: String {

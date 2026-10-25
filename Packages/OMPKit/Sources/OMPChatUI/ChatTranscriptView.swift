@@ -32,8 +32,10 @@ public struct ChatTranscriptView: View {
                         .frame(height: 1)
                         .id(Self.bottomAnchor)
                 }
+                // Official MainContentFrame: thread content maxes at 768pt,
+                // centered, with 24pt side padding.
                 .padding(.horizontal, Theme.Layout.transcriptPadding)
-                .padding(.top, 20)
+                .padding(.top, 16)
                 .padding(.bottom, 8)
                 .frame(maxWidth: Theme.Layout.transcriptMax, alignment: .leading)
                 .frame(maxWidth: .infinity)

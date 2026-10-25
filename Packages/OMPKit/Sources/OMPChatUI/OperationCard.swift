@@ -28,7 +28,7 @@ public struct OperationCard: View {
                 }
             }
         }
-        .ompSurface(radius: Theme.Radius.m, fill: .ompFill, border: .ompBorder)
+        .ompSurface(radius: Theme.Radius.officialLG, fill: .ompFill, border: .ompBorder)
     }
 
     private var header: some View {
@@ -37,13 +37,13 @@ public struct OperationCard: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.ompTextTertiary)
                 Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.ompTextSecondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(statusColor(results.count == calls.count ? results.last : nil))
                 Text("操作")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Color.ompText)
                 Text("\(calls.count)")
                     .font(.system(size: 10.5).monospacedDigit())
@@ -56,8 +56,8 @@ public struct OperationCard: View {
                     DiffChip(added: summary.added, removed: summary.removed)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -67,7 +67,7 @@ public struct OperationCard: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Image(systemName: statusIcon(result))
-                    .font(.system(size: 9))
+                    .font(.system(size: 13))
                     .foregroundStyle(statusColor(result))
                 Text(call.name.isEmpty ? "工具调用" : call.name)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
@@ -80,21 +80,21 @@ public struct OperationCard: View {
             }
             if !call.argumentsJSON.isEmpty {
                 Text(call.argumentsJSON)
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.system(size: 12.5, design: .monospaced))
                     .foregroundStyle(Color.ompTextSecondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
             }
             if let result, !result.outputText.isEmpty {
                 Text(result.outputText)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(result.isError ? .red : Color.ompTextSecondary)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(result.isError ? Color.ompFlat(rgb: 0xDE4A43) : Color.ompTextSecondary)
                     .lineLimit(4)
                     .textSelection(.enabled)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     private func statusIcon(_ result: ToolResult?) -> String {
@@ -102,9 +102,15 @@ public struct OperationCard: View {
         return result.isError ? "xmark.circle.fill" : "checkmark.circle.fill"
     }
 
+    /// Official chat accent colours: success `#055f51`/`#42dec2`,
+    /// failure `#de4a43`, still running `#ab1616`/`#fdb9ab` (orange accent).
     private func statusColor(_ result: ToolResult?) -> Color {
-        guard let result else { return Color.ompTextTertiary }
-        return result.isError ? .red : .green
+        guard let result else {
+            return Color.ompDynamic(light: 0xAB1616, dark: 0xFDB9AB)
+        }
+        return result.isError
+            ? Color.ompFlat(rgb: 0xDE4A43)
+            : Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2)
     }
 
     /// Counts `+`/`-` prefixed lines in tool output, like a diff stat.

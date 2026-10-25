@@ -18,8 +18,9 @@ public struct MarkdownText: View {
                     if let attributed = Self.inlineAttributed(value) {
                         Text(attributed)
                             .font(Theme.Typography.body)
+                            .lineSpacing(10)
                             .textSelection(.enabled)
-                            .tint(Color.accentColor)
+                            .tint(Color.ompDynamic(light: 0x3A83F7, dark: 0x63A8F8))
                             .environment(\.openURL, OpenURLAction { url in
                                 #if os(macOS)
                                 NSWorkspace.shared.open(url)
@@ -32,9 +33,53 @@ public struct MarkdownText: View {
                     } else {
                         Text(value)
                             .font(Theme.Typography.body)
+                            .lineSpacing(10)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                case .heading(let level, let text):
+                    Text(Self.inlineAttributed(text) ?? AttributedString(text))
+                        .font(.system(size: Self.headingSize(level), weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                        .lineSpacing(Self.headingSize(level) * 0.2)
+                        .textSelection(.enabled)
+                        .padding(.top, 16)
+                        .padding(.bottom, 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bulletList(let items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("•")
+                                    .font(Theme.Typography.body)
+                                    .foregroundStyle(Color.ompTextSecondary)
+                                inlineText(item)
+                            }
+                        }
+                    }
+                    .padding(.leading, 6)
+                case .numberedList(let items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("\(index + 1).")
+                                    .font(Theme.Typography.body)
+                                    .foregroundStyle(Color.ompTextSecondary)
+                                    .monospacedDigit()
+                                inlineText(item)
+                            }
+                        }
+                    }
+                    .padding(.leading, 6)
+                case .quote(let text):
+                    HStack(alignment: .top, spacing: 0) {
+                        Rectangle()
+                            .fill(Color.ompBorder)
+                            .frame(width: 2)
+                        inlineText(text, color: Color.ompTextSecondary)
+                            .padding(.leading, 14)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 case .code(let language, let code):
                     CodeBlockView(language: language, code: code)
                 case .table(let headers, let rows):
@@ -44,6 +89,32 @@ public struct MarkdownText: View {
                 }
             }
         }
+    }
+
+    private static func headingSize(_ level: Int) -> CGFloat {
+        switch level {
+        case 1: 26
+        case 2: 20
+        case 3: 18
+        default: 16
+        }
+    }
+
+    /// Inline-styled body text (bold/italic/code/link) at the official 16pt/1.625.
+    @ViewBuilder
+    private func inlineText(_ value: String, color: Color = .ompText) -> some View {
+        Group {
+            if let attributed = Self.inlineAttributed(value) {
+                Text(attributed)
+            } else {
+                Text(value)
+            }
+        }
+        .font(Theme.Typography.body)
+        .foregroundStyle(color)
+        .lineSpacing(10)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private static func inlineAttributed(_ value: String) -> AttributedString? {
@@ -56,6 +127,10 @@ public struct MarkdownText: View {
     struct Segment: Identifiable, Equatable {
         enum Kind: Equatable {
             case text(String)
+            case heading(level: Int, text: String)
+            case bulletList([String])
+            case numberedList([String])
+            case quote(String)
             case code(language: String?, code: String)
             case table(headers: [String], rows: [[String]])
             case math(equation: String)
@@ -151,6 +226,62 @@ public struct MarkdownText: View {
                     continue
                 }
 
+                // Block-level markdown: headings, bullet/numbered lists, quotes.
+                let content = trimmedLine
+                if content.hasPrefix("#") {
+                    let hashes = content.prefix { $0 == "#" }.count
+                    if (1...6).contains(hashes) {
+                        let rest = content.dropFirst(hashes).trimmingCharacters(in: .whitespaces)
+                        if !rest.isEmpty {
+                            flushText()
+                            segments.append(Segment(id: segments.count, kind: .heading(level: hashes, text: rest)))
+                            i += 1
+                            continue
+                        }
+                    }
+                }
+                if content.hasPrefix("- ") || content.hasPrefix("* ") || content.hasPrefix("+ ") {
+                    flushText()
+                    var items: [String] = []
+                    while i < allLines.count {
+                        let row = allLines[i].trimmingCharacters(in: .whitespaces)
+                        guard row.hasPrefix("- ") || row.hasPrefix("* ") || row.hasPrefix("+ ") else { break }
+                        items.append(String(row.dropFirst(2)))
+                        i += 1
+                    }
+                    segments.append(Segment(id: segments.count, kind: .bulletList(items)))
+                    continue
+                }
+                if let firstDot = content.firstIndex(of: "."), content.distance(from: content.startIndex, to: firstDot) <= 2,
+                   content[content.startIndex..<firstDot].allSatisfy({ $0.isNumber }) {
+                    flushText()
+                    var items: [String] = []
+                    while i < allLines.count {
+                        let row = allLines[i].trimmingCharacters(in: .whitespaces)
+                        guard let dot = row.firstIndex(of: "."),
+                              row.distance(from: row.startIndex, to: dot) <= 2,
+                              row[row.startIndex..<dot].allSatisfy({ $0.isNumber }),
+                              row.index(after: dot) < row.endIndex,
+                              row[row.index(after: dot)] == " " else { break }
+                        items.append(String(row[row.index(dot, offsetBy: 2)...]))
+                        i += 1
+                    }
+                    segments.append(Segment(id: segments.count, kind: .numberedList(items)))
+                    continue
+                }
+                if content.hasPrefix("> ") {
+                    flushText()
+                    var quoteLines: [String] = []
+                    while i < allLines.count {
+                        let row = allLines[i].trimmingCharacters(in: .whitespaces)
+                        guard row.hasPrefix("> ") || row == ">" else { break }
+                        quoteLines.append(row == ">" ? "" : String(row.dropFirst(2)))
+                        i += 1
+                    }
+                    segments.append(Segment(id: segments.count, kind: .quote(quoteLines.joined(separator: "\n"))))
+                    continue
+                }
+
                 textBuffer.append(line)
                 i += 1
             }
@@ -171,53 +302,61 @@ public struct MarkdownTableView: View {
 
     public var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 0) {
+            // `Grid` keeps every column the same width across header and rows,
+            // which plain HStacks cannot do inside a horizontal ScrollView.
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
                     ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
                         Text(header)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.ompText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .frame(minWidth: 90, alignment: .leading)
-                        if index < headers.count - 1 {
-                            Divider().frame(height: 18).opacity(0.5)
-                        }
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Color.ompTextSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(alignment: .bottom) {
+                                Rectangle().fill(Color.ompBorder).frame(height: 1)
+                            }
+                            .background(Color.ompFill.opacity(0.55))
+                            .overlay(alignment: .leading) {
+                                if index > 0 {
+                                    Rectangle().fill(Color.ompBorder).frame(width: 1)
+                                }
+                            }
                     }
                 }
-                .background(Color.ompFill)
-
-                Divider()
-
                 ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
-                    HStack(spacing: 0) {
+                    GridRow {
                         ForEach(Array(headers.indices), id: \.self) { colIndex in
                             let cellText = colIndex < row.count ? row[colIndex] : ""
                             Text(cellText)
-                                .font(Theme.Typography.body)
+                                .font(.system(size: 14))
                                 .foregroundStyle(Color.ompText)
-                                .padding(.horizontal, 14)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .frame(minWidth: 90, alignment: .leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
-                            if colIndex < headers.count - 1 {
-                                Divider().frame(height: 16).opacity(0.3)
-                            }
+                                .overlay(alignment: .leading) {
+                                    if colIndex > 0 {
+                                        Rectangle().fill(Color.ompBorder.opacity(0.6)).frame(width: 1)
+                                    }
+                                }
+                                .background(alignment: .bottom) {
+                                    if rowIndex < rows.count - 1 {
+                                        Rectangle().fill(Color.ompBorder).frame(height: 1)
+                                    }
+                                }
                         }
-                    }
-                    .background(rowIndex % 2 == 0 ? Color.ompCard : Color.ompFill.opacity(0.3))
-                    if rowIndex < rows.count - 1 {
-                        Divider().opacity(0.4)
                     }
                 }
             }
         }
         .background(Color.ompCard)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
-                .strokeBorder(Color.ompBorder.opacity(0.7), lineWidth: 1)
+            RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)
+                .strokeBorder(Color.ompBorder, lineWidth: 0.5)
         )
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -285,20 +424,17 @@ public struct CodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Spacing.s) {
                 Text(language?.uppercased() ?? "CODE")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.ompFill, in: Capsule())
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color.ompTextTertiary)
                 Spacer()
                 Text("\(code.split(separator: "\n", omittingEmptySubsequences: false).count) 行")
-                    .font(.system(size: 9.5).monospacedDigit())
+                    .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Color.ompTextTertiary)
                 Button {
                     withAnimation(Theme.Motion.quick) { collapsed.toggle() }
                 } label: {
                     Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 12, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -347,50 +483,51 @@ public struct CodeBlockView: View {
                     .foregroundStyle(Color.accentColor)
                 }
             }
-            .padding(.horizontal, Theme.Spacing.m)
-            .padding(.vertical, Theme.Spacing.s)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.Layout.rowHeight)
 
             if !collapsed {
                 Divider()
 
                 // Long blocks stay a fixed height and scroll internally instead of
                 // pushing the transcript endlessly (ChatGPT desktop behaviour).
+                let allLines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
                     HStack(alignment: .top, spacing: 10) {
-                        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
                         VStack(alignment: .trailing, spacing: 3) {
-                            ForEach(0..<lines.count, id: \.self) { i in
+                            ForEach(0..<allLines.count, id: \.self) { i in
                                 Text("\(i + 1)")
-                                    .font(Theme.Typography.monospaced)
-                                    .foregroundStyle(Color.ompTextTertiary.opacity(0.5))
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundStyle(Color.ompTextTertiary.opacity(0.6))
                             }
                         }
-                        .padding(.vertical, Theme.Spacing.m)
-                        .padding(.leading, Theme.Spacing.m)
+                        .frame(width: 40, alignment: .trailing)
+                        .padding(.vertical, 14)
+                        .padding(.leading, 8)
 
                         if isDiff {
                             VStack(alignment: .leading, spacing: 3) {
-                                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                                ForEach(Array(allLines.enumerated()), id: \.offset) { _, line in
                                     let isAdd = line.hasPrefix("+") && !line.hasPrefix("+++")
                                     let isDel = line.hasPrefix("-") && !line.hasPrefix("---")
                                     Text(line.isEmpty ? " " : line)
-                                        .font(Theme.Typography.monospaced)
+                                        .font(.system(size: 13, design: .monospaced))
                                         .foregroundStyle(isAdd ? Color.green : (isDel ? Color.red : Color.ompText))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 4)
                                         .background(isAdd ? Color.green.opacity(0.12) : (isDel ? Color.red.opacity(0.12) : Color.clear), in: RoundedRectangle(cornerRadius: 3))
                                 }
                             }
-                            .padding(.vertical, Theme.Spacing.m)
-                            .padding(.trailing, Theme.Spacing.m)
+                            .padding(.vertical, 14)
+                            .padding(.trailing, 14)
                             .textSelection(.enabled)
                         } else {
                             Text(code)
-                                .font(Theme.Typography.monospaced)
-                                .lineSpacing(3)
+                                .font(.system(size: 13, design: .monospaced))
+                                .lineSpacing(2)
                                 .textSelection(.enabled)
-                                .padding(.vertical, Theme.Spacing.m)
-                                .padding(.trailing, Theme.Spacing.m)
+                                .padding(.vertical, 14)
+                                .padding(.trailing, 14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -398,11 +535,11 @@ public struct CodeBlockView: View {
                 .frame(maxHeight: 320)
             }
         }
-        .background(Color.ompSecondaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+        .background(Color.ompFill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous)
-                .strokeBorder(Color.ompSeparator.opacity(0.6), lineWidth: 1)
+            RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)
+                .strokeBorder(Color.ompBorder, lineWidth: 0.5)
         )
         .sheet(isPresented: $showingPreview) {
             ArtifactPreviewSheet(language: language, code: code)

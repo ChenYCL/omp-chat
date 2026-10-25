@@ -19,14 +19,25 @@ public enum Theme {
         public static let m: CGFloat = 12
         public static let l: CGFloat = 16
         public static let xl: CGFloat = 22
-        public static let bubble: CGFloat = 18
+        public static let bubble: CGFloat = 22
+        // Official ChatGPT tokens (radius-*-base in app-shared CSS).
+        public static let officialSM: CGFloat = 6
+        public static let officialMD: CGFloat = 8
+        public static let officialLG: CGFloat = 10
+        public static let officialXL: CGFloat = 12
+        public static let official2XL: CGFloat = 16
+        public static let official3XL: CGFloat = 20
+        public static let official4XL: CGFloat = 24
+        public static let composer: CGFloat = 28
     }
 
     public enum Layout {
         public static let sidebarMin: CGFloat = 220
         public static let sidebarIdeal: CGFloat = 252
         public static let sidebarMax: CGFloat = 320
-        public static let transcriptMax: CGFloat = 760
+        public static let transcriptMax: CGFloat = 768   // official --thread-content-max-width: 48rem
+        public static let rowHeight: CGFloat = 36        // official --height-token-row
+        public static let avatarSize: CGFloat = 28       // official --avatar-size
         public static let transcriptPadding: CGFloat = 24
         public static let messageSpacing: CGFloat = 26
     }
@@ -39,8 +50,14 @@ public enum Theme {
     }
 
     public enum Typography {
-        public static let body = Font.system(size: 15)
-        public static let message = Font.system(size: 15)
+        // Official --text-* scale: xs 12 / sm 14 / base 16 / lg 18 / xl 20 / 2xl 24
+        public static let body = Font.system(size: 16)
+        public static let message = Font.system(size: 16)
+        public static let xs = Font.system(size: 12)
+        public static let sm = Font.system(size: 14)
+        public static let lg = Font.system(size: 18)
+        public static let xl = Font.system(size: 20)
+        public static let display = Font.system(size: 24, weight: .semibold)
         public static let secondary = Font.system(size: 13)
         public static let caption = Font.system(size: 11)
         public static let meta = Font.system(size: 11).monospacedDigit()
@@ -63,20 +80,28 @@ public enum Theme {
 // MARK: - Colour tokens
 
 public extension Color {
-    /// Main chat canvas.
-    static let ompCanvas = Color.ompDynamic(light: 0xFFFFFF, dark: 0x0E0E10)
-    /// Cards, composer, code blocks.
-    static let ompCard = Color.ompDynamic(light: 0xFFFFFF, dark: 0x17171A)
-    /// Subtle filled surfaces (code blocks, chips).
-    static let ompFill = Color.ompDynamic(light: 0xF4F4F6, dark: 0x1F1F23)
-    /// User message bubble.
-    static let ompUserBubble = Color.ompDynamic(light: 0xF1F1F3, dark: 0x26262A)
-    /// Hairlines.
-    static let ompBorder = Color.ompDynamic(light: 0xE4E4E9, dark: 0x2C2C31)
-    /// Neutral text.
-    static let ompText = Color.ompDynamic(light: 0x17171A, dark: 0xF2F2F4)
-    static let ompTextSecondary = Color.ompDynamic(light: 0x6B6B73, dark: 0x9A9AA3)
-    static let ompTextTertiary = Color.ompDynamic(light: 0x9A9AA3, dark: 0x6E6E76)
+    /// Main chat canvas — official --color-surface.
+    static let ompCanvas = Color.ompDynamic(light: 0xFFFFFF, dark: 0x212121)
+    /// Cards, composer, code blocks — official --color-surface-elevated.
+    static let ompCard = Color.ompDynamic(light: 0xFFFFFF, dark: 0x000000)
+    /// Subtle filled surfaces — official --color-surface-tertiary.
+    static let ompFill = Color.ompDynamic(light: 0xF3F3F3, dark: 0x414141)
+    /// User message bubble — official --color-background-user-message.
+    static let ompUserBubble = Color.ompDynamic(light: 0xF3F3F3, dark: 0x414141)
+    /// Hairlines — official --color-border.
+    static let ompBorder = Color.ompDynamic(light: 0xE6E6E6, dark: 0x3F3F3F)
+    /// Neutral text — official --color-text.
+    static let ompText = Color.ompDynamic(light: 0x0D0D0D, dark: 0xFFFFFF)
+    /// official --color-text-secondary.
+    static let ompTextSecondary = Color.ompDynamic(light: 0x5D5D5D, dark: 0xCDCDCD)
+    /// official --color-text-tertiary.
+    static let ompTextTertiary = Color.ompDynamic(light: 0x8F8F8F, dark: 0xAFAFAF)
+    /// official --color-surface-secondary (sidebar).
+    static let ompSidebar = Color.ompDynamic(light: 0xE8E8E8, dark: 0x303030)
+    /// official --color-background-primary-solid (primary button / send key).
+    static let ompPrimarySolid = Color.ompDynamic(light: 0x0D0D0D, dark: 0xF9F9F9)
+    /// official --color-text-inverse (label on primary solid).
+    static let ompInverseText = Color.ompDynamic(light: 0xFFFFFF, dark: 0x0D0D0D)
 
     static let ompHover = Color.primary.opacity(0.06)
     static let ompSelection = Color.accentColor.opacity(0.14)

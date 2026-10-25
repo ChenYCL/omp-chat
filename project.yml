@@ -65,6 +65,19 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
 
+  OMPChatiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/OMPChatiOSUITests
+    dependencies:
+      - target: OMPChatiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ace.ompchat.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: OMPChatiOS
+
   OMPChatTests:
     type: bundle.unit-test
     platform: macOS
@@ -96,5 +109,10 @@ schemes:
     build:
       targets:
         OMPChatiOS: all
+        OMPChatiOSUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - OMPChatiOSUITests

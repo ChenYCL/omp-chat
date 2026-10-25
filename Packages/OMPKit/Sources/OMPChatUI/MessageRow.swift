@@ -3,6 +3,25 @@ import OMPCore
 import OMPDesign
 
 public struct MessageRow: View {
+    private let message: ChatMessage
+    private let mediaLibrary: MediaLibrary
+    private let actions: Actions
+
+    @Environment(ChatAppModel.self) private var model
+    @State private var hovering = false
+    @State private var hoverTimer: Timer?
+    @State private var editing = false
+    @State private var editText = ""
+    @State private var copied = false
+    @State private var showUsagePopover = false
+    @ObservedObject private var speech = SpeechManager.shared
+
+    public init(message: ChatMessage, mediaLibrary: MediaLibrary, actions: Actions) {
+        self.message = message
+        self.mediaLibrary = mediaLibrary
+        self.actions = actions
+    }
+
     public struct Actions {
         public var copy: () -> Void
         public var edit: ((String) -> Void)?
@@ -33,24 +52,6 @@ public struct MessageRow: View {
             self.select = select
         }
     }
-
-    private let message: ChatMessage
-    private let mediaLibrary: MediaLibrary
-    private let actions: Actions
-
-    @Environment(ChatAppModel.self) private var model
-    @State private var hovering = false
-    @State private var editing = false
-    @State private var editText = ""
-    @State private var copied = false
-    @State private var showUsagePopover = false
-    @ObservedObject private var speech = SpeechManager.shared
-    public init(message: ChatMessage, mediaLibrary: MediaLibrary, actions: Actions) {
-        self.message = message
-        self.mediaLibrary = mediaLibrary
-        self.actions = actions
-    }
-
     /// All image refs in this message, for lightbox paging.
     private var galleryRefs: [MediaRef] {
         message.parts.compactMap {
@@ -58,7 +59,6 @@ public struct MessageRow: View {
             return nil
         }
     }
-
 
     public var body: some View {
         Group {
@@ -70,15 +70,31 @@ public struct MessageRow: View {
                 systemRow
             }
         }
-        .onHover { hovering = $0 }
-        .animation(Theme.Motion.fade, value: hovering)
+        #if os(macOS)
+        .onHover { enter in
+            hoverTimer?.invalidate()
+            withAnimation(Theme.Motion.fade) { hovering = enter }
+        }
+        #else
+        .onLongPressGesture(minimumDuration: 0.35) {
+            hoverTimer?.invalidate()
+            withAnimation(Theme.Motion.fade) { hovering = true }
+            hoverTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { _ in
+                withAnimation(Theme.Motion.fade) { hovering = false }
+            }
+        }
+        .onDisappear { hoverTimer?.invalidate() }
+        #endif
     }
+
 
     // MARK: User
 
     private var userRow: some View {
+        // Official user message: no avatar column, bubble right-aligned and
+        // capped at ~78% of the 768pt transcript column.
         HStack(alignment: .top, spacing: 0) {
-            Spacer(minLength: 56)
+            Spacer(minLength: 48)
             VStack(alignment: .trailing, spacing: Theme.Spacing.xs) {
                 if editing {
                     editor
@@ -93,9 +109,9 @@ public struct MessageRow: View {
                 }
             }
         }
-        .padding(.leading, 40)
     }
-
+    /// Official user bubble: ompUserBubble fill, radius 22, padding 10×14,
+    /// max width 78% of the transcript column, right aligned.
     private var bubble: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.s) {
             ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
@@ -112,7 +128,7 @@ public struct MessageRow: View {
                 }
             }
         }
-        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Color.ompUserBubble, in: RoundedRectangle(cornerRadius: Theme.Radius.bubble, style: .continuous))
         .contextMenu { menuItems }
@@ -198,7 +214,6 @@ public struct MessageRow: View {
             actionBar(alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 24)
     }
 
     /// Tool traffic folds into one collapsible card instead of loose pills.

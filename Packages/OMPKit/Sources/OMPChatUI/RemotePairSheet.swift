@@ -3,16 +3,16 @@ import OMPCore
 import OMPDesign
 
 #if os(iOS)
-// MARK: - RemotePairSheet
+// MARK: - RemoteScreen
+//
+// 远程 tab 的整页视图（不再是 sheet）：
+// - 未配对：配对表单（host / port / token + 连接按钮 + 报错行）。
+// - 已配对：主机会话列表（标题 / 项目 / 相对时间 / 流式黄点 / rev 胶囊），右上「重新配对」。
+// - 点行进入 RemoteConversationScreen（保留原实现）。
 
-/// Paseo-style remote pairing sheet: enter host:port + token, connect,
-/// then browse the mirrored Mac conversations and drill into a read-only
-/// session with a send bar (relay protocol v1, docs/relay-protocol.md).
-public struct RemotePairSheet: View {
+public struct RemoteScreen: View {
     @Environment(ChatAppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     @State private var hostField = ""
-    @State private var revisionsTask: Task<Void, Never>?
     @State private var portField = "8790"
     @State private var tokenField = ""
     @State private var status: Status = .idle
@@ -20,6 +20,7 @@ public struct RemotePairSheet: View {
     @State private var snapshot: RelaySnapshot?
     @State private var selectedItem: ConversationSheetItem?
     @State private var client: RemoteRelayClient?
+    @State private var revisionsTask: Task<Void, Never>?
 
     public init() {}
 
@@ -30,49 +31,50 @@ public struct RemotePairSheet: View {
         case failed(String)
     }
 
-    /// Sheet presentation needs an Identifiable item; the relay models are
+    /// Full-screen cover needs an Identifiable item; the relay models are
     /// plain Codable structs, so wrap the conversation id instead.
     private struct ConversationSheetItem: Identifiable {
         let id: String
     }
 
     public var body: some View {
-        NavigationStack {
-            Group {
-                switch status {
-                case .idle, .connecting, .failed:
-                    pairingForm
-                case .connected:
-                    hostBrowser
-                }
-            }
-            .background(Color.ompCanvas)
-            .navigationTitle("远程")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") {
-                        disconnect()
-                        dismiss()
-                    }
-                }
+        Group {
+            switch status {
+            case .idle, .connecting, .failed:
+                pairingForm
+            case .connected:
+                hostBrowser
             }
         }
+        .background(Color.ompCanvas)
         .onAppear(perform: loadSavedConnection)
         .onDisappear(perform: disconnect)
+        .fullScreenCover(item: $selectedItem) { item in
+            NavigationStack {
+                RemoteConversationScreen(
+                    conversationID: item.id,
+                    client: client,
+                    hostName: hostName,
+                    conversationProvider: currentConversation
+                )
+                .environment(model)
+            }
+        }
     }
 
     // MARK: Pairing Form
 
     private var pairingForm: some View {
         VStack(spacing: 0) {
+            headerBar(title: "远程") { EmptyView() }
+
             Spacer(minLength: 24)
             VStack(alignment: .leading, spacing: 14) {
-                field("主机地址", text: $hostField, placeholder: "例如 192.168.1.8 或 macbook.local", autocapitalization: false)
+                field("主机地址", text: $hostField, placeholder: "例如 192.168.1.8 或 macbook.local", autocapitalization: false, identifier: "remote.host")
                 HStack(alignment: .top, spacing: 12) {
-                    field("端口", text: $portField, placeholder: "8790", keyboard: .numberPad)
+                    field("端口", text: $portField, placeholder: "8790", keyboard: .numberPad, identifier: "remote.port")
                         .frame(width: 110)
-                    field("配对 Token", text: $tokenField, placeholder: "Mac 端生成的 UUID", autocapitalization: false)
+                    field("配对 Token", text: $tokenField, placeholder: "Mac 端生成的 UUID", autocapitalization: false, identifier: "remote.token")
                 }
             }
             .padding(18)
@@ -92,21 +94,23 @@ public struct RemotePairSheet: View {
                     if status == .connecting {
                         ProgressView()
                             .controlSize(.small)
-                            .tint(.white)
+                            .tint(Color.ompInverseText)
                     }
-                    Text(status == .connecting ? "正在连接…" : "配对")
+                    Text(status == .connecting ? "正在连接…" : "连接")
                         .font(.system(size: 14.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.ompInverseText)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 46)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(canConnect ? Color.black : Color.black.opacity(0.35))
+                        .fill(canConnect ? Color.ompPrimarySolid : Color.ompPrimarySolid.opacity(0.35))
                 )
             }
             .buttonStyle(.plain)
             .disabled(!canConnect)
+            .accessibilityIdentifier("remote.connect")
+            .accessibilityLabel("连接")
             .padding(.horizontal, 16)
             .padding(.top, 16)
 
@@ -114,18 +118,124 @@ public struct RemotePairSheet: View {
         }
     }
 
+    // MARK: Host Browser (conversation list)
+
+    private var hostBrowser: some View {
+        VStack(spacing: 0) {
+            headerBar(title: "远程") { reconnectButton }
+            hostBanner
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if let snapshot, snapshot.conversations.isEmpty {
+                        Text("Mac 上暂无会话")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .padding(.top, 48)
+                    }
+                    if let snapshot {
+                        ForEach(sorted(snapshot.conversations), id: \.id) { conversation in
+                            Button {
+                                selectedItem = ConversationSheetItem(id: conversation.id)
+                            } label: {
+                                RemoteConversationRow(conversation: conversation)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
+    /// Connected host strip: name + revision capsule.
+    private var hostBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.ompTextSecondary)
+            Text(hostName.isEmpty ? "已连接" : hostName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.ompText)
+            Spacer()
+            if let snapshot {
+                Text("rev \(snapshot.rev)")
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Color.ompFill, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.ompCard)
+    }
+
+    private var reconnectButton: some View {
+        Button {
+            snapshot = nil
+            selectedItem = nil
+            disconnect()
+        } label: {
+            Text("重新配对")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.ompText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.ompFill, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Resolved fresh on every render, so bubbles track the latest snapshot.
+    private func currentConversation(id: String) -> RelayConversation? {
+        snapshot?.conversations.first { $0.id == id }
+    }
+
+    private func sorted(_ conversations: [RelayConversation]) -> [RelayConversation] {
+        conversations.sorted {
+            if $0.isStreaming != $1.isStreaming { return $0.isStreaming }
+            return $0.updatedAt > $1.updatedAt
+        }
+    }
+
+    // MARK: Top bar (44pt, matches the shell chrome)
+
+    private func headerBar(
+        title: String,
+        @ViewBuilder trailing: () -> some View
+    ) -> some View {
+        HStack(spacing: 8) {
+            Spacer()
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.ompText)
+            Spacer()
+            trailing()
+                .frame(width: 36, height: 36)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 44)
+    }
+
+    // MARK: Connection actions
+
     private func field(
         _ title: String,
         text: Binding<String>,
         placeholder: String,
         keyboard: UIKeyboardType = .default,
-        autocapitalization: Bool = true
+        autocapitalization: Bool = true,
+        identifier: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Color.ompTextTertiary)
             TextField(placeholder, text: text)
+                .accessibilityIdentifier(identifier ?? placeholder)
                 .keyboardType(keyboard)
                 .textInputAutocapitalization(autocapitalization ? .sentences : .never)
                 .autocorrectionDisabled(!autocapitalization)
@@ -188,7 +298,7 @@ public struct RemotePairSheet: View {
         if status == .connected { status = .idle }
     }
 
-    /// Consume the SSE revision stream while the sheet is open; the stream in
+    /// Consume the SSE revision stream while the tab is visible; the stream in
     /// `revisions()` reconnects with backoff on its own, this task just refetches
     /// the full snapshot each time the host announces a change.
     private func watchRevisions() async {
@@ -204,93 +314,6 @@ public struct RemotePairSheet: View {
     private func describe(_ error: Error) -> String {
         if let relay = error as? RelayClientError { return relay.errorDescription ?? String(describing: relay) }
         return error.localizedDescription
-    }
-
-    // MARK: Host Browser (conversation list)
-
-    private var hostBrowser: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    if let snapshot, snapshot.conversations.isEmpty {
-                        Text("Mac 上暂无会话")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.ompTextTertiary)
-                            .padding(.top, 48)
-                    }
-                    if let snapshot {
-                        ForEach(sorted(snapshot.conversations), id: \.id) { conversation in
-                            Button {
-                                selectedItem = ConversationSheetItem(id: conversation.id)
-                            } label: {
-                                RemoteConversationRow(conversation: conversation)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-        }
-        .sheet(item: $selectedItem) { item in
-            NavigationStack {
-                RemoteConversationScreen(
-                    conversationID: item.id,
-                    client: client,
-                    hostName: hostName,
-                    conversationProvider: currentConversation
-                )
-            }
-        }
-    }
-
-    /// Resolved fresh on every render, so bubbles track the latest snapshot.
-    private func currentConversation(id: String) -> RelayConversation? {
-        snapshot?.conversations.first { $0.id == id }
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.ompTextSecondary)
-            Text(hostName.isEmpty ? "已连接" : hostName)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.ompText)
-            Spacer()
-            if let snapshot {
-                Text("rev \(snapshot.rev)")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.ompFill, in: Capsule())
-            }
-            Button {
-                snapshot = nil
-                selectedItem = nil
-                disconnect()
-            } label: {
-                Text("重新配对")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.ompText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Color.ompFill, in: Capsule())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private func sorted(_ conversations: [RelayConversation]) -> [RelayConversation] {
-        conversations.sorted {
-            if $0.isStreaming != $1.isStreaming { return $0.isStreaming }
-            return $0.updatedAt > $1.updatedAt
-        }
     }
 }
 
@@ -357,8 +380,8 @@ struct RemoteConversationRow: View {
 // MARK: - Remote Conversation Screen
 
 /// Read-only mirrored transcript of one Mac conversation, with a send bar and
-/// a stop button while the host is streaming. Lives in its own sheet, so it
-/// re-reads the conversation through `conversationProvider` on every render.
+/// a stop button while the host is streaming. Presented as a full-screen cover,
+/// it re-reads the conversation through `conversationProvider` on every render.
 struct RemoteConversationScreen: View {
     let conversationID: String
     let client: RemoteRelayClient?
@@ -440,11 +463,11 @@ struct RemoteConversationScreen: View {
                     }
                 } label: {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.black)
+                        .fill(Color.ompPrimarySolid)
                         .frame(width: 28, height: 28)
                         .overlay(
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white)
+                                .fill(Color.ompInverseText)
                                 .frame(width: 10, height: 10)
                         )
                 }
@@ -453,12 +476,12 @@ struct RemoteConversationScreen: View {
             } else {
                 Button(action: send) {
                     Circle()
-                        .fill(canSend ? Color.black : Color.black.opacity(0.35))
+                        .fill(canSend ? Color.ompPrimarySolid : Color.ompPrimarySolid.opacity(0.35))
                         .frame(width: 28, height: 28)
                         .overlay(
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color.ompInverseText)
                         )
                 }
                 .buttonStyle(.plain)

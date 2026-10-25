@@ -12,7 +12,6 @@ public struct ComposerBar: View {
     @State private var showVoiceSheet = false
     @State private var showModelPicker = false
     @State private var webSearchEnabled = false
-    @State private var hoveringSend = false
     @State private var promptHistoryIndex = 0
     @State private var originalDraft = ""
     @FocusState private var focused: Bool
@@ -38,166 +37,7 @@ public struct ComposerBar: View {
             if let token = mentionToken {
                 mentionList(token)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                if let quoted = model.replyingTo {
-                    replyPreview(quoted)
-                }
-                if !model.draftAttachments.isEmpty {
-                    attachmentStrip
-                }
-                if !model.pastedTexts.isEmpty {
-                    pastedTextStrip
-                }
-
-                TextField("随心输入", text: $model.draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14.5))
-                    .lineSpacing(3)
-                    .lineLimit(1...10)
-                    .focused($focused)
-                    .focusEffectDisabled()
-                    .onKeyPress(phases: .down) { press in
-                        guard press.key == .return, !press.modifiers.contains(.shift) else { return .ignored }
-                        guard model.settings.sendOnReturn else { return .ignored }
-                        model.send()
-                        return .handled
-                    }
-                    .onKeyPress(phases: .down) { press in
-                        handleHistoryKey(press)
-                    }
-
-                HStack(spacing: 6) {
-                    // Codex-style + menu
-                    Menu {
-                        Button { importingFiles = true } label: {
-                            Label("添加图片或文件", systemImage: "paperclip")
-                        }
-                        if !model.imageModels.isEmpty {
-                            Button { showImageSheet = true } label: {
-                                Label("生成图片", systemImage: "photo.badge.plus")
-                            }
-                        }
-                        Menu("提示词模板") {
-                            ForEach(Self.templates, id: \.alias) { item in
-                                Button(item.title) { model.draft = item.prompt }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color.ompText)
-                            .frame(width: 28, height: 28)
-                            .background(Color.ompFill, in: Circle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .help("添加素材或快捷模板")
-
-                    // 自定义设置按钮
-                    Button {
-                        showOptionsSheet = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.system(size: 10))
-                            Text("自定义")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(Color.ompTextSecondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.ompFill, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("自定义指令与推理强度")
-
-                    // MCP 工具按钮
-                    Button {
-                        showMCPSheet = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "powerplug")
-                                .font(.system(size: 10))
-                            Text("MCP")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(Color.ompTextSecondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.ompFill, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("查看已挂载的 MCP 工具")
-
-                    // 🌐 联网搜索按钮
-                    Button {
-                        webSearchEnabled.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "globe")
-                                .font(.system(size: 10))
-                            Text("联网")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(webSearchEnabled ? Color.white : Color.ompTextSecondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(webSearchEnabled ? Color.accentColor : Color.ompFill, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("启用联网搜索参考")
-                    Spacer(minLength: 0)
-
-                    if model.isStreaming {
-                        Button {
-                            model.stop()
-                        } label: {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 30, height: 30)
-                                .background(Color.red, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("停止生成 (Esc)")
-                        .keyboardShortcut(.cancelAction)
-                    } else {
-                    // 语音模式按钮
-                    Button {
-                        showVoiceSheet = true
-                    } label: {
-                        Image(systemName: "mic")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Color.ompTextSecondary)
-                            .frame(width: 28, height: 28)
-                            .background(Color.ompFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("语音模式 (Voice Mode)")
-
-                        Button {
-                            model.send()
-                        } label: {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(canSend ? Color.white : Color.ompTextTertiary)
-                                .frame(width: 30, height: 30)
-                                .background(canSend ? Color(red: 0.22, green: 0.22, blue: 0.23) : Color.ompFill, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!canSend)
-                        .help("发送 (Return)")
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.white, in: UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16))
-            .overlay(
-                UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16)
-                    .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.06), radius: 14, y: 4)
+            composerCard
         }
         .padding(.horizontal, Theme.Layout.transcriptPadding)
         .padding(.top, 6)
@@ -256,6 +96,233 @@ public struct ComposerBar: View {
         }
     }
 
+    // MARK: Official ComposerLayoutRoot
+
+    /// Outer card: ompCard fill, 28pt radius, spread hairline + soft shadow.
+    /// Top menu panel (workspace pill) fades in once the draft has content.
+    private var composerCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !model.draft.isEmpty {
+                composerTopMenu
+                    .transition(.opacity)
+            }
+            composerBody
+            composerFooter
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
+                .fill(Color.ompCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
+                .strokeBorder(Color.ompBorder, lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.10), radius: 4, x: 0, y: 2)
+        .animation(Theme.Motion.quick, value: model.draft.isEmpty)
+        .padding(.top, 22)
+    }
+
+    /// `ComposerTopMenuPanel`: workspace/project pill row, shown with content.
+    private var composerTopMenu: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(model.projects) { project in
+                    Button {
+                        if let conversation = model.selectedConversation {
+                            model.moveConversation(conversation.id, to: project.id)
+                        }
+                    } label: {
+                        Text(project.name)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 10))
+                    Text(projectName)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundStyle(Color.ompTextSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.ompFill, in: Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+    }
+
+    /// `ComposerLayoutBody`: RichTextInput + attachment chips.
+    private var composerBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let quoted = model.replyingTo {
+                replyPreview(quoted)
+            }
+            if !model.draftAttachments.isEmpty {
+                attachmentStrip
+            }
+            if !model.pastedTexts.isEmpty {
+                pastedTextStrip
+            }
+            composerInput
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+    }
+
+    /// RichTextInput: official 16pt with 1.5 leading.
+    private var composerInput: some View {
+        @Bindable var model = model
+        return TextField("随心输入", text: $model.draft, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 16))
+            .lineSpacing(8) // official --leading-normal 1.5 → 16 × 0.5 = 8
+            .lineLimit(1...10)
+            .focused($focused)
+            .focusEffectDisabled()
+            .padding(.top, 2)
+            .onKeyPress(phases: .down) { press in
+                guard press.key == .return, !press.modifiers.contains(.shift) else { return .ignored }
+                guard model.settings.sendOnReturn else { return .ignored }
+                model.send()
+                return .handled
+            }
+            .onKeyPress(phases: .down) { press in
+                handleHistoryKey(press)
+            }
+    }
+
+    /// `ComposerLayoutFooter`: tools left, circular send right.
+    private var composerFooter: some View {
+        HStack(spacing: 4) {
+            Menu {
+                Button { importingFiles = true } label: {
+                    Label("添加图片或文件", systemImage: "paperclip")
+                }
+                if !model.imageModels.isEmpty {
+                    Button { showImageSheet = true } label: {
+                        Label("生成图片", systemImage: "photo.badge.plus")
+                    }
+                }
+                Menu("提示词模板") {
+                    ForEach(Self.templates, id: \.alias) { item in
+                        Button(item.title) { model.draft = item.prompt }
+                    }
+                }
+                Menu("自定义指令") {
+                    Button { showOptionsSheet = true } label: {
+                        Label("对话设置", systemImage: "slider.horizontal.3")
+                    }
+                    Button { showMCPSheet = true } label: {
+                        Label("MCP 工具", systemImage: "powerplug")
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.ompText)
+                    .frame(width: 28, height: 28)
+                    .background(hoverPlus ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .onHover { hoverPlus = $0 }
+            .help("添加素材与工具")
+
+            Button {
+                webSearchEnabled.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 11))
+                    Text("联网")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(webSearchEnabled ? Color.ompInverseText : Color.ompTextSecondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(webSearchEnabled ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("启用联网搜索参考")
+
+            modelPill
+
+            Button {
+                showOptionsSheet = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(hoverOptions ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoverOptions = $0 }
+            .help("自定义指令与推理强度")
+
+            Spacer(minLength: 0)
+
+            if model.isStreaming {
+                Button {
+                    model.stop()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.ompInverseText)
+                        .frame(width: 32, height: 32)
+                        .background(Color.ompPrimarySolid, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("停止生成 (Esc)")
+                .keyboardShortcut(.cancelAction)
+            } else {
+                Button {
+                    showVoiceSheet = true
+                } label: {
+                    Image(systemName: "mic")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(hoverMic ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hoverMic = $0 }
+                .help("语音模式 (Voice Mode)")
+
+                Button {
+                    model.send()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.ompInverseText)
+                        .frame(width: 32, height: 32)
+                        .background(Color.ompPrimarySolid.opacity(canSend ? 1 : 0.3), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .help("发送 (Return)")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    @State private var hoverPlus = false
+    @State private var hoverOptions = false
+    @State private var hoverMic = false
+
+    /// Context strip: workspace / runtime pills above the composer card.
     private var contextStrip: some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
@@ -280,10 +347,9 @@ public struct ComposerBar: View {
             }
             Spacer()
         }
-        .foregroundStyle(Color.ompTextSecondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(Color.ompFill.opacity(0.7), in: UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
+        .foregroundStyle(Color.ompTextTertiary)
+        .padding(.horizontal, 6)
+        .padding(.bottom, 2)
     }
 
     /// Active @-mention query: the token after the last `@` when it contains no
@@ -551,18 +617,6 @@ public struct ComposerBar: View {
         .frame(maxWidth: Theme.Layout.transcriptMax)
         .ompSurface(radius: Theme.Radius.m)
         .padding(.horizontal, Theme.Layout.transcriptPadding)
-    }
-
-    private func circleButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.ompTextSecondary)
-                .frame(width: 28, height: 28)
-                .background(Color.ompFill, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     private var modelPill: some View {
