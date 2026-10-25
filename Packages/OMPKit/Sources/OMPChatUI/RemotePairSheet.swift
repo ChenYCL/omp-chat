@@ -451,14 +451,17 @@ public struct RemoteScreen: View {
         guard hostField.isEmpty, !settings.remoteHost.isEmpty else { return }
         hostField = settings.remoteHost
         portField = String(settings.remotePort)
-        tokenField = settings.remoteToken
+        // The token lives in the device list (vault-backed), not in the old
+        // single-connection field.
+        tokenField = settings.pairedDevices.first {
+            $0.transport == .lan && $0.host == settings.remoteHost && $0.port == settings.remotePort
+        }?.token ?? ""
     }
 
     private func persistConnection(host: String, port: UInt16, token: String) {
         var settings = model.settings
         settings.remoteHost = host
         settings.remotePort = port
-        settings.remoteToken = token
         remember(
             PairedDevice(name: hostName, transport: .lan, host: host, port: port, token: token),
             in: &settings

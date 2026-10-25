@@ -191,6 +191,10 @@ public final class ChatAppModel {
             models = try await store.loadModelCatalog()
             settings = try await store.loadSettings()
             projects = try await store.loadProjects()
+            let folded = settings.foldLegacyConnection()
+            let vaulted = PairedDeviceVault.hydrate(settings.pairedDevices, secrets: secrets)
+            settings.pairedDevices = vaulted.devices
+            if folded || vaulted.needsRewrite { await saveSettings(settings) }
         } catch {
             conversations = []
             providers = []
@@ -1067,9 +1071,15 @@ public final class ChatAppModel {
     }
 
     public func saveSettings(_ newValue: AppSettings) async {
+        let previous = settings.pairedDevices
         settings = newValue
+        // Tokens stay in memory and in the vault; the document gets blanks.
+        var persisted = newValue
+        persisted.pairedDevices = PairedDeviceVault.persistable(
+            newValue.pairedDevices, previous: previous, secrets: secrets
+        )
         do {
-            try await store.saveSettings(newValue)
+            try await store.saveSettings(persisted)
         } catch {
             DiagnosticsCenter.shared.record("workspace", .error, "settings save failed",
                 fields: ["error": error.localizedDescription])
