@@ -160,11 +160,11 @@ public struct ChatDetailView: View {
             // Official three layers: Surface → Viewport(scroll) → Frame(768 centered).
             #if os(macOS)
             ZStack(alignment: .top) {
-                mainViewport
+                mainViewport.environment(\.ompSearchHighlight, activeQuery)
                 MainContentTopFade()
             }
             #else
-            mainViewport
+            mainViewport.environment(\.ompSearchHighlight, activeQuery)
             #endif
         }
         .background(Color.ompCanvas)
@@ -413,6 +413,13 @@ public struct ChatDetailView: View {
         .disabled(matches.count < 2)
         .keyboardShortcut(key, modifiers: .control)
         .help(help)
+    }
+
+    /// The term to highlight: only while the search bar is open and non-empty.
+    private var activeQuery: String? {
+        guard showInChatSearch else { return nil }
+        let query = inChatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty ? nil : query
     }
 
     /// Messages containing the query, in transcript order.

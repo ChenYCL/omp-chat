@@ -4,8 +4,15 @@ import OMPDesign
 
 /// Lightweight markdown: fenced code blocks are split out so they can render
 /// as selectable monospaced cards; everything else uses inline markdown.
+extension EnvironmentValues {
+    /// In-chat search term. Text matching it is drawn with a highlight so the
+    /// jumped-to message shows *where* the hit is, not just that it exists.
+    @Entry var ompSearchHighlight: String? = nil
+}
+
 public struct MarkdownText: View {
     private let segments: [Segment]
+    @Environment(\.ompSearchHighlight) private var highlight
 
     public init(_ text: String) {
         self.segments = Segment.parse(text)
@@ -16,7 +23,7 @@ public struct MarkdownText: View {
             ForEach(segments) { segment in
                 switch segment.kind {
                 case .text(let value):
-                    if let attributed = Self.inlineAttributed(value) {
+                    if let attributed = Self.inlineAttributed(value, highlighting: highlight) {
                         Text(attributed)
                             .font(Theme.Typography.body)
                             .lineSpacing(10)
@@ -39,7 +46,7 @@ public struct MarkdownText: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .heading(let level, let text):
-                    Text(Self.inlineAttributed(text) ?? AttributedString(text))
+                    Text(Self.inlineAttributed(text, highlighting: highlight) ?? AttributedString(text))
                         .font(.system(size: Self.headingSize(level), weight: .semibold))
                         .foregroundStyle(Color.ompText)
                         .lineSpacing(Self.headingSize(level) * 0.2)
@@ -109,7 +116,7 @@ public struct MarkdownText: View {
     @ViewBuilder
     private func inlineText(_ value: String, color: Color = .ompText) -> some View {
         Group {
-            if let attributed = Self.inlineAttributed(value) {
+            if let attributed = Self.inlineAttributed(value, highlighting: highlight) {
                 Text(attributed)
             } else {
                 Text(value)
@@ -122,11 +129,29 @@ public struct MarkdownText: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private static func inlineAttributed(_ value: String) -> AttributedString? {
-        try? AttributedString(
+    private static func inlineAttributed(_ value: String, highlighting query: String?) -> AttributedString? {
+        guard var attributed = try? AttributedString(
             markdown: value,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )
+        ) else { return nil }
+        if let query, !query.isEmpty {
+            applyHighlight(query, to: &attributed)
+        }
+        return attributed
+    }
+
+    /// Marks every occurrence of `query` (case-insensitive) with a soft accent
+    /// background. Runs on the already-parsed string, so Markdown syntax stays
+    /// intact and only the visible characters are tinted.
+    static func applyHighlight(_ query: String, to attributed: inout AttributedString) {
+        var searchStart = attributed.startIndex
+        while searchStart < attributed.endIndex,
+              let found = attributed[searchStart...].range(of: query, options: .caseInsensitive) {
+            attributed[found].backgroundColor = Color.ompDynamic(light: 0xFFE58A, dark: 0x6B5A16)
+            attributed[found].foregroundColor = Color.ompDynamic(light: 0x2B2410, dark: 0xFFF4C4)
+            searchStart = found.upperBound
+            if searchStart == found.lowerBound { break }
+        }
     }
 
     struct Segment: Identifiable, Equatable {
