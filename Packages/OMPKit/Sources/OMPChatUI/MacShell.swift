@@ -162,6 +162,7 @@ public struct MacShellSidebar: View {
     @State private var showLocked = false
     @State private var isLockedUnlocked = false
     @State private var showArchived = false
+    @State private var showCLISessions = false
     @State private var showMoreMenu = false
     @State private var creatingCustomSection = false
     @State private var customSectionName = ""
@@ -187,6 +188,11 @@ public struct MacShellSidebar: View {
         .sheet(isPresented: $showProjectsSheet) {
             PaseoProjectsSheet()
                 .environment(model)
+        }
+        .sheet(isPresented: $showCLISessions) {
+            CLISessionsSheet(source: .thisMac)
+                .environment(model)
+                .environment(RemoteSession())
         }
         .alert("重命名对话", isPresented: Binding(
             get: { renamingID != nil },
@@ -369,6 +375,10 @@ public struct MacShellSidebar: View {
                     moreMenuItem(isLockedUnlocked ? "已锁定 (已解锁)" : "已锁定 (解锁查看)") {
                         toggleLockedSection()
                     }
+                    Divider()
+                    // The phone could see the Mac's Claude sessions; the Mac
+                    // itself could not, though it is the machine running them.
+                    moreMenuItem("CLI 会话") { showCLISessions = true }
                 }
                 .padding(8)
                 .frame(width: 220)

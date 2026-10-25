@@ -1490,6 +1490,31 @@ public final class ChatAppModel {
         }
     }
 
+    /// Answers an RPC for the desktop's own windows. Same executor as the phone
+    /// path, but not gated on the phone-access switch: local use never leaves
+    /// this Mac.
+    public func handleHostRPCForThisMac(_ request: HostRPCRequest) async -> HostRPCResponse {
+        await hostExecutor.handle(request, allowingShell: true)
+    }
+
+    /// `cli.sessions` for the desktop's own window. Local use does not depend
+    /// on the phone-access switch; nothing leaves this Mac.
+    public func localCLISessions() async -> HostRPCResponse {
+        await hostExecutor.handle(
+            HostRPCRequest(id: "local-cli-sessions", op: "cli.sessions"),
+            allowingShell: true
+        )
+    }
+
+    /// `cli.control` for the desktop's own window.
+    public func localCLIControl(_ action: CLISessionAction, id: String?, prompt: String? = nil, agent: String = "claude") async -> HostRPCResponse {
+        await hostExecutor.handle(
+            HostRPCRequest(id: "local-cli-control", op: "cli.control", path: action.rawValue,
+                           command: agent, requestID: id, prompt: prompt),
+            allowingShell: true
+        )
+    }
+
     /// Answers one host RPC from a paired phone. `info` always runs; file and
     /// shell operations require `settings.relayAllowShell`.
     public func handleHostRPC(_ request: HostRPCRequest) async -> HostRPCResponse {

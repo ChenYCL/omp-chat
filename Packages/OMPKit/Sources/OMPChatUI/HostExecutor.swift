@@ -93,13 +93,16 @@ public struct HostExecutor: Sendable {
         log.snapshot()
     }
 
-    public func handle(_ request: HostRPCRequest) async -> HostRPCResponse {
+    /// - Parameter allowingShell: overrides `shellAllowed` for this call. The
+    ///   desktop's own windows use it: the person at the keyboard should not
+    ///   have to enable the phone's access switch to see their own sessions.
+    public func handle(_ request: HostRPCRequest, allowingShell: Bool? = nil) async -> HostRPCResponse {
         let op = request.op
         guard op == "info" || op == "fs.list" || op == "fs.read" || op == "fs.write" || op == "exec"
             || op == "exec.cancel" || op == "exec.poll" || op == "cli.sessions" || op == "cli.control" else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
-        if op != "info", !shellAllowed {
+        if op != "info", !(allowingShell ?? shellAllowed) {
             log.record("\(Self.describe(request)) 已拒绝（未开启文件与终端访问）")
             return HostRPCResponse(id: request.id, ok: false, error: "shell_disabled")
         }

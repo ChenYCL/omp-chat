@@ -8,17 +8,59 @@ import XCTest
 /// nobody opens.
 final class IOSShellUITests: XCTestCase {
     private var app: XCUIApplication!
+    private var storeURL: URL!
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        // Seed a provider and key. Without one the app shows 还差一步 instead of
+        // the transcript, so the composer tests depended on whatever data an
+        // earlier run had left in the simulator.
+        storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ompchat-shell-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: true)
+        try seedStore()
+
         app = XCUIApplication()
         app.launchArguments = ["-ompui-testing", "1"]
+        app.launchEnvironment["OMPCHAT_STORE_DIR"] = storeURL.path
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
     }
 
     override func tearDownWithError() throws {
         app.terminate()
+        try? FileManager.default.removeItem(at: storeURL)
+    }
+
+    /// One provider with a placeholder key, and no conversations.
+    private func seedStore() throws {
+        let providerID = "11111111-1111-1111-1111-111111111111"
+        let workspace: [String: Any] = [
+            "conversations": [],
+            "models": [],
+            "projects": [],
+            "providers": [[
+                "baseURL": "http://127.0.0.1:9",
+                "chatPath": "/v1/chat/completions",
+                "createdAt": "2026-10-26T09:00:00Z",
+                "extraHeaders": [:],
+                "id": providerID,
+                "isDefault": true,
+                "kind": "openAICompatible",
+                "modelsPath": "/v1/models",
+                "name": "seed",
+            ]],
+            "settings": [
+                "defaultModelID": "seed-model",
+                "defaultProviderID": providerID,
+                "version": 1,
+            ],
+            "version": 1,
+        ]
+        try JSONSerialization.data(withJSONObject: workspace, options: [.prettyPrinted])
+            .write(to: storeURL.appendingPathComponent("workspace.json"))
+        try JSONSerialization.data(withJSONObject: ["secrets": ["provider.\(providerID)": "test-key-not-used"]])
+            .write(to: storeURL.appendingPathComponent("secrets.json"))
     }
 
     // MARK: - Shell

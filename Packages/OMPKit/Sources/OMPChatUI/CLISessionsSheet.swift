@@ -2,7 +2,7 @@ import SwiftUI
 import OMPCore
 import OMPDesign
 
-#if os(iOS)
+#if os(iOS) || os(macOS)
 
 // MARK: - CLISessionsSheet
 //
@@ -14,8 +14,20 @@ import OMPDesign
 // terminal someone is typing in.
 
 struct CLISessionsSheet: View {
+    /// Where the sessions come from. The phone reads them through its paired
+    /// Mac; the Mac itself reads them straight from its own executor, because
+    /// the person at that keyboard does not need the phone-access switch on to
+    /// see their own sessions.
+    enum Source {
+        case pairedMac
+        case thisMac
+    }
+
+    var source: Source = .pairedMac
+
     @Environment(\.dismiss) private var dismiss
     @Environment(RemoteSession.self) private var session
+    @Environment(ChatAppModel.self) private var model
 
     @State private var sessions: [CLISession] = []
     @State private var loaded = false
@@ -35,7 +47,7 @@ struct CLISessionsSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if session.sink == nil {
+                if !available {
                     emptyState(
                         title: "还没有连接 Mac",
                         detail: "先在「远程」页完成配对，这里会列出 Mac 上正在跑的 Claude Code 会话。"
@@ -52,7 +64,7 @@ struct CLISessionsSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("完成") { dismiss() }
                 }
-                if session.sink != nil {
+                if available {
                     ToolbarItem(placement: .primaryAction) {
                         Button { showingStart = true } label: { Image(systemName: "plus") }
                             .accessibilityLabel("新建会话")
@@ -60,7 +72,7 @@ struct CLISessionsSheet: View {
                     }
                 }
             }
-            .task(id: session.isConnected) { await load() }
+            .task(id: loadTrigger) { await load() }
             .sheet(item: $logs) { route in
                 NavigationStack {
                     ScrollView {
@@ -140,7 +152,11 @@ struct CLISessionsSheet: View {
                     }
                 }
             }
+            #if os(iOS)
             .listStyle(.insetGrouped)
+            #else
+            .listStyle(.inset)
+            #endif
             .refreshable { await load() }
             .overlay { if loading && !loaded { ProgressView() } }
         }
@@ -232,14 +248,46 @@ struct CLISessionsSheet: View {
         }
     }
 
+    /// Whether there is anything to read: a paired Mac, or this Mac itself.
+    private var available: Bool {
+        switch source {
+        case .pairedMac: return session.sink != nil
+        case .thisMac: return true
+        }
+    }
+
+    private var loadTrigger: Bool {
+        switch source {
+        case .pairedMac: return session.isConnected
+        case .thisMac: return true
+        }
+    }
+
     // MARK: Actions
 
+    private func call(_ op: String, _ configure: (inout HostRPCRequest) -> Void) async throws -> HostRPCResponse {
+        switch source {
+        case .pairedMac:
+            guard let sink = session.sink else { throw CancellationError() }
+            var request = HostRPCRequest(id: UUID().uuidString, op: op)
+            configure(&request)
+            return try await sink.call(request)
+        case .thisMac:
+            var request = HostRPCRequest(id: UUID().uuidString, op: op)
+            configure(&request)
+            return await model.handleHostRPCForThisMac(request)
+        }
+    }
+
     private func load() async {
-        guard let sink = session.sink else { return }
+        guard available else { return }
         loading = true
         defer { loading = false; loaded = true }
         do {
-            let response = try await HostRPC.call(sink, op: "cli.sessions", command: "claude", timeout: 30)
+            let response = try await call("cli.sessions") { request in
+                request.command = "claude"
+                request.timeout = 30
+            }
             guard response.ok else {
                 failure = response.text ?? HostRPC.message(for: response)
                 return
@@ -254,14 +302,16 @@ struct CLISessionsSheet: View {
     }
 
     private func control(_ action: CLISessionAction, _ target: CLISession) async {
-        guard let sink = session.sink else { return }
+        guard available else { return }
         busyID = target.id
         defer { busyID = nil }
         do {
-            let response = try await HostRPC.call(
-                sink, op: "cli.control", path: action.rawValue,
-                command: target.agent, timeout: 40, requestID: target.id
-            )
+            let response = try await call("cli.control") { request in
+                request.path = action.rawValue
+                request.command = target.agent
+                request.timeout = 40
+                request.requestID = target.id
+            }
             guard response.ok else {
                 failure = response.text.flatMap { $0.isEmpty ? nil : $0 } ?? HostRPC.message(for: response)
                 return
@@ -279,12 +329,15 @@ struct CLISessionsSheet: View {
 
     /// Returns an error message for the start sheet to show, or `nil` on success.
     private func start(directory: String, prompt: String) async -> String? {
-        guard let sink = session.sink else { return "还没有连接 Mac" }
+        guard available else { return "还没有连接 Mac" }
         do {
-            let response = try await HostRPC.call(
-                sink, op: "cli.control", path: CLISessionAction.start.rawValue,
-                command: "claude", cwd: directory, timeout: 40, prompt: prompt
-            )
+            let response = try await call("cli.control") { request in
+                request.path = CLISessionAction.start.rawValue
+                request.command = "claude"
+                request.cwd = directory
+                request.timeout = 40
+                request.prompt = prompt
+            }
             guard response.ok else { return HostRPC.message(for: response) }
             await load()
             return nil
