@@ -98,65 +98,24 @@ public struct ComposerBar: View {
 
     // MARK: Official ComposerLayoutRoot
 
-    /// Outer card: ompCard fill, 28pt radius, spread hairline + soft shadow.
-    /// Top menu panel (workspace pill) fades in once the draft has content.
+    /// Outer card: ompCard fill, 10pt radius, 1pt ompBorder hairline.
+    /// Codex composer = flat bordered card, no shadow, no top menu panel.
     private var composerCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !model.draft.isEmpty {
-                composerTopMenu
-                    .transition(.opacity)
-            }
             composerBody
             composerFooter
         }
         .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
+            RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)
                 .fill(Color.ompCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
-                .strokeBorder(Color.ompBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)
+                .strokeBorder(Color.ompBorder, lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.10), radius: 4, x: 0, y: 2)
-        .animation(Theme.Motion.quick, value: model.draft.isEmpty)
-        .padding(.top, 22)
+        .padding(.top, 4)
     }
 
-    /// `ComposerTopMenuPanel`: workspace/project pill row, shown with content.
-    private var composerTopMenu: some View {
-        HStack(spacing: 6) {
-            Menu {
-                ForEach(model.projects) { project in
-                    Button {
-                        if let conversation = model.selectedConversation {
-                            model.moveConversation(conversation.id, to: project.id)
-                        }
-                    } label: {
-                        Text(project.name)
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 10))
-                    Text(projectName)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundStyle(Color.ompTextSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.ompFill, in: Capsule())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-    }
 
     /// `ComposerLayoutBody`: RichTextInput + attachment chips.
     private var composerBody: some View {
@@ -171,10 +130,16 @@ public struct ComposerBar: View {
                 pastedTextStrip
             }
             composerInput
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                Image(systemName: "return")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextTertiary)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 2)
     }
 
     /// RichTextInput: official 16pt with 1.5 leading.
@@ -199,7 +164,7 @@ public struct ComposerBar: View {
             }
     }
 
-    /// `ComposerLayoutFooter`: tools left, circular send right.
+    /// `ComposerLayoutFooter`: + / 🌐 / model / ⚙ left, spinner while streaming.
     private var composerFooter: some View {
         HStack(spacing: 4) {
             Menu {
@@ -227,9 +192,9 @@ public struct ComposerBar: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.ompText)
+                    .foregroundStyle(Color.ompTextSecondary)
                     .frame(width: 28, height: 28)
-                    .background(hoverPlus ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
+                    .background(hoverPlus ? ompGhostHover : Color.clear, in: Circle())
                     .contentShape(Circle())
             }
             .menuStyle(.borderlessButton)
@@ -237,33 +202,17 @@ public struct ComposerBar: View {
             .onHover { hoverPlus = $0 }
             .help("添加素材与工具")
 
-            Button {
-                webSearchEnabled.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 11))
-                    Text("联网")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(webSearchEnabled ? Color.ompInverseText : Color.ompTextSecondary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(webSearchEnabled ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("启用联网搜索参考")
-
+            webSearchPill
             modelPill
 
             Button {
                 showOptionsSheet = true
             } label: {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.ompTextSecondary)
                     .frame(width: 28, height: 28)
-                    .background(hoverOptions ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
+                    .background(hoverOptions ? ompGhostHover : Color.clear, in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -276,66 +225,55 @@ public struct ComposerBar: View {
                 Button {
                     model.stop()
                 } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.ompInverseText)
-                        .frame(width: 32, height: 32)
-                        .background(Color.ompPrimarySolid, in: Circle())
+                    ProgressView()
+                        .controlSize(.small)
                 }
                 .buttonStyle(.plain)
-                .help("停止生成 (Esc)")
                 .keyboardShortcut(.cancelAction)
-            } else {
-                Button {
-                    showVoiceSheet = true
-                } label: {
-                    Image(systemName: "mic")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.ompTextSecondary)
-                        .frame(width: 32, height: 32)
-                        .background(hoverMic ? Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08) : Color.clear, in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hoverMic = $0 }
-                .help("语音模式 (Voice Mode)")
-
-                Button {
-                    model.send()
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.ompInverseText)
-                        .frame(width: 32, height: 32)
-                        .background(Color.ompPrimarySolid.opacity(canSend ? 1 : 0.3), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help("发送 (Return)")
+                .help("正在生成 · 点击或 Esc 停止")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .frame(height: 32)
+    }
+
+    /// 🌐 联网 toggle pill (real `webSearchEnabled` state).
+    private var webSearchPill: some View {
+        Button {
+            webSearchEnabled.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "globe")
+                    .font(.system(size: 13))
+                Text("联网")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(webSearchEnabled ? Color.ompInverseText : Color.ompTextSecondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(webSearchEnabled ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("启用联网搜索参考")
     }
 
     @State private var hoverPlus = false
     @State private var hoverOptions = false
-    @State private var hoverMic = false
 
-    /// Context strip: workspace / runtime pills above the composer card.
+    /// Context line: 11pt tertiary bare text (no strip background).
     private var contextStrip: some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
                 Image(systemName: "folder")
                     .font(.system(size: 10))
                 Text(projectName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11))
             }
             HStack(spacing: 4) {
                 Image(systemName: "laptopcomputer")
                     .font(.system(size: 10))
                 Text("本地")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11))
             }
             if let branch = currentBranch {
                 HStack(spacing: 4) {

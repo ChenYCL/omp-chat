@@ -60,9 +60,26 @@ public struct MessageRow: View {
         }
     }
 
+    /// A turn with no text, media or tool traffic has nothing to draw. Rendering
+    /// it produced empty capsules / residual pills in the transcript.
+    private var hasRenderableContent: Bool {
+        if message.status == .streaming { return true }
+        if !message.concatenatedText.isEmpty { return true }
+        if !message.thinkingText.isEmpty { return true }
+        if !(message.errorText ?? "").isEmpty { return true }
+        return message.parts.contains { part in
+            switch part {
+            case .media, .toolCall, .toolResult: return true
+            default: return false
+            }
+        }
+    }
+
     public var body: some View {
         Group {
-            if message.role == .user {
+            if !hasRenderableContent {
+                EmptyView()
+            } else if message.role == .user {
                 userRow
             } else if message.role == .assistant {
                 assistantRow
@@ -191,14 +208,20 @@ public struct MessageRow: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Color.ompFill.opacity(0.8), in: Capsule())
+        .background(
+            hovering ? Color.ompFill.opacity(0.8) : Color.clear,
+            in: Capsule()
+        )
+        // Hidden until the row is hovered: a permanent pill on every user turn
+        // reads as an unexplained grey blob in the transcript.
+        .opacity(hovering ? 1 : 0)
     }
 
     // MARK: Assistant
 
     @ViewBuilder
     private var assistantRow: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+        VStack(alignment: .leading, spacing: 8) {
             thinkingSection
             operationSection
             replyVersionPicker
@@ -211,6 +234,7 @@ public struct MessageRow: View {
             if let error = message.errorText, !error.isEmpty {
                 errorView(error)
             }
+            fileChangeSection
             actionBar(alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -228,6 +252,32 @@ public struct MessageRow: View {
         }
         if !calls.isEmpty {
             OperationCard(calls: calls, results: results)
+        }
+    }
+
+    /// Edit-like tool calls that carry a file path render as bordered cards.
+    @ViewBuilder
+    private var fileChangeSection: some View {
+        let changes: [FileChange] = message.parts.compactMap { part in
+            if case .toolCall(let call) = part,
+               ActivityLog.editedFilePath(in: call) != nil {
+                FileChange(
+                    id: call.id,
+                    call: call,
+                    result: message.parts.compactMap { part -> ToolResult? in
+                        if case .toolResult(let result) = part, result.callID == call.id { result } else { nil }
+                    }.first
+                )
+            } else {
+                nil
+            }
+        }
+        if !changes.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(changes) { change in
+                    FileChangeCard(change: change)
+                }
+            }
         }
     }
 
@@ -258,46 +308,9 @@ public struct MessageRow: View {
                 .buttonStyle(.plain)
             }
             .foregroundStyle(Color.ompTextSecondary)
+            .opacity(hovering ? 1 : 0)
         }
     }
-
-    private func durationDivider(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Divider().opacity(0.4)
-            HStack(spacing: 4) {
-                Text("用时 \(text)")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.ompTextTertiary)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.ompTextTertiary)
-            }
-            .padding(.top, 2)
-        }
-        .padding(.bottom, 4)
-    }
-
-    private func calculateDurationText() -> String? {
-        guard let conversation = model.selectedConversation,
-              let index = conversation.messages.firstIndex(where: { $0.id == message.id }),
-              index > 0 else { return nil }
-        let prev = conversation.messages[index - 1]
-        guard prev.role == .user else { return nil }
-        let diff = message.createdAt.timeIntervalSince(prev.createdAt)
-        guard diff >= 2.0 else { return nil }
-        if diff < 60 {
-            return "\(Int(diff))秒"
-        } else if diff < 3600 {
-            let m = Int(diff) / 60
-            let s = Int(diff) % 60
-            return "\(m)分钟\(s)秒"
-        } else {
-            let h = Int(diff) / 3600
-            let m = (Int(diff) % 3600) / 60
-            return "\(h)小时\(m)分钟"
-        }
-    }
-
 
     private var systemRow: some View {
         HStack(spacing: Theme.Spacing.s) {
@@ -341,7 +354,6 @@ public struct MessageRow: View {
         case .text(let value):
             if !value.isEmpty {
                 MarkdownText(value)
-                    .font(.system(size: model.settings.fontSize))
                     .foregroundStyle(Color.ompText)
             }
         case .thinking:
@@ -371,7 +383,7 @@ public struct MessageRow: View {
 
     @ViewBuilder
     private var metaRow: some View {
-        if let usage = message.usage, usage.totalTokens > 0 {
+        if hovering, let usage = message.usage, usage.totalTokens > 0 {
             Button {
                 showUsagePopover.toggle()
             } label: {
@@ -437,7 +449,7 @@ public struct MessageRow: View {
 
     @ViewBuilder
     private func actionBar(alignment: HorizontalAlignment) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             if alignment == .trailing { Spacer(minLength: 0) }
 
             if message.role == .assistant, !message.concatenatedText.isEmpty {
@@ -506,8 +518,11 @@ public struct MessageRow: View {
 
             if alignment == .leading { Spacer(minLength: 0) }
         }
-        .opacity(hovering ? 1 : 0.001)
-        .frame(height: 18)
+        // Reserving 18pt for a hidden action bar left a dead band under every
+        // turn (turns read ~34pt apart instead of 16pt). Collapse it instead.
+        .frame(height: hovering ? 18 : 0)
+        .opacity(hovering ? 1 : 0)
+        .clipped()
     }
 
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {

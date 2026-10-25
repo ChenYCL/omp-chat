@@ -3,9 +3,15 @@ import OMPCore
 import OMPDesign
 import LocalAuthentication
 
-// Official ChatGPT desktop single-column sidebar (no 52pt icon rail):
-// header row (new chat + search + overflow "···"), scrollable middle, footer
-// (usage alert + settings + active model pill). All rows 36pt on ompSidebar.
+// Codex desktop single-column sidebar: header row (`◧ Code` + 28pt ghost icon
+// buttons), always-visible search field, nav rows (新聊天 / 搜索 / 自定义 / 更多),
+// scrollable groups (Recents + 置顶 / 自定义分区 / 项目 / 时间分桶 / 已锁定 / 已归档),
+// footer (usage alert + user bar). Nav rows 30pt, conversation rows 32pt.
+
+/// Official `--color-ghost-hover`: light #0000000d, dark #ffffff1a.
+var ompGhostHover: Color {
+    Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08)
+}
 
 // MARK: - Sidebar resizer
 
@@ -61,13 +67,91 @@ struct MainContentTopFade: View {
     }
 }
 
+// MARK: - Ghost icon button
+
+/// 28pt rounded ghost-hover icon button (sidebar header + user bar).
+private struct GhostIconButton: View {
+    let systemImage: String
+    var iconSize: CGFloat = 13
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: iconSize, weight: .medium))
+                .foregroundStyle(Color.ompTextSecondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous)
+                        .fill(hovering ? ompGhostHover : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
+// MARK: - Nav row
+
+/// Codex nav row content: 30pt tall, 13pt secondary icon + 13pt label, radius 6.
+private struct NavRowLabel: View {
+    let icon: String
+    let title: String
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.ompTextSecondary)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.ompText)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 10)
+        .frame(height: 30)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.officialSM, style: .continuous)
+                .fill(hovering ? ompGhostHover : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(Theme.Motion.fade, value: hovering)
+    }
+}
+
+/// 30pt sidebar nav row (新聊天 / 搜索 / 自定义).
+private struct NavRow: View {
+    let icon: String
+    let title: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            NavRowLabel(icon: icon, title: title)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
 // MARK: - Sidebar
 
-/// Official single-column sidebar, ChatGPT desktop parity.
+/// Codex desktop single-column sidebar.
 public struct MacShellSidebar: View {
     @Environment(ChatAppModel.self) private var model
     @State private var search = ""
-    @State private var showSearch = false
     @State private var renamingID: UUID?
     @State private var renameText = ""
     @State private var deletingID: UUID?
@@ -78,22 +162,20 @@ public struct MacShellSidebar: View {
     @State private var showLocked = false
     @State private var isLockedUnlocked = false
     @State private var showArchived = false
+    @State private var showMoreMenu = false
     @State private var creatingCustomSection = false
     @State private var customSectionName = ""
     @State private var renamingSectionID: UUID?
     @State private var collapsedCustomSections: Set<UUID> = []
-    @State private var hoverNewChat = false
-    @State private var hoverMore = false
-    @State private var hoverSettings = false
-    @State private var showContextPopover = false
-    @State private var showModelPicker = false
+    @State private var showProjectsSheet = false
+    @FocusState private var searchFocused: Bool
 
     public init() {}
 
-    /// 13–14pt sidebar icons (official sidebar nav size).
-    private static let rowIconSize: CGFloat = 13.5
-    /// 11pt semibold group titles (official sidebar heading).
-    private static let sectionTitle = Font.system(size: 11, weight: .semibold)
+    /// 11.5pt medium group titles (Codex sidebar heading).
+    private static let sectionTitle = Font.system(size: 11.5, weight: .medium)
+    /// Conversation row height (Codex sidebar row).
+    private static let conversationRowHeight: CGFloat = 32
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -102,6 +184,10 @@ public struct MacShellSidebar: View {
             footer
         }
         .background(Color.ompSidebar)
+        .sheet(isPresented: $showProjectsSheet) {
+            PaseoProjectsSheet()
+                .environment(model)
+        }
         .alert("重命名对话", isPresented: Binding(
             get: { renamingID != nil },
             set: { if !$0 { renamingID = nil } }
@@ -158,105 +244,44 @@ public struct MacShellSidebar: View {
         }
     }
 
-    /// Official --color-ghost-hover equivalent: light #0000000d, dark #ffffff1a.
-    private var ghostHover: Color {
-        Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08)
-    }
-
-    // MARK: Header: new chat (primary) + search + overflow
+    // MARK: Header: `◧ Code` + ghost buttons + search
 
     private var header: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Button {
+            HStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: "rectangle.lefthalf.filled")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                    Text("Code")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                }
+                Spacer(minLength: 0)
+                GhostIconButton(systemImage: "square.and.pencil", help: "新建聊天 (⌘N)") {
                     model.newConversation()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: Self.rowIconSize, weight: .medium))
-                        Text("新聊天")
-                            .font(Theme.Typography.sidebarTitle)
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(Color.ompText)
-                    .frame(height: Theme.Layout.rowHeight)
-                    .padding(.horizontal, 10)
-                    .background(hoverNewChat ? ghostHover : Color.clear, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .onHover { hoverNewChat = $0 }
-                .help("新建聊天 (⌘N)")
-
-                Button {
-                    withAnimation(Theme.Motion.quick) { showSearch.toggle() }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: Self.rowIconSize))
-                        .foregroundStyle(showSearch ? Color.accentColor : Color.ompTextTertiary)
-                        .frame(width: Theme.Layout.rowHeight, height: Theme.Layout.rowHeight)
-                        .background(showSearch ? ghostHover : Color.clear, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
-                        .contentShape(Rectangle())
+                GhostIconButton(systemImage: "command", help: "命令面板 (⌘K)") {
+                    NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
                 }
-                .buttonStyle(.plain)
-                .help("搜索对话")
-
-                Menu {
-                    Button("新建临时对话") {
-                        _ = model.newTemporaryConversation()
-                    }
-                    Button("新建项目") {
-                        newProjectName = ""
-                        creatingProject = true
-                    }
-                    Button("新建自定义分区") {
-                        customSectionName = ""
-                        creatingCustomSection = true
-                    }
-                    Divider()
-                    Button("项目与工作区 (⌘K)") {
-                        NotificationCenter.default.post(name: .ompQuickSwitch, object: nil)
-                    }
-                    Divider()
-                    Button("折叠全部分组") {
-                        let ids = model.orderedProjects.map(\.id) + model.orderedCustomSections.map(\.id)
-                        collapsedProjects.formUnion(ids)
-                        collapsedCustomSections.formUnion(ids)
-                    }
-                    Button("展开全部分组") {
-                        collapsedProjects.removeAll()
-                        collapsedCustomSections.removeAll()
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: Self.rowIconSize))
-                        .foregroundStyle(Color.ompTextTertiary)
-                        .frame(width: Theme.Layout.rowHeight, height: Theme.Layout.rowHeight)
-                        .background(hoverMore ? ghostHover : Color.clear, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .onHover { hoverMore = $0 }
-                .help("更多")
             }
-            if showSearch {
-                searchField
-            }
+            searchField
         }
         .padding(.horizontal, 12)
         .padding(.top, 38)
         .padding(.bottom, 6)
     }
 
+    /// Always-visible search field: 30pt, radius 8, ompFill, 11pt magnifier.
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundStyle(Color.ompTextTertiary)
-            TextField("搜索对话", text: $search)
+            TextField("搜索", text: $search)
                 .textFieldStyle(.plain)
-                .font(Theme.Typography.sm)
+                .font(.system(size: 12.5))
+                .focused($searchFocused)
             if !search.isEmpty {
                 Button {
                     search = ""
@@ -269,8 +294,8 @@ public struct MacShellSidebar: View {
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
+        .frame(height: 30)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
     }
 
     // MARK: Scroll region
@@ -278,6 +303,7 @@ public struct MacShellSidebar: View {
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
+                navRows
                 if searching {
                     ForEach(filtered) { row($0) }
                     if filtered.isEmpty { emptyHint }
@@ -295,6 +321,77 @@ public struct MacShellSidebar: View {
             .padding(.top, 2)
             .padding(.bottom, 12)
         }
+    }
+
+    /// Nav rows: 新聊天 / 搜索 / 自定义 / 更多. Every legacy rail & header entry
+    /// stays reachable from here.
+    private var navRows: some View {
+        VStack(spacing: 1) {
+            NavRow(icon: "plus", title: "新聊天", help: "新建聊天 (⌘N)") {
+                model.newConversation()
+            }
+            NavRow(icon: "magnifyingglass", title: "搜索", help: "搜索对话") {
+                searchFocused = true
+            }
+            NavRow(icon: "folder", title: "自定义", help: "项目与自定义分区管理") {
+                showProjectsSheet = true
+            }
+            Button {
+                showMoreMenu = true
+            } label: {
+                NavRowLabel(icon: "ellipsis", title: "更多")
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showMoreMenu, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 2) {
+                    moreMenuItem("新建临时对话") { _ = model.newTemporaryConversation() }
+                    moreMenuItem("新建项目") {
+                        newProjectName = ""
+                        creatingProject = true
+                    }
+                    moreMenuItem("新建自定义分区") {
+                        customSectionName = ""
+                        creatingCustomSection = true
+                    }
+                    Divider()
+                    moreMenuItem("折叠全部分组") {
+                        let ids = model.orderedProjects.map(\.id) + model.orderedCustomSections.map(\.id)
+                        collapsedProjects.formUnion(ids)
+                        collapsedCustomSections.formUnion(ids)
+                    }
+                    moreMenuItem("展开全部分组") {
+                        collapsedProjects.removeAll()
+                        collapsedCustomSections.removeAll()
+                    }
+                    Divider()
+                    moreMenuItem("已归档") { showArchived = true }
+                    moreMenuItem(isLockedUnlocked ? "已锁定 (已解锁)" : "已锁定 (解锁查看)") {
+                        toggleLockedSection()
+                    }
+                }
+                .padding(8)
+                .frame(width: 220)
+            }
+            .help("更多")
+        }
+        .padding(.bottom, 4)
+    }
+
+    /// Popover menu row: 28pt, ghost hover, matching the nav rows.
+    private func moreMenuItem(_ title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            showMoreMenu = false
+            action()
+        } label: {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.ompText)
+                .padding(.horizontal, 10)
+                .frame(height: 28, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var searching: Bool {
@@ -330,10 +427,10 @@ public struct MacShellSidebar: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
-                        .font(.system(size: Self.rowIconSize))
+                        .font(.system(size: 13))
                         .foregroundStyle(Color.ompTextSecondary)
                     Text(custom.name)
-                        .font(Theme.Typography.sidebarTitle)
+                        .font(.system(size: 13))
                         .foregroundStyle(Color.ompText)
                         .lineLimit(1)
                     Spacer()
@@ -343,7 +440,7 @@ public struct MacShellSidebar: View {
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
                 }
                 .padding(.horizontal, 10)
-                .frame(height: Theme.Layout.rowHeight)
+                .frame(height: 30)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -418,6 +515,7 @@ public struct MacShellSidebar: View {
 
         return Group {
             if !items.isEmpty {
+                recentsHeader
                 if model.projects.isEmpty {
                     ForEach(DateBucket.allCases, id: \.self) { b in
                         if let bucketItems = groups[b], !bucketItems.isEmpty {
@@ -426,9 +524,54 @@ public struct MacShellSidebar: View {
                         }
                     }
                 } else {
-                    sectionHeader("未分组")
                     ForEach(items) { row($0) }
                 }
+            }
+        }
+    }
+
+    /// Codex `Recents` group heading: 11.5pt medium tertiary + sort menu
+    /// (最后更新 / 创建时间 / 手动, backed by real `settings.conversationSort`).
+    private var recentsHeader: some View {
+        HStack(spacing: 4) {
+            Text("Recents")
+                .font(Self.sectionTitle)
+                .tracking(0.2)
+                .foregroundStyle(Color.ompTextTertiary)
+            Spacer(minLength: 0)
+            Menu {
+                sortItem("updated", "最后更新")
+                sortItem("created", "创建时间")
+                sortItem("manual", "手动")
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("排序方式")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private func sortItem(_ value: String, _ title: String) -> some View {
+        Button {
+            var settings = model.settings
+            settings.conversationSort = value
+            Task { await model.saveSettings(settings) }
+        } label: {
+            if model.settings.conversationSort == value {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
             }
         }
     }
@@ -443,7 +586,7 @@ public struct MacShellSidebar: View {
                         Image(systemName: showArchived ? "chevron.down" : "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                         Image(systemName: "archivebox")
-                            .font(.system(size: Self.rowIconSize))
+                            .font(.system(size: 13))
                         Text("已归档")
                             .font(Self.sectionTitle)
                         Text("\(model.archivedConversations.count)")
@@ -451,7 +594,7 @@ public struct MacShellSidebar: View {
                     }
                     .foregroundStyle(Color.ompTextTertiary)
                     .padding(.horizontal, 10)
-                    .frame(height: Theme.Layout.rowHeight)
+                    .frame(height: 30)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -472,7 +615,7 @@ public struct MacShellSidebar: View {
                         Image(systemName: (showLocked && isLockedUnlocked) ? "chevron.down" : "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                         Image(systemName: isLockedUnlocked ? "lock.open.fill" : "lock.fill")
-                            .font(.system(size: Self.rowIconSize))
+                            .font(.system(size: 13))
                             .foregroundStyle(isLockedUnlocked ? Color.accentColor : Color.ompTextTertiary)
                         Text("已锁定")
                             .font(Self.sectionTitle)
@@ -486,7 +629,7 @@ public struct MacShellSidebar: View {
                     }
                     .foregroundStyle(Color.ompTextTertiary)
                     .padding(.horizontal, 10)
-                    .frame(height: Theme.Layout.rowHeight)
+                    .frame(height: 30)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -534,10 +677,10 @@ public struct MacShellSidebar: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
-                    .font(.system(size: Self.rowIconSize))
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.ompTextSecondary)
                 Text(project.name)
-                    .font(Theme.Typography.sidebarTitle)
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.ompText)
                     .lineLimit(1)
                 Spacer()
@@ -547,7 +690,7 @@ public struct MacShellSidebar: View {
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
             }
             .padding(.horizontal, 10)
-            .frame(height: Theme.Layout.rowHeight)
+            .frame(height: 30)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -578,7 +721,7 @@ public struct MacShellSidebar: View {
             .foregroundStyle(Color.ompTextTertiary)
             .padding(.leading, 10)
             .padding(.top, 12)
-            .padding(.bottom, 4)
+            .padding(.bottom, 6)
     }
 
     private var emptyHint: some View {
@@ -698,94 +841,46 @@ public struct MacShellSidebar: View {
         }
     }
 
-    // MARK: Footer: usage alert + settings + context + model pill
+    // MARK: Footer: usage alert + user bar
 
     private var footer: some View {
         VStack(spacing: 0) {
             usageAlert
-            HStack(spacing: 6) {
-                Button {
-                    model.showSettings = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: Self.rowIconSize))
-                        .foregroundStyle(Color.ompTextTertiary)
-                        .frame(width: 28, height: 28)
-                        .background(hoverSettings ? ghostHover : Color.clear, in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hoverSettings = $0 }
-                .help("偏好设置 (⌘,)")
-
-                Spacer(minLength: 0)
-                modelPill
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            userBar
         }
     }
 
-    @ViewBuilder
-    private func contextBadge(used: Int, limit: Int) -> some View {
-        let ratio = min(1, Double(used) / Double(max(1, limit)))
-        Button {
-            showContextPopover.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.ompFill)
-                    Capsule()
-                        .fill(ratio > 0.85 ? Color.red : Color.accentColor.opacity(0.7))
-                        .frame(width: max(2, 34 * ratio))
-                }
-                .frame(width: 34, height: 3)
-                Text("\(TokenFormat.compact(used))/\(TokenFormat.compact(limit))")
-                    .font(.system(size: 9.5).monospacedDigit())
-                    .foregroundStyle(Color.ompTextTertiary)
+    /// Codex user bar: 44pt, 18pt gradient avatar, name, `Pro` capsule, gear.
+    private var userBar: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color.ompMarkGradient)
+                .frame(width: 18, height: 18)
+                .overlay(
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+            Text("本地")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Color.ompText)
+            Text("Pro")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.ompTextTertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1.5)
+                .overlay(Capsule().strokeBorder(Color.ompBorder, lineWidth: 1))
+            Spacer(minLength: 0)
+            GhostIconButton(systemImage: "gearshape", iconSize: 14, help: "偏好设置 (⌘,)") {
+                model.showSettings = true
             }
         }
-        .buttonStyle(.plain)
-        .help("点击查看上下文窗口占用详情")
-        .popover(isPresented: $showContextPopover) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("上下文窗口占用 (Context Window)")
-                    .font(.system(size: 12, weight: .semibold))
-                Divider()
-                HStack {
-                    Text("当前对话已用:")
-                    Spacer()
-                    Text("\(used) tok")
-                        .font(.system(size: 11.5).monospacedDigit())
-                }
-                HStack {
-                    Text("模型上限:")
-                    Spacer()
-                    Text("\(limit) tok")
-                        .font(.system(size: 11.5).monospacedDigit())
-                }
-                HStack {
-                    Text("剩余可用空间:")
-                    Spacer()
-                    Text("\(max(0, limit - used)) tok")
-                        .font(.system(size: 11.5).monospacedDigit())
-                        .foregroundStyle(ratio > 0.85 ? .red : .green)
-                }
-                HStack {
-                    Text("占用比例:")
-                    Spacer()
-                    Text(String(format: "%.1f%%", ratio * 100))
-                        .font(.system(size: 11.5).monospacedDigit())
-                }
-            }
-            .font(.system(size: 11.5))
-            .padding(12)
-            .frame(width: 220)
-        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
     }
 
-    /// Sidebar usage alert strip (official `sidebarElectron.usageAlert`):
-    /// progress bar + window remaining, shown once context passes 85%.
+    /// Sidebar usage alert strip: progress bar + window remaining, shown once
+    /// context passes 85%.
     @ViewBuilder
     private var usageAlert: some View {
         if let conversation = model.selectedConversation,
@@ -824,75 +919,13 @@ public struct MacShellSidebar: View {
             }
         }
     }
-
-    private var modelPill: some View {
-        Group {
-            if model.availableModels.count > 12 {
-                Button {
-                    showModelPicker = true
-                } label: {
-                    modelPillLabel
-                }
-                .buttonStyle(.plain)
-            } else {
-                Menu {
-                    if model.availableModels.isEmpty {
-                        Text("先在设置中同步模型")
-                    } else {
-                        ForEach(model.availableModels) { descriptor in
-                            Button {
-                                model.setModel(descriptor)
-                            } label: {
-                                let tag = [
-                                    descriptor.capabilities.thinking ? "🧠 思考" : nil,
-                                    descriptor.capabilities.vision ? "👁 视觉" : nil,
-                                    descriptor.limits.contextWindow.map { TokenFormat.compact($0) }
-                                ].compactMap { $0 }.joined(separator: " · ")
-                                let suffix = tag.isEmpty ? "" : " (\(tag))"
-                                if descriptor.id == model.activeModel?.id {
-                                    Label(descriptor.displayName + suffix, systemImage: "checkmark")
-                                } else {
-                                    Text(descriptor.displayName + suffix)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    modelPillLabel
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-            }
-        }
-        .fixedSize()
-        .sheet(isPresented: $showModelPicker) {
-            ModelPickerSheet()
-                .environment(model)
-        }
-    }
-
-    private var modelPillLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: model.activeModel?.capabilities.thinking == true ? "sparkles" : "cpu")
-                .font(.system(size: 9.5))
-                .foregroundStyle(model.activeModel?.capabilities.thinking == true ? Color.purple : Color.ompTextSecondary)
-            Text(model.activeModel?.displayName ?? "选择模型")
-                .font(Theme.Typography.pill)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-        }
-        .foregroundStyle(Color.ompTextSecondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(Color.ompFill, in: Capsule())
-    }
 }
 
 // MARK: - Conversation row
 
-/// Single-line sidebar conversation row: 36pt tall, selected = ompFill +
-/// officialMD radius, trailing `···` revealed on hover only.
+/// Codex sidebar conversation row: 32pt tall, 5pt leading status dot (unread =
+/// solid ompText, else stroked ompBorder), 13pt title, selected = ompFill
+/// radius 6, trailing `···` revealed on hover only.
 private struct MacShellConversationRow: View {
     let title: String
     let isPinned: Bool
@@ -906,23 +939,15 @@ private struct MacShellConversationRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if isPinned {
-                Image(systemName: "pin.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.orange)
-            }
+            statusDot
             Text(title)
-                .font(Theme.Typography.sidebarTitle)
+                .font(.system(size: 13))
                 .foregroundStyle(Color.ompText)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if isStreamingThis {
                 ProgressView()
                     .controlSize(.mini)
-            } else if hasUnread {
-                Circle()
-                    .fill(Color.accentColor)
-                    .frame(width: 6, height: 6)
             } else if hovering, let menuContent {
                 Menu {
                     menuContent()
@@ -943,18 +968,32 @@ private struct MacShellConversationRow: View {
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: Theme.Layout.rowHeight)
+        .frame(height: 32)
         .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous)
-                .fill(isSelected ? Color.ompFill : (hovering ? hoverColor : Color.clear))
+            RoundedRectangle(cornerRadius: Theme.Radius.officialSM, style: .continuous)
+                .fill(isSelected ? Color.ompFill : (hovering ? ompGhostHover : Color.clear))
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(Theme.Motion.fade, value: hovering)
     }
 
-    /// ghost-hover equivalent: light #0000000d, dark #ffffff1a.
-    private var hoverColor: Color {
-        Color.ompDynamic(light: 0x000000, dark: 0xFFFFFF).opacity(0.08)
+    /// 5pt status dot; pinned conversations show the orange pin instead.
+    @ViewBuilder
+    private var statusDot: some View {
+        if isPinned {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(.orange)
+                .frame(width: 5, height: 5)
+        } else if hasUnread {
+            Circle()
+                .fill(Color.ompText)
+                .frame(width: 5, height: 5)
+        } else {
+            Circle()
+                .strokeBorder(Color.ompBorder, lineWidth: 1)
+                .frame(width: 5, height: 5)
+        }
     }
 }

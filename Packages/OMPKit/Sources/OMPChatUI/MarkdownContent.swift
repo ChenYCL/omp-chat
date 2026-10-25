@@ -413,139 +413,163 @@ public struct CodeBlockView: View {
     let language: String?
     let code: String
 
+    /// Blocks longer than this fold behind an "展开全部 / 收起" pill.
+    private static let foldThreshold = 20
+
     @State private var copied = false
-    @State private var collapsed = false
+    @State private var expanded = false
     @State private var showingPreview = false
+
     public init(language: String?, code: String) {
         self.language = language
         self.code = code
     }
 
+    private var allLines: [String] {
+        code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+
+    private var isFoldable: Bool { allLines.count > Self.foldThreshold }
+
+    private var visibleCode: String {
+        guard isFoldable, !expanded else { return code }
+        return allLines.prefix(Self.foldThreshold).joined(separator: "\n")
+    }
+
     public var body: some View {
+        // Official desktop code block: no header bar — the copy affordance
+        // floats over the top-right corner of the code area itself.
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Theme.Spacing.s) {
-                Text(language?.uppercased() ?? "CODE")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Color.ompTextTertiary)
-                Spacer()
-                Text("\(code.split(separator: "\n", omittingEmptySubsequences: false).count) 行")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(Color.ompTextTertiary)
-                Button {
-                    withAnimation(Theme.Motion.quick) { collapsed.toggle() }
-                } label: {
-                    Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                Menu {
-                    Button {
-                        copyToPasteboard(code)
-                        AudioFeedback.playSend(enabled: true)
-                        copied = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(1.2))
-                            copied = false
+            ZStack(alignment: .topTrailing) {
+                codeArea
+                HStack(spacing: 4) {
+                    if isRenderable {
+                        Button {
+                            showingPreview = true
+                        } label: {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.ompTextSecondary)
+                                .frame(width: 24, height: 24)
+                                .background(Color.ompCard.opacity(0.85), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .contentShape(Rectangle())
                         }
-                    } label: {
-                        Label("复制代码文本", systemImage: "doc.on.doc")
+                        .buttonStyle(.plain)
+                        .help("工件预览")
                     }
-                    Button {
-                        let lang = language ?? ""
-                        let md = "```\(lang)\n\(code)\n```"
-                        copyToPasteboard(md)
-                        AudioFeedback.playSend(enabled: true)
-                        copied = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(1.2))
-                            copied = false
-                        }
-                    } label: {
-                        Label("复制为 Markdown 代码块", systemImage: "doc.plaintext")
-                    }
-                } label: {
-                    Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.caption2)
-                        .foregroundStyle(copied ? Color.green : Color.secondary)
-                        .labelStyle(.titleAndIcon)
+                    copyButton
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                if isRenderable {
-                    Button {
-                        showingPreview = true
-                    } label: {
-                        Label("工件预览", systemImage: "play.circle")
-                            .font(.caption2)
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
-                }
+                .padding(6)
             }
-            .padding(.horizontal, 12)
-            .frame(height: Theme.Layout.rowHeight)
 
-            if !collapsed {
-                Divider()
-
-                // Long blocks stay a fixed height and scroll internally instead of
-                // pushing the transcript endlessly (ChatGPT desktop behaviour).
-                let allLines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-                ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .trailing, spacing: 3) {
-                            ForEach(0..<allLines.count, id: \.self) { i in
-                                Text("\(i + 1)")
-                                    .font(.system(size: 13, design: .monospaced))
-                                    .foregroundStyle(Color.ompTextTertiary.opacity(0.6))
-                            }
-                        }
-                        .frame(width: 40, alignment: .trailing)
-                        .padding(.vertical, 14)
-                        .padding(.leading, 8)
-
-                        if isDiff {
-                            VStack(alignment: .leading, spacing: 3) {
-                                ForEach(Array(allLines.enumerated()), id: \.offset) { _, line in
-                                    let isAdd = line.hasPrefix("+") && !line.hasPrefix("+++")
-                                    let isDel = line.hasPrefix("-") && !line.hasPrefix("---")
-                                    Text(line.isEmpty ? " " : line)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .foregroundStyle(isAdd ? Color.green : (isDel ? Color.red : Color.ompText))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 4)
-                                        .background(isAdd ? Color.green.opacity(0.12) : (isDel ? Color.red.opacity(0.12) : Color.clear), in: RoundedRectangle(cornerRadius: 3))
-                                }
-                            }
-                            .padding(.vertical, 14)
-                            .padding(.trailing, 14)
-                            .textSelection(.enabled)
-                        } else {
-                            Text(code)
-                                .font(.system(size: 13, design: .monospaced))
-                                .lineSpacing(2)
-                                .textSelection(.enabled)
-                                .padding(.vertical, 14)
-                                .padding(.trailing, 14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-                .frame(maxHeight: 320)
+            if isFoldable {
+                foldToggle
             }
         }
         .background(Color.ompFill)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous)
-                .strokeBorder(Color.ompBorder, lineWidth: 0.5)
+                .strokeBorder(Color.ompBorder, lineWidth: 1)
         )
         .sheet(isPresented: $showingPreview) {
             ArtifactPreviewSheet(language: language, code: code)
         }
     }
+
+    private var codeArea: some View {
+        // Long blocks stay a fixed height and scroll internally instead of
+        // pushing the transcript endlessly; the gutter stays fixed while the
+        // code scrolls horizontally (ChatGPT desktop behaviour).
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .trailing, spacing: 3) {
+                    ForEach(0..<visibleLineCount, id: \.self) { i in
+                        Text("\(i + 1)")
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(Color.ompTextTertiary.opacity(0.6))
+                    }
+                }
+                .frame(width: 40, alignment: .trailing)
+                .padding(.vertical, 14)
+                .padding(.leading, 8)
+
+                if isDiff {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(visibleLines.enumerated()), id: \.offset) { _, line in
+                            let isAdd = line.hasPrefix("+") && !line.hasPrefix("+++")
+                            let isDel = line.hasPrefix("-") && !line.hasPrefix("---")
+                            Text(line.isEmpty ? " " : line)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(isAdd ? Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2) : (isDel ? Color.ompFlat(rgb: 0xDE4A43) : Color.ompText))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 4)
+                                .background(isAdd ? Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2).opacity(0.12) : (isDel ? Color.ompFlat(rgb: 0xDE4A43).opacity(0.12) : Color.clear), in: RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.trailing, 14)
+                    .textSelection(.enabled)
+                } else {
+                    Text(visibleCode)
+                        .font(.system(size: 13, design: .monospaced))
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .padding(.vertical, 14)
+                        .padding(.trailing, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .frame(maxHeight: 320)
+    }
+
+    private var copyButton: some View {
+        Button {
+            copyToPasteboard(code)
+            AudioFeedback.playSend(enabled: true)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                copied = false
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(copied ? Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2) : Color.ompTextSecondary)
+                .frame(width: 24, height: 24)
+                .background(Color.ompCard.opacity(0.85), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(copied ? "已复制" : "复制代码")
+    }
+
+    @ViewBuilder
+    private var foldToggle: some View {
+        Button {
+            withAnimation(Theme.Motion.quick) { expanded.toggle() }
+        } label: {
+            Text(expanded ? "收起" : "展开全部（\(allLines.count) 行）")
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.ompTextSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.ompCard, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.ompBorder, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+    }
+
+    private var visibleLines: [String] {
+        guard isFoldable, !expanded else { return allLines }
+        return Array(allLines.prefix(Self.foldThreshold))
+    }
+
+    private var visibleLineCount: Int { visibleLines.count }
 
     private var isRenderable: Bool {
         let lang = language?.lowercased() ?? ""

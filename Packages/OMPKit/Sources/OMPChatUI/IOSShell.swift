@@ -174,6 +174,9 @@ struct ChatScreen: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 ComposerToolBar(onOpenHostPane: onOpenHostPane)
+                Rectangle()
+                    .fill(Color.ompBorder)
+                    .frame(height: 0.5)
                 PaseoComposerBar()
             }
             .background(IOSShellMetrics.tabBarBackground)
@@ -701,10 +704,11 @@ struct PaseoComposerBar: View {
                 .accessibilityLabel("消息输入框")
                 .font(.system(size: 15))
                 .lineLimit(1...6)
-                .frame(maxHeight: IOSShellMetrics.composerMaxHeight, alignment: .bottom)
+                // A vertical-axis TextField inside an HStack expands to the
+                // tallest sibling; `.fixedSize` keeps it at its intrinsic
+                // height so an empty composer stays one line (40pt).
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, (IOSShellMetrics.composerMinHeight - 20) / 2)
-                // Grows with content up to 6 lines; explicit caps make the
-                // vertical-axis field jump straight to its maximum.
 
             sendButton
         }

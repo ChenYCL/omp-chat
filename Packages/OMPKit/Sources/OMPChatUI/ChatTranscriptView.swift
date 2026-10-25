@@ -11,7 +11,7 @@ public struct ChatTranscriptView: View {
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Theme.Layout.messageSpacing) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     if let conversation = model.selectedConversation {
                         if !model.selectedMessageIDs.isEmpty {
                             selectionBar
@@ -232,7 +232,8 @@ public struct ErrorBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
-        .padding(.horizontal, Theme.Layout.transcriptPadding)
+        .frame(maxWidth: Theme.Layout.transcriptMax + 32, alignment: .leading)
+        .padding(.horizontal, 16)
         .padding(.top, 8)
     }
 }
@@ -259,7 +260,8 @@ public struct StatusToast: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
-        .padding(.horizontal, Theme.Layout.transcriptPadding)
+        .frame(maxWidth: Theme.Layout.transcriptMax + 32, alignment: .leading)
+        .padding(.horizontal, 16)
         .padding(.top, 8)
         .onTapGesture(perform: onDismiss)
     }

@@ -186,11 +186,10 @@ public struct ChatDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: macOS header
-
     #if os(macOS)
+
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
                 Menu {
                     Button {
@@ -245,6 +244,47 @@ public struct ChatDetailView: View {
                     } label: {
                         Label("复制为新分支", systemImage: "arrow.triangle.branch")
                     }
+    Divider()
+
+    Menu("导出对话") {
+        Button {
+            prepareExport(format: .markdown)
+        } label: {
+            Label("导出为 Markdown (.md)", systemImage: "doc.plaintext")
+        }
+        Button {
+            prepareExport(format: .html)
+        } label: {
+            Label("导出为 HTML 网页 (.html)", systemImage: "safari")
+        }
+        Button {
+            prepareExport(format: .json)
+        } label: {
+            Label("导出为 JSON 数据 (.json)", systemImage: "curlybraces")
+        }
+    }
+
+    Button {
+        if let conversation = model.selectedConversation {
+            copyToPasteboard(model.exportMarkdown(conversation))
+        }
+    } label: {
+        Label("复制整篇对话内容", systemImage: "doc.on.doc")
+    }
+
+    Button {
+        showOptions = true
+    } label: {
+        Label("对话设置 (自定义指令)", systemImage: "slider.horizontal.3")
+    }
+
+    Button {
+        model.regenerateLast()
+    } label: {
+        Label("重新生成 (⇧⌘R)", systemImage: "arrow.clockwise")
+    }
+    .disabled(model.isStreaming || model.selectedConversation?.messages.isEmpty != false)
+
 
                     Divider()
 
@@ -256,15 +296,16 @@ public struct ChatDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(conversation.title)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Color.ompText)
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Color.ompTextTertiary)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -272,88 +313,21 @@ public struct ChatDetailView: View {
 
             Spacer()
 
-            if let conversation = model.selectedConversation, !conversation.messages.isEmpty {
-                Button {
-                    shareConversation()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 10))
-                        Text("分享")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(Color.ompText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.ompFill, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("分享对话")
+            headerIconButton("square.and.arrow.up", "分享对话") { shareConversation() }
+            headerIconButton("sidebar.left", "切换侧栏 (⌘B)") { onToggleSidebar() }
+            headerIconButton("xmark", "关闭窗口") {
+                NSApp.keyWindow?.close()
             }
-            // ••• 溢出功能菜单 (ChatGPT 风格)
-            Menu {
-                Button {
-                    model.regenerateLast()
-                } label: {
-                    Label("重新生成 (⇧⌘R)", systemImage: "arrow.clockwise")
-                }
-                .disabled(model.isStreaming || model.selectedConversation?.messages.isEmpty != false)
-
-                Button {
-                    showOptions = true
-                } label: {
-                    Label("对话设置 (自定义指令)", systemImage: "slider.horizontal.3")
-                }
-
-                Menu("导出对话") {
-                    Button {
-                        prepareExport(format: .markdown)
-                    } label: {
-                        Label("导出为 Markdown (.md)", systemImage: "doc.plaintext")
-                    }
-                    Button {
-                        prepareExport(format: .html)
-                    } label: {
-                        Label("导出为 HTML 网页 (.html)", systemImage: "safari")
-                    }
-                    Button {
-                        prepareExport(format: .json)
-                    } label: {
-                        Label("导出为 JSON 数据 (.json)", systemImage: "curlybraces")
-                    }
-                }
-
-                Button {
-                    if let conversation = model.selectedConversation {
-                        copyToPasteboard(model.exportMarkdown(conversation))
-                    }
-                } label: {
-                    Label("复制整篇对话内容", systemImage: "doc.on.doc")
-                }
-
-                Divider()
-
-                Button {
-                    model.showSettings = true
-                } label: {
-                    Label("偏好设置 (⌘,)", systemImage: "gearshape")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(Color.ompFill, in: Circle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
-        .frame(minHeight: 44)
+        .frame(height: 44)
         .background(Color.ompCanvas)
         .contentShape(Rectangle())
+    }
+
+    /// Bare 26pt header icon button; ghost-hover background only on hover.
+    private func headerIconButton(_ systemImage: String, _ help: String, action: @escaping () -> Void) -> some View {
+        HeaderIconButton(systemImage: systemImage, help: help, action: action)
     }
     #endif
 
@@ -466,6 +440,34 @@ struct ChatEmptyStateView: View {
     }
 }
 
+
+
+/// Bare 26pt macOS header icon button (share / sidebar toggle / close);
+/// ghost-hover background appears only on hover.
+private struct HeaderIconButton: View {
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.ompTextSecondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.officialSM, style: .continuous)
+                        .fill(hovering ? ompGhostHover : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
 
 
 enum TokenFormat {

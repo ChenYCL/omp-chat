@@ -89,10 +89,6 @@ struct PaseoFilesPane: View {
                             .font(.system(size: 13))
                             .foregroundStyle(entry.isDir ? Color.ompText : Color.ompTextTertiary)
                             .frame(width: 20)
-PUT 103:=103:
-                    .frame(height: 36)
-                    .contentShape(Rectangle())
-                            .frame(width: 20)
                         Text(entry.name)
                             .font(.system(size: 13))
                             .foregroundStyle(Color.ompText)
@@ -102,6 +98,7 @@ PUT 103:=103:
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.ompTextTertiary)
                     }
+                    .frame(minHeight: 36)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if entry.isDir {
@@ -238,13 +235,13 @@ struct PaseoTerminalPane: View {
 
             Divider()
 
-            // Terminal canvas: white background, green/black monospace text (Frame 75s)
+            // Terminal canvas: ompCanvas background, prompt-green / token-text monospace.
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line)
                             .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(line.hasPrefix(">") ? Color.green : Color.black)
+                            .foregroundStyle(line.hasPrefix(">") ? Color.green : Color.ompText)
                             .textSelection(.enabled)
                     }
 
@@ -270,7 +267,7 @@ struct PaseoTerminalPane: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color.white)
+            .background(Color.ompCanvas)
 
             // Keyboard accessory row (Frame 75s)
             HStack(spacing: 4) {
@@ -282,7 +279,7 @@ struct PaseoTerminalPane: View {
                             .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(Color.ompText)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
+                            .frame(height: 26)
                             .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -291,7 +288,6 @@ struct PaseoTerminalPane: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 6)
             .background(Color.ompCard)
-            .padding(.bottom, 50)
         }
     }
 
