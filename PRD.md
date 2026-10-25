@@ -146,14 +146,20 @@ iPhone 不是只读镜像，而是能完成全部交互的远程控制台。所�
 | Git 设置 | `settings.nav.git-settings`（默认分支、blame） |
 | 数据控制 | 导出全部数据、存储占用统计 |
 
-### P3 — 平台能力（依赖系统集成，单列评估）
+### P3 — 平台能力
 
-- 权限模型：默认权限 / 完整访问权限开关（截图「常规 → 权限」）。
-- 默认文件打开位置、菜单栏常驻、关闭窗口确认。
+已交付：
+
+- 侧面板四 tab（终端 / 文件 / 改动 / 浏览器）：终端真跑 zsh；文件可进目录、看内容；改动读 `git status --porcelain` 并可展开 diff；浏览器是真实 WKWebView。
+- Mermaid：flowchart/graph 与 sequenceDiagram 原生渲染；gantt/pie 等不支持的类型继续显示源码。
+
+仍未做（都需要本机之外的依赖或会扩大权限面，故单列）：
+
+- 权限模型：默认权限 / 完整访问权限开关。当前构建不开沙盒例外就没法跑 git，开了又上不了架，需先决定分发方式。
+- 菜单栏常驻、关闭窗口确认、默认文件打开位置。
 - Worktree 分叉：`forkIntoWorktree` / `continueIntoWorktree`。
 - 侧边聊天分屏：`threadWorkspace.layout.splitView`。
-- 计划任务真实调度：当前是 UI 面板，缺 cron 执行器。
-- Mermaid 图表渲染：`codeBlock.mermaid`。已支持 flowchart/graph 与 sequenceDiagram 原生渲染；gantt/pie 等不支持的类型继续显示源码。
+- 定时任务：已确认沙盒内读不到 crontab（`crontab -l` 被拒、spool 文件 root-only），原面板是编造数据，整页已删除。要真做得先解决读取权限。
 
 ## 6. 明确不做
 
