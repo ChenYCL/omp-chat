@@ -124,6 +124,8 @@ enum HostRPC {
             return "命令超时"
         case "bad_request":
             return "请求无效"
+        case "too_large":
+            return "内容超过 256 KB，无法保存"
         case "unsupported":
             return "这台 Mac 还不支持远程操作"
         case "workspace_not_trusted":

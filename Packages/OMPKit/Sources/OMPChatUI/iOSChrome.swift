@@ -279,9 +279,12 @@ struct RemoteFileViewer: View {
     let path: String
 
     @State private var text = ""
+    @State private var original = ""
     @State private var truncated = false
     @State private var notice: String?
     @State private var copied = false
+    @State private var saving = false
+    @State private var saved = false
 
     var body: some View {
         NavigationStack {
@@ -293,12 +296,12 @@ struct RemoteFileViewer: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                 } else {
-                    Text(text.isEmpty ? " " : text)
+                    TextEditor(text: $text)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(Color.ompText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .textSelection(.enabled)
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .disabled(truncated)
                 }
             }
             .background(Color.ompCanvas)
@@ -330,15 +333,37 @@ struct RemoteFileViewer: View {
                     Button("关闭") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        UIPasteboard.general.string = text
-                        copied = true
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    if text != original, !truncated {
+                        Button { Task { await save() } } label: {
+                            if saving { ProgressView().controlSize(.mini) }
+                            else { Image(systemName: saved ? "checkmark" : "square.and.arrow.down") }
+                        }
+                        .disabled(saving)
+                        .accessibilityLabel("保存")
+                    } else {
+                        Button {
+                            UIPasteboard.general.string = text
+                            copied = true
+                        } label: {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        }
                     }
                 }
             }
             .task { await load() }
+        }
+    }
+
+    private func save() async {
+        guard let sink = session.sink, !saving else { return }
+        saving = true
+        defer { saving = false }
+        do {
+            let response = try await HostRPC.call(sink, op: "fs.write", path: path, prompt: text)
+            if response.ok { original = text; saved = true }
+            else { notice = HostRPC.message(for: response) }
+        } catch {
+            notice = error.localizedDescription
         }
     }
 
@@ -354,6 +379,7 @@ struct RemoteFileViewer: View {
                 return
             }
             text = response.text ?? ""
+            original = text
             truncated = response.truncated ?? false
         } catch {
             notice = error.localizedDescription

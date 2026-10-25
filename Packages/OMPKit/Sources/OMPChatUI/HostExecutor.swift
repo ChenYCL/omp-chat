@@ -95,7 +95,7 @@ public struct HostExecutor: Sendable {
 
     public func handle(_ request: HostRPCRequest) async -> HostRPCResponse {
         let op = request.op
-        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec"
+        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "fs.write" || op == "exec"
             || op == "exec.cancel" || op == "exec.poll" || op == "cli.sessions" || op == "cli.control" else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
@@ -115,11 +115,36 @@ public struct HostExecutor: Sendable {
         case "info": return info(request)
         case "fs.list": return list(request)
         case "fs.read": return read(request)
+        case "fs.write": return write(request)
         case "exec.cancel": return await cancel(request)
         case "cli.sessions": return await cliSessions(request)
         case "cli.control": return await cliControl(request)
         default: return await exec(request)
         }
+    }
+
+    /// `fs.write`: replaces a file's contents. Refuses directories and
+    /// paths that do not exist, so the phone can only edit a file it could
+    /// already read. Capped at the same 256 KB as `fs.read`.
+    private func write(_ request: HostRPCRequest) -> HostRPCResponse {
+        let target = resolve(request.path, base: resolve(request.cwd, base: homeDirectory))
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target, isDirectory: &isDir) else {
+            return HostRPCResponse(id: request.id, ok: false, error: "not_found")
+        }
+        guard !isDir.boolValue else {
+            return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
+        }
+        let text = request.prompt ?? ""
+        guard text.utf8.count <= Self.outputCap else {
+            return HostRPCResponse(id: request.id, ok: false, error: "too_large")
+        }
+        do {
+            try Data(text.utf8).write(to: URL(fileURLWithPath: target), options: .atomic)
+        } catch {
+            return HostRPCResponse(id: request.id, ok: false, error: error.localizedDescription)
+        }
+        return HostRPCResponse(id: request.id, ok: true)
     }
 
     /// `cli.sessions`: lists the coding-agent sessions the Mac is running, by

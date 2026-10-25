@@ -571,4 +571,24 @@ final class HostExecutorTests: XCTestCase {
         return text.split(separator: "\n").map(String.init)
     }
 
+
+    func testWriteReplacesAFileAndRefusesTheRest() async throws {
+        let file = root.appendingPathComponent("note.txt")
+        try "old".write(to: file, atomically: true, encoding: .utf8)
+        let writer = executor(allowed: true)
+        let ok = await writer.handle(HostRPCRequest(id: "w1", op: "fs.write", path: file.path, prompt: "new text"))
+        XCTAssertTrue(ok.ok)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new text")
+        let missing = await writer.handle(HostRPCRequest(id: "w2", op: "fs.write", path: root.appendingPathComponent("nope.txt").path, prompt: "x"))
+        XCTAssertEqual(missing.error, "not_found", "不能凭空创建文件")
+        let dir = await writer.handle(HostRPCRequest(id: "w3", op: "fs.write", path: root.path, prompt: "x"))
+        XCTAssertEqual(dir.error, "bad_request", "不能写目录")
+        let big = String(repeating: "a", count: HostExecutor.outputCap + 1)
+        let huge = await writer.handle(HostRPCRequest(id: "w4", op: "fs.write", path: file.path, prompt: big))
+        XCTAssertEqual(huge.error, "too_large")
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new text", "超限的写入不能改动原文件")
+        let locked = executor(allowed: false)
+        let denied = await locked.handle(HostRPCRequest(id: "w5", op: "fs.write", path: file.path, prompt: "x"))
+        XCTAssertEqual(denied.error, "shell_disabled")
+    }
 }
