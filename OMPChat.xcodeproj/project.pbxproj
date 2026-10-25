@@ -22,6 +22,7 @@
 		BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */; };
 		BF6A5C9C9D79E4BFE7F4B915 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5186DC0EFA32A3939E576ACE /* OMPChatUI */; };
 		C9C6F4B0CB7844B7154C87A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D76CE3C86BE12307212872C4 /* Assets.xcassets */; };
+		CA365FC444C45754602D0920 /* FindInChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */; };
 		F87C63434CEFB4FCEA42EE48 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 15AFBE83C4C7E348CCC85E43 /* OMPCore */; };
 		FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC29DA60AA29334933C2023A /* OMPCore */; };
 /* End PBXBuildFile section */
@@ -42,6 +43,7 @@
 		31530891343AF9A448A307AF /* OMPKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OMPKit; path = Packages/OMPKit; sourceTree = SOURCE_ROOT; };
 		383AF11ED8E7A70913E2E055 /* OMPChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OMPChat.entitlements; sourceTree = "<group>"; };
 		436F03FF8C7B1AA4F96688D6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindInChatUITests.swift; sourceTree = "<group>"; };
 		57D198FF73A36BECC16ED550 /* OMPChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OMPChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A3C954699D33223A1C904DD /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenUIUITests.swift; sourceTree = "<group>"; };
@@ -140,6 +142,7 @@
 			children = (
 				7742882C23E4FCE286846479 /* ConversationCycleUITests.swift */,
 				86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */,
+				55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */,
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
 			);
@@ -348,6 +351,7 @@
 			files = (
 				1B15124E89A25F4F838DE4AB /* ConversationCycleUITests.swift in Sources */,
 				618F843E0DEE2728DDA2C57D /* DevicesUITests.swift in Sources */,
+				CA365FC444C45754602D0920 /* FindInChatUITests.swift in Sources */,
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
 			);

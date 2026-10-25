@@ -162,6 +162,11 @@ struct ChatScreen: View {
     @State private var showingHistory = false
     @State private var renaming = false
     @State private var renameText = ""
+    /// In-chat search on the phone. The desktop's ⌘F posted a notification that
+    /// only ChatDetailView listened to, so the phone's menu item did nothing.
+    @State private var findQuery = ""
+    @State private var finding = false
+    @State private var findCursor: UUID?
 
     init(
         onOpenDrawer: @escaping () -> Void = {},
@@ -175,6 +180,7 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             topBar
             Divider().opacity(0.6)
+            if finding { findBar }
             ZStack(alignment: .bottom) {
                 if showsEmptyState {
                     emptyState
@@ -200,6 +206,9 @@ struct ChatScreen: View {
             }
             .background(IOSShellMetrics.tabBarBackground)
         }
+        .environment(\.ompSearchHighlight, finding && !findQuery.trimmingCharacters(in: .whitespaces).isEmpty
+                     ? findQuery.trimmingCharacters(in: .whitespaces) : nil)
+        .onChange(of: findQuery) { _, _ in findCursor = nil }
         .alert("重命名对话", isPresented: $renaming) {
             TextField("标题", text: $renameText)
             Button("保存") {
@@ -244,9 +253,9 @@ struct ChatScreen: View {
                     Label("搜索会话", systemImage: "magnifyingglass")
                 }
                 Button {
-                    // Same notification the desktop's ⌘F posts; the search bar
-                    // is already shared by both roots.
-                    NotificationCenter.default.post(name: .ompFindInChat, object: nil)
+                    // The phone has its own bar in ChatScreen; the desktop's
+                    // ⌘F notification never reached IOSShell.
+                    finding = true
                 } label: {
                     Label("在对话中查找", systemImage: "text.magnifyingglass")
                 }
@@ -269,6 +278,8 @@ struct ChatScreen: View {
                     .foregroundStyle(Color.ompText)
                     .frame(width: 36, height: 36)
             }
+            .accessibilityIdentifier("shell.overflow")
+            .accessibilityLabel("更多")
         }
         .padding(.horizontal, 8)
         .frame(height: IOSShellMetrics.topBarHeight)
@@ -333,6 +344,71 @@ struct ChatScreen: View {
             .background(Color.ompFill.opacity(0.6), in: Capsule())
         }
         .accessibilityIdentifier("shell.title")
+    }
+
+    /// In-chat search bar: query, hit count, and ↑/↓ to move between matches.
+    private var findBar: some View {
+        let hits = findHits
+        return HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.ompTextTertiary)
+            TextField("在此对话中查找", text: $findQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .accessibilityIdentifier("chat.find")
+            if !findQuery.isEmpty {
+                Text(hits.isEmpty ? "无匹配" : "\(hits.count) 处")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Color.ompTextTertiary)
+                Button { moveFind(by: 1) } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(hits.count < 2 ? Color.ompTextTertiary : Color.ompTextSecondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(hits.count < 2)
+                .accessibilityLabel("下一处")
+            }
+            Button {
+                finding = false
+                findQuery = ""
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("关闭查找")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var findHits: [UUID] {
+        let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, let conversation = model.selectedConversation else { return [] }
+        return conversation.messages
+            .filter { $0.concatenatedText.localizedCaseInsensitiveContains(query) }
+            .map(\.id)
+    }
+
+    /// Walks forward through hits, wrapping, and scrolls each into view.
+    private func moveFind(by step: Int) {
+        let hits = findHits
+        guard let next = SearchCursor.step(from: findCursor.flatMap { hits.firstIndex(of: $0) }, by: step, count: hits.count)
+        else { return }
+        findCursor = hits[next]
+        NotificationCenter.default.post(
+            name: .ompScrollToMessage, object: nil, userInfo: ["messageID": hits[next]]
+        )
     }
 
     private var scrollChevron: some View {
