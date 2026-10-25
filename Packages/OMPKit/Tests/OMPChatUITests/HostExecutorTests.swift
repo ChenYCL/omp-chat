@@ -256,6 +256,47 @@ final class HostExecutorTests: XCTestCase {
         XCTAssertEqual(blocked.error, "shell_disabled")
     }
 
+    func testCLISessionsRequiresShellGate() async {
+        let blocked = await executor(allowed: false).handle(HostRPCRequest(id: "s", op: "cli.sessions"))
+        XCTAssertFalse(blocked.ok)
+        XCTAssertEqual(blocked.error, "shell_disabled")
+        XCTAssertNil(blocked.sessions)
+    }
+
+    func testCLISessionsRejectsAgentsWithoutAParser() async {
+        let response = await executor(allowed: true).handle(
+            HostRPCRequest(id: "s", op: "cli.sessions", command: "codex")
+        )
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "unsupported")
+        XCTAssertNil(response.sessions, "不支持的 agent 不能返回猜测的会话")
+    }
+
+    func testCLIControlGateAndInputValidation() async {
+        let off = await executor(allowed: false).handle(
+            HostRPCRequest(id: "c1", op: "cli.control", path: "stop", command: "claude", requestID: "abc")
+        )
+        XCTAssertEqual(off.error, "shell_disabled")
+
+        let on = executor(allowed: true)
+        let unknownAction = await on.handle(HostRPCRequest(id: "c2", op: "cli.control", path: "format-disk", command: "claude"))
+        XCTAssertEqual(unknownAction.error, "bad_request")
+
+        // A session id is interpolated into a shell line; anything outside the
+        // id charset must be refused before a process is spawned.
+        let injected = await on.handle(
+            HostRPCRequest(id: "c3", op: "cli.control", path: "stop", command: "claude", requestID: "x; touch pwned")
+        )
+        XCTAssertEqual(injected.error, "bad_request")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "pwned"))
+
+        let missingID = await on.handle(HostRPCRequest(id: "c4", op: "cli.control", path: "stop", command: "claude"))
+        XCTAssertEqual(missingID.error, "bad_request")
+
+        let noParser = await on.handle(HostRPCRequest(id: "c5", op: "cli.control", path: "stop", command: "codex", requestID: "abc"))
+        XCTAssertEqual(noParser.error, "unsupported")
+    }
+
     func testCancelWithoutRequestIDIsBadRequest() async {
         let executor = executor(allowed: true)
         let response = await executor.handle(HostRPCRequest(id: "b", op: "exec.cancel"))

@@ -26,6 +26,10 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
     public var offset: Int?
     public var maxBytes: Int?
     public var timeout: Double?
+    /// `cli.control` only: the action (`start`/`stop`/`remove`/`logs`) goes in
+    /// `path`, the agent name in `command`, the session id in `requestID`,
+    /// and the prompt for a new session here.
+    public var prompt: String?
 
     public init(
         id: String,
@@ -37,7 +41,8 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         timeout: Double? = nil,
         requestID: String? = nil,
         background: Bool? = nil,
-        offset: Int? = nil
+        offset: Int? = nil,
+        prompt: String? = nil
     ) {
         self.id = id
         self.op = op
@@ -49,6 +54,7 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         self.requestID = requestID
         self.background = background
         self.offset = offset
+        self.prompt = prompt
     }
 }
 
@@ -146,6 +152,9 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
     /// `exec.poll` only: true once the run has finished and the final
     /// `exitCode` and `cwd` are attached.
     public var done: Bool?
+    /// `cli.sessions` only: the coding-agent sessions the Mac is running.
+    /// Optional so hosts and clients built before this field still decode.
+    public var sessions: [CLISession]?
 
     public init(
         id: String,
@@ -160,7 +169,8 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
         cwd: String? = nil,
         info: HostInfo? = nil,
         nextOffset: Int? = nil,
-        done: Bool? = nil
+        done: Bool? = nil,
+        sessions: [CLISession]? = nil
     ) {
         self.id = id
         self.ok = ok
@@ -175,6 +185,7 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
         self.info = info
         self.nextOffset = nextOffset
         self.done = done
+        self.sessions = sessions
     }
 }
 

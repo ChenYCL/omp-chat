@@ -60,7 +60,9 @@ public struct RemoteScreen: View {
         }
         .background(Color.ompCanvas)
         .onAppear(perform: loadSavedConnection)
-        .onDisappear(perform: disconnect)
+        // No disconnect on disappear: the 主机 tab, the drawer and CLI 会话 all
+        // drive the Mac through RemoteSession, so switching tabs must keep the
+        // pairing alive. Only the explicit 断开 button tears it down.
         .fullScreenCover(item: $selectedItem) { item in
             NavigationStack {
                 RemoteConsoleScreen(

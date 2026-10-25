@@ -96,7 +96,7 @@ public struct HostExecutor: Sendable {
     public func handle(_ request: HostRPCRequest) async -> HostRPCResponse {
         let op = request.op
         guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec"
-            || op == "exec.cancel" || op == "exec.poll" else {
+            || op == "exec.cancel" || op == "exec.poll" || op == "cli.sessions" || op == "cli.control" else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
         if op != "info", !shellAllowed {
@@ -116,8 +116,86 @@ public struct HostExecutor: Sendable {
         case "fs.list": return list(request)
         case "fs.read": return read(request)
         case "exec.cancel": return await cancel(request)
+        case "cli.sessions": return await cliSessions(request)
+        case "cli.control": return await cliControl(request)
         default: return await exec(request)
         }
+    }
+
+    /// `cli.sessions`: lists the coding-agent sessions the Mac is running, by
+    /// asking each agent's own CLI and parsing its machine-readable output.
+    /// Agents the binary cannot reach come back as an error string in `text`,
+    /// not as invented sessions.
+    private func cliSessions(_ request: HostRPCRequest) async -> HostRPCResponse {
+        #if os(macOS)
+        let agent = request.command ?? "claude"
+        guard agent == "claude" else {
+            return HostRPCResponse(id: request.id, ok: false, error: "unsupported", text: "暂不支持 \(agent)")
+        }
+        let listed = await exec(HostRPCRequest(
+            id: "\(request.id)-list", op: "exec",
+            command: "claude agents --json", cwd: homeDirectory, timeout: 20
+        ))
+        guard listed.ok, let stdout = listed.stdout else {
+            return HostRPCResponse(id: request.id, ok: false, error: listed.error ?? "exec_failed", text: listed.stderr)
+        }
+        // `exec` already strips its cwd marker, so stdout is the CLI's own JSON.
+        let sessions = CLISessionListing.claude(json: Data(stdout.utf8))
+        return HostRPCResponse(id: request.id, ok: true, sessions: sessions)
+        #else
+        return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+        #endif
+    }
+
+    /// `cli.control`: acts on one coding-agent session. Argv comes from
+    /// `CLISessionListing.command` (so the phone can only reach the exact verbs
+    /// listed there), the session id is checked against a strict charset, and
+    /// every argument is single-quoted before it reaches the shell.
+    private func cliControl(_ request: HostRPCRequest) async -> HostRPCResponse {
+        #if os(macOS)
+        let agent = request.command ?? "claude"
+        guard let action = request.path.flatMap(CLISessionAction.init(rawValue:)) else {
+            return HostRPCResponse(id: request.id, ok: false, error: "bad_request", text: "未知操作")
+        }
+        let sessionID = request.requestID
+        if let sessionID {
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+            guard !sessionID.isEmpty, sessionID.count <= 64,
+                  sessionID.unicodeScalars.allSatisfy(allowed.contains) else {
+                return HostRPCResponse(id: request.id, ok: false, error: "bad_request", text: "会话 id 不合法")
+            }
+        }
+        guard let argv = CLISessionListing.command(agent: agent, action: action, id: sessionID, prompt: request.prompt) else {
+            let known = agent == "claude"
+            return HostRPCResponse(
+                id: request.id, ok: false,
+                error: known ? "bad_request" : "unsupported",
+                text: known ? "缺少必要参数" : "暂不支持 \(agent)"
+            )
+        }
+        let result = await exec(HostRPCRequest(
+            id: "\(request.id)-ctl", op: "exec",
+            command: argv.map(Self.shellQuote).joined(separator: " "),
+            cwd: request.cwd ?? homeDirectory, timeout: 30
+        ))
+        let output = [result.stdout, result.stderr].compactMap { $0 }
+            .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        // The CLI refuses to run in a folder whose trust prompt was never
+        // accepted, and still exits 0 — surface that instead of "success".
+        if output.localizedCaseInsensitiveContains("not trusted") {
+            return HostRPCResponse(id: request.id, ok: false, error: "workspace_not_trusted", text: output, cwd: result.cwd)
+        }
+        guard result.ok else {
+            return HostRPCResponse(id: request.id, ok: false, error: result.error ?? "exec_failed", text: output)
+        }
+        let failed = (result.exitCode ?? 0) != 0
+        return HostRPCResponse(
+            id: request.id, ok: !failed, error: failed ? "command_failed" : nil,
+            text: output, truncated: result.truncated, exitCode: result.exitCode
+        )
+        #else
+        return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+        #endif
     }
 
     // MARK: Operations
@@ -558,7 +636,11 @@ public struct HostExecutor: Sendable {
     static func childEnvironment(home: String) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["HOME"] = home
-        let extras = ["/opt/homebrew/bin", "/usr/local/bin"]
+        // A Finder-launched app inherits launchd's minimal PATH. Agent CLIs
+        // install per user (claude → ~/.local/bin, omp → ~/.bun/bin), so look
+        // in the account's real home, not the injected one tests use.
+        let user = realHomeDirectory()
+        let extras = ["\(user)/.local/bin", "\(user)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         let current = environment["PATH"] ?? "/usr/bin:/bin"
         let missing = extras.filter { !current.split(separator: ":").contains(Substring($0)) }
         if !missing.isEmpty {

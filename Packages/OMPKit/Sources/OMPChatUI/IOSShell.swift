@@ -83,8 +83,12 @@ public struct IOSShell: View {
         }
         .animation(Theme.Motion.quick, value: drawerOpen)
         .sheet(item: $route) { item in
+            // Sheets do not inherit the TabView's environment: without
+            // RemoteSession here, any route that reads it (设备, CLI 会话)
+            // traps on open.
             NavigationStack { routeDestination(item) }
                 .environment(model)
+                .environment(remoteSession)
                 .presentationDetents([.large])
         }
     }
@@ -101,7 +105,7 @@ public struct IOSShell: View {
         case .schedules: PaseoScheduledTasksSheet()
         case .usage: PaseoUsageSheet()
         case .devices: PaseoDevicesSheet()
-        case .subagents: PaseoSubagentsSheet()
+        case .subagents: CLISessionsSheet()
         case .diagnostics: DiagnosticsView()
         }
     }
@@ -186,7 +190,7 @@ struct ChatScreen: View {
             .background(IOSShellMetrics.tabBarBackground)
         }
         .sheet(isPresented: $showingSubagents) {
-            NavigationStack { PaseoSubagentsSheet() }
+            NavigationStack { CLISessionsSheet() }
                 .environment(model)
         }
     }
@@ -529,7 +533,7 @@ struct ShellDrawer: View {
                 }.buttonStyle(.plain)
 
                 Button { route = .subagents } label: {
-                    drawerItem(icon: "person.2", title: "子代理")
+                    drawerItem(icon: "person.2", title: "CLI 会话")
                 }.buttonStyle(.plain)
                 Button { route = .diagnostics } label: {
                     drawerItem(icon: "stethoscope", title: "诊断")

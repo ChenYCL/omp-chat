@@ -84,7 +84,8 @@ enum HostRPC {
         timeout: Double? = nil,
         requestID: String? = nil,
         background: Bool? = nil,
-        offset: Int? = nil
+        offset: Int? = nil,
+        prompt: String? = nil
     ) async throws -> HostRPCResponse {
         let request = HostRPCRequest(
             id: id ?? UUID().uuidString,
@@ -96,7 +97,8 @@ enum HostRPC {
             timeout: timeout,
             requestID: requestID,
             background: background,
-            offset: offset
+            offset: offset,
+            prompt: prompt
         )
         return try await sink.call(request)
     }
@@ -114,6 +116,10 @@ enum HostRPC {
             return "请求无效"
         case "unsupported":
             return "这台 Mac 还不支持远程操作"
+        case "workspace_not_trusted":
+            return "这个目录还没在 Claude Code 里确认过信任：先在 Mac 上用 claude 进入该目录并接受信任提示"
+        case "command_failed":
+            return "命令执行失败"
         case let other?:
             return other
         case nil:
