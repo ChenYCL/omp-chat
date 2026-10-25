@@ -392,6 +392,8 @@ struct RemoteFileViewer: View {
 struct PaseoTerminalPane: View {
     /// Seconds the host may hold an empty `exec.poll` (long-poll).
     static let pollWait: Double = 20
+    /// Output rows kept on screen. Older ones scroll off.
+    static let entryCap = 200
     @Environment(RemoteSession.self) private var session
     let onOpenRemote: () -> Void
 
@@ -620,8 +622,12 @@ struct PaseoTerminalPane: View {
         history.append(command)
         historyIndex = nil
         input = ""
-        let index = entries.count
         entries.append(Entry(command: command, output: "", exitCode: nil, running: true))
+        // A long remote session would otherwise keep every command's output in
+        // memory. Drop the oldest once past the cap; the running entry is last,
+        // so it is never the one dropped.
+        if entries.count > Self.entryCap { entries.removeFirst(entries.count - Self.entryCap) }
+        let index = entries.count - 1
         let working = cwd
         let requestID = UUID().uuidString
         inflightID = requestID
