@@ -854,6 +854,9 @@ struct PaseoScriptsPane: View {
         var group: String = "可运行"
         /// Mutating actions ask before running.
         var confirm: Bool = false
+        /// Asks for a one-line message first; it replaces `{{message}}` in
+        /// the command. Empty input cancels.
+        var needsMessage: Bool = false
     }
 
     @State private var scripts: [Script] = []
@@ -863,6 +866,8 @@ struct PaseoScriptsPane: View {
     @State private var failure: String?
     @State private var log = ""
     @State private var pendingID: String?
+    @State private var messagePrompt = false
+    @State private var messageText = ""
 
     var body: some View {
         Group {
@@ -939,12 +944,24 @@ struct PaseoScriptsPane: View {
                 ) {
                     Button("运行") {
                         if let id = pendingID, let index = scripts.firstIndex(where: { $0.id == id }) {
-                            run($scripts[index])
+                            run($scripts[index], message: nil)
                         }
                         pendingID = nil
                     }
                 } message: {
                     Text(scripts.first { $0.id == pendingID }?.command ?? "")
+                }
+                .alert("提交说明", isPresented: $messagePrompt) {
+                    TextField("一句话说明这次改动", text: $messageText)
+                    Button("提交") {
+                        if let id = pendingID, let index = scripts.firstIndex(where: { $0.id == id }) {
+                            run($scripts[index], message: messageText)
+                        }
+                        pendingID = nil
+                    }
+                    Button("取消", role: .cancel) { pendingID = nil }
+                } message: {
+                    Text("会 git add -A 后提交，不会推送。")
                 }
             }
         }
@@ -999,7 +1016,15 @@ struct PaseoScriptsPane: View {
     }
 
     private func request(_ script: Binding<Script>) {
-        if script.wrappedValue.confirm { pendingID = script.wrappedValue.id } else { run(script) }
+        if script.wrappedValue.needsMessage {
+            messageText = ""
+            pendingID = script.wrappedValue.id
+            messagePrompt = true
+        } else if script.wrappedValue.confirm {
+            pendingID = script.wrappedValue.id
+        } else {
+            run(script)
+        }
     }
 
     /// Only offered when the host reports a git branch for this directory, so
@@ -1012,6 +1037,7 @@ struct PaseoScriptsPane: View {
             Script(id: "git:diff", name: "改动统计", command: "git diff --stat", group: "Git · \(branch)"),
             Script(id: "git:log", name: "最近提交", command: "git log --oneline -10", group: "Git · \(branch)"),
             Script(id: "git:pull", name: "拉取（仅快进）", command: "git pull --ff-only", group: "Git · \(branch)", confirm: true),
+            Script(id: "git:commit", name: "暂存并提交", command: "git add -A && git commit -m {{message}}", group: "Git · \(branch)", needsMessage: true),
         ]
     }
 
@@ -1052,9 +1078,9 @@ struct PaseoScriptsPane: View {
         }
     }
 
-    private func run(_ script: Binding<Script>) {
+    private func run(_ script: Binding<Script>, message: String? = nil) {
         guard let sink = session.sink, !script.wrappedValue.running else { return }
-        let command = script.wrappedValue.command
+        let command = Self.command(script.wrappedValue, message: message)
         let working = cwd
         script.wrappedValue.running = true
         log += "\n$ \(command)\n"
@@ -1075,6 +1101,10 @@ struct PaseoScriptsPane: View {
                 log += error.localizedDescription + "\n"
             }
         }
+    }
+
+    private static func command(_ script: Script, message: String?) -> String? {
+        HostCommandTemplate.fill(script.command, message: message)
     }
 
     /// `"scripts"` values of a package.json, read leniently so a trailing

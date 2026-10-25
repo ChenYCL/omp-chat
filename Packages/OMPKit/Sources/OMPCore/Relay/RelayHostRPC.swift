@@ -201,3 +201,21 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
 public protocol RelayRPCSink: Sendable {
     func call(_ request: HostRPCRequest) async throws -> HostRPCResponse
 }
+
+/// Builds the shell command for a phone action that asks for a one-line
+/// message. `{{message}}` becomes a single-quoted string, so the text cannot
+/// break out of the command. A blank message returns `nil`: the caller treats
+/// that as "cancelled".
+public enum HostCommandTemplate {
+    public static func fill(_ command: String, message: String?) -> String? {
+        guard command.contains("{{message}}") else { return command }
+        let text = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return command.replacingOccurrences(of: "{{message}}", with: quoted(text))
+    }
+
+    /// POSIX single quotes: a quote inside the text closes, adds \', reopens.
+    private static func quoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}

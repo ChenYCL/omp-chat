@@ -570,4 +570,5 @@ final class HostExecutorTests: XCTestCase {
         let text = String(decoding: data, as: UTF8.self)
         return text.split(separator: "\n").map(String.init)
     }
+
 }

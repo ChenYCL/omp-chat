@@ -265,4 +265,15 @@ final class RelayHostRPCTests: XCTestCase {
         XCTAssertEqual(decoded.error, "cancelled")
         XCTAssertEqual(decoded.exitCode, 130)
     }
+
+    func testCommitMessageIsQuotedAndBlankCancels() {
+        let command = "git add -A && git commit -m {{message}}"
+        XCTAssertNil(HostCommandTemplate.fill(command, message: "   "), "空白说明等于取消")
+        XCTAssertEqual(HostCommandTemplate.fill(command, message: "fix: a bug"),
+            "git add -A && git commit -m 'fix: a bug'", "普通说明也要加引号，避免被 shell 拆开")
+        XCTAssertEqual(HostCommandTemplate.fill(command, message: "it's a fix"),
+            "git add -A && git commit -m 'it'\\''s a fix'")
+        XCTAssertEqual(HostCommandTemplate.fill("git status -sb", message: nil), "git status -sb",
+            "没有占位符的命令原样返回")
+    }
 }
