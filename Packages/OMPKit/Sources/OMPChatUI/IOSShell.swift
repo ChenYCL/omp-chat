@@ -244,6 +244,13 @@ struct ChatScreen: View {
                     Label("搜索会话", systemImage: "magnifyingglass")
                 }
                 Button {
+                    // Same notification the desktop's ⌘F posts; the search bar
+                    // is already shared by both roots.
+                    NotificationCenter.default.post(name: .ompFindInChat, object: nil)
+                } label: {
+                    Label("在对话中查找", systemImage: "text.magnifyingglass")
+                }
+                Button {
                     model.showSettings = true
                 } label: {
                     Label("设置", systemImage: "gearshape")
