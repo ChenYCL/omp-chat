@@ -140,6 +140,54 @@ final class RelayHostRPCTests: XCTestCase {
         XCTAssertEqual(decoded.exitCode, 130)
     }
 
+    func testPollRequestRoundTripsOffset() throws {
+        let request = HostRPCRequest(id: "p1", op: "exec.poll", requestID: "exec-1", offset: 4096)
+        let data = try encoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["op"] as? String, "exec.poll")
+        XCTAssertEqual(object["requestID"] as? String, "exec-1")
+        XCTAssertEqual(object["offset"] as? Int, 4096)
+        XCTAssertNil(object["command"])
+        let decoded = try decoder().decode(HostRPCRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+    }
+
+    func testBackgroundRequestRoundTrips() throws {
+        let request = HostRPCRequest(id: "b1", op: "exec", command: "swift build", background: true)
+        let data = try encoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["background"] as? Bool, true)
+        let decoded = try decoder().decode(HostRPCRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+    }
+
+    func testPollResponseRoundTripsCursorAndDone() throws {
+        let response = HostRPCResponse(
+            id: "p1", ok: true, text: "chunk", truncated: true,
+            exitCode: 0, cwd: "/tmp", nextOffset: 8192, done: true
+        )
+        let data = try encoder().encode(response)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["text"] as? String, "chunk")
+        XCTAssertEqual(object["nextOffset"] as? Int, 8192)
+        XCTAssertEqual(object["done"] as? Bool, true)
+        let decoded = try decoder().decode(HostRPCResponse.self, from: data)
+        XCTAssertEqual(decoded, response)
+    }
+
+    func testOldJSONWithoutPollKeysDecodes() throws {
+        // A host that predates background exec answers without the new keys.
+        let raw = #"{"id":"old","ok":true,"stdout":"hi","exitCode":0,"cwd":"/tmp"}"#
+        let decoded = try decoder().decode(HostRPCResponse.self, from: Data(raw.utf8))
+        XCTAssertEqual(decoded.stdout, "hi")
+        XCTAssertNil(decoded.nextOffset)
+        XCTAssertNil(decoded.done)
+        let request = #"{"id":"old","op":"exec","command":"pwd"}"#
+        let decodedRequest = try decoder().decode(HostRPCRequest.self, from: Data(request.utf8))
+        XCTAssertNil(decodedRequest.background)
+        XCTAssertNil(decodedRequest.offset)
+    }
+
     // MARK: - LAN /rpc
 
     private func rpcRequest(_ body: HostRPCRequest, token: String? = "valid") -> URLRequest {

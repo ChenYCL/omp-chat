@@ -157,6 +157,15 @@ struct RemoteConsoleScreen: View {
         .frame(height: 44)
     }
 
+    /// `omp-ui` buttons on the phone post into the same Mac conversation.
+    private var remoteGenUISend: (@MainActor @Sendable (String) -> Void)? {
+        guard let client else { return nil }
+        let id = conversationID
+        return { text in
+            Task { try? await client.submit(.input(conversationID: id, text: text)) }
+        }
+    }
+
     // MARK: Transcript
 
     private func transcript(of conversation: RelayConversation) -> some View {
@@ -165,6 +174,7 @@ struct RemoteConsoleScreen: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(conversation.messages, id: \.id) { message in
                         RemoteConsoleBubble(message: message)
+                            .environment(\.genUISend, remoteGenUISend)
                             .id(message.id)
                             .contextMenu { menu(for: message) }
                     }
@@ -405,18 +415,17 @@ struct RemoteConsoleBubble: View {
                     if let activities = message.activity, !activities.isEmpty {
                         RemoteOperationGroup(activities: activities)
                     }
-                    HStack(alignment: .lastTextBaseline, spacing: 2) {
-                        Text(message.text)
-                            .font(.system(size: 16))
-                            .lineSpacing(10)
+                    // Same renderer as the Mac: code blocks, tables, math and
+                    // omp-ui interfaces instead of raw markdown source.
+                    if !message.text.isEmpty {
+                        MarkdownText(message.text)
                             .foregroundStyle(Color.ompText)
-                            .textSelection(.enabled)
-                        if message.streaming {
-                            Text("▍")
-                                .font(.system(size: 16))
-                                .foregroundStyle(Color.ompTextTertiary)
-                                .opacity(caretOn ? 1 : 0.15)
-                        }
+                    }
+                    if message.streaming {
+                        Text("▍")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .opacity(caretOn ? 1 : 0.15)
                     }
                     Text(RelativeDateTimeFormatter.ompRelay.string(for: message.ts) ?? "")
                         .font(.system(size: 10.5))

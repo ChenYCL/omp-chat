@@ -66,6 +66,8 @@ public final class RelayHubClient: @unchecked Sendable {
 
         lock.lock()
         hostConnection = connection
+        DiagnosticsCenter.shared.record("relay", .info, "hub host stream opened",
+            fields: ["room": DiagnosticsMask.hint(roomCode)])
         lock.unlock()
     }
 
@@ -104,8 +106,11 @@ public final class RelayHubClient: @unchecked Sendable {
         guard let url = URL(string: "\(hubURL.absoluteString)/v1/client/state?room=\(roomCode)") else {
             throw RelayHubError.badHubURL
         }
+
         let (data, response) = try await session.data(for: URLRequest(url: url))
         try Self.assertOK(data: data, response: response)
+        DiagnosticsCenter.shared.record("relay", .info, "hub client connected",
+            fields: ["room": DiagnosticsMask.hint(roomCode)])
         return try Self.snapshotDecoder().decode(RelaySnapshot.self, from: data)
     }
 

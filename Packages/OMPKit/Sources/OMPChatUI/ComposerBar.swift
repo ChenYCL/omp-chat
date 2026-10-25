@@ -222,15 +222,22 @@ public struct ComposerBar: View {
             Spacer(minLength: 0)
 
             if model.isStreaming {
+                // Official stop control: the send slot turns into a solid
+                // circle with a square, so "stop" is visible, not a spinner.
                 Button {
                     model.stop()
                 } label: {
-                    ProgressView()
-                        .controlSize(.small)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.ompInverseText)
+                        .frame(width: 28, height: 28)
+                        .background(Color.ompPrimarySolid, in: Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
-                .help("正在生成 · 点击或 Esc 停止")
+                .help("停止生成（Esc）")
+                .accessibilityLabel("停止生成")
             }
         }
         .padding(.horizontal, 6)

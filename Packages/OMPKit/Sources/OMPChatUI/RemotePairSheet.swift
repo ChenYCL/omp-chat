@@ -328,15 +328,21 @@ public struct RemoteScreen: View {
                 remoteSession.attach(sink: client, hostName: pair.host, mode: .lan)
                 hostName = pair.host
                 snapshot = try await client.snapshot()
+                remoteSession.noteSnapshot()
                 status = .connected
                 persistConnection(host: host, port: port, token: token)
                 revisionsTask = Task { await watchRevisions() }
+                DiagnosticsCenter.shared.record("relay", .info, "pairing succeeded",
+                    fields: ["host": host])
             } catch {
                 self.client = nil
                 status = .failed(describe(error))
+                DiagnosticsCenter.shared.record("relay", .error, "pairing failed",
+                    fields: ["error": describe(error)])
             }
         }
     }
+
 
     private func connectViaHub() {
         let room = trimmedRoom
@@ -354,16 +360,22 @@ public struct RemoteScreen: View {
                 remoteSession.attach(sink: hub, hostName: first.host, mode: .room)
                 hostName = first.host
                 snapshot = first
+                remoteSession.noteSnapshot()
                 persistedRoom = room
                 status = .connected
                 persistRoom(room: room, hub: raw)
                 revisionsTask = Task { await watchHubRevisions() }
+                DiagnosticsCenter.shared.record("relay", .info, "pairing succeeded",
+                    fields: ["room": DiagnosticsMask.hint(room)])
             } catch {
                 hubClient = nil
                 status = .failed(describe(error))
+                DiagnosticsCenter.shared.record("relay", .error, "pairing failed",
+                    fields: ["error": describe(error)])
             }
         }
     }
+
 
     private func watchHubRevisions() async {
         guard let hub = hubClient else { return }
@@ -372,6 +384,7 @@ public struct RemoteScreen: View {
             if let current = snapshot, rev <= current.rev { continue }
             if let fresh = try? await hub.snapshot() {
                 snapshot = fresh
+                remoteSession.noteSnapshot()
                 hostName = fresh.host
             }
         }
@@ -432,6 +445,7 @@ public struct RemoteScreen: View {
             guard status == .connected else { return }
             if let fresh = try? await client.snapshot() {
                 snapshot = fresh
+                remoteSession.noteSnapshot()
             }
         }
     }

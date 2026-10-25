@@ -63,6 +63,10 @@ public enum RelayServerError: Error, Sendable {
 /// - `POST /rpc` → [`HostRPCRequest`] JSON; answered with [`HostRPCResponse`]
 ///   JSON at `200` even when `ok` is false. Unset `onRPC` answers
 ///   `ok: false, error: "unsupported"`.
+/// - `GET /debug/events?since=<seq>` → JSON events with `seq` greater than
+///   `since` (token gated, same as every other route).
+/// - `GET /debug/report` → runs the host's diagnostics and returns the JSON
+///   report. Answers `503` until the host installs `onDebugReport`.
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
@@ -71,6 +75,8 @@ public final class RelayServer: @unchecked Sendable {
     /// handler awaits the closure and writes its [`HostRPCResponse`] back.
     /// `nil` answers every `POST /rpc` with `error: "unsupported"`.
     public var onRPC: (@Sendable (HostRPCRequest) async -> HostRPCResponse)?
+    /// Host hook for `GET /debug/report`. Returns the report JSON.
+    public var onDebugReport: (@Sendable () async -> Data)?
 
 
     /// Internal: the bound listener, exposed so `RelayAdvertiser` can attach
@@ -102,6 +108,7 @@ public final class RelayServer: @unchecked Sendable {
         let path: String
         let headers: [String: String]
         let body: Data
+        let query: String
     }
 
     public init() {}
@@ -311,6 +318,7 @@ public final class RelayServer: @unchecked Sendable {
         let method = String(parts[0]).uppercased()
         let rawPath = String(parts[1])
         let path = rawPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? rawPath
+        let query = rawPath.split(separator: "?", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
         var headers: [String: String] = [:]
         var contentLength = 0
         for line in lines {
@@ -329,7 +337,7 @@ public final class RelayServer: @unchecked Sendable {
         guard let bodyEnd, buffer.distance(from: bodyStart, to: bodyEnd) == contentLength else { return nil }
         let body = buffer.subdata(in: bodyStart..<bodyEnd)
         buffer.removeSubrange(buffer.startIndex..<bodyEnd)
-        return Request(method: method, path: path, headers: headers, body: body)
+        return Request(method: method, path: path, headers: headers, body: body, query: query)
     }
 
     // MARK: - Routing
@@ -394,6 +402,24 @@ public final class RelayServer: @unchecked Sendable {
             }
             dispatch(.stop(conversationID: body.conversationID))
             send(json(ErrorBody(ok: true), status: "200 OK"), id: id)
+        case ("GET", "/debug/events"):
+            let since = UInt64(Self.queryValue("since", in: request.query) ?? "") ?? 0
+            let events = DiagnosticsCenter.shared.events(since: since)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let body = (try? encoder.encode(EventsBody(events: events))) ?? Data("{}".utf8)
+            send(httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
+        case ("GET", "/debug/report"):
+            guard let handler = onDebugReport else {
+                send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
+                return
+            }
+            Task {
+                let body = await handler()
+                self.queue.async {
+                    self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
+                }
+            }
         default:
             send(json(ErrorBody(ok: false), status: "404 Not Found"), id: id)
         }
@@ -460,6 +486,19 @@ public final class RelayServer: @unchecked Sendable {
     private struct ErrorBody: Encodable {
         let ok: Bool
     }
+    private struct EventsBody: Encodable {
+        let events: [DiagnosticsEvent]
+    }
+
+    private static func queryValue(_ name: String, in query: String) -> String? {
+        for pair in query.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.first.map(String.init) == name else { continue }
+            return parts.count == 2 ? String(parts[1]) : ""
+        }
+        return nil
+    }
+
 
     private func json<T: Encodable>(_ value: T, status: String) -> Data {
         let body = (try? JSONEncoder().encode(value)) ?? Data("{}".utf8)

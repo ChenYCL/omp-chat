@@ -58,7 +58,7 @@ final class RelayServerTests: XCTestCase {
     }
 
     func testAllRoutesRejectWithoutToken() async throws {
-        for path in ["/pair", "/snapshot", "/state"] {
+        for path in ["/pair", "/snapshot", "/state", "/debug/events", "/debug/report"] {
             let (_, response) = try await URLSession.shared.data(for: request("GET", path, token: nil))
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 401, path)
         }
@@ -292,5 +292,57 @@ final class RelayServerTests: XCTestCase {
         }
 
         func callAsFunction() async -> RelayCommand? { value }
+    }
+}
+final class RelayDebugRouteTests: XCTestCase {
+    private var server: RelayServer!
+    private var token: String!
+    private var baseURL: URL!
+
+    override func setUp() {
+        super.setUp()
+        DiagnosticsCenter.shared.resetBuffer()
+        DiagnosticsCenter.shared.setDiskEnabled(false)
+        server = RelayServer()
+        token = UUID().uuidString
+        try? server.start(port: 0, token: token)
+        baseURL = URL(string: "http://127.0.0.1:\(server.port)")
+    }
+
+    override func tearDown() {
+        server.stop()
+        super.tearDown()
+    }
+
+    private func get(_ path: String, token: String?) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!)
+        request.timeoutInterval = 10
+        if let token { request.setValue(token, forHTTPHeaderField: "X-OMP-Token") }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return (data, response as! HTTPURLResponse)
+    }
+
+    func testDebugEventsFiltersBySince() async throws {
+        DiagnosticsCenter.shared.record("test", .info, "one")
+        DiagnosticsCenter.shared.record("test", .info, "two")
+        let first = DiagnosticsCenter.shared.events(since: 0).first?.seq ?? 0
+        let (data, response) = try await get("/debug/events?since=\(first)", token: token)
+        XCTAssertEqual(response.statusCode, 200)
+        let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let events = body?["events"] as? [[String: Any]]
+        XCTAssertEqual(events?.count, 1)
+        XCTAssertEqual(events?.first?["message"] as? String, "two")
+    }
+
+    func testDebugReportWithoutHookReturns503() async throws {
+        let (_, response) = try await get("/debug/report", token: token)
+        XCTAssertEqual(response.statusCode, 503)
+    }
+
+    func testDebugRoutesRejectWithoutToken() async throws {
+        for path in ["/debug/events", "/debug/report"] {
+            let (_, response) = try await get(path, token: nil)
+            XCTAssertEqual(response.statusCode, 401, path)
+        }
     }
 }

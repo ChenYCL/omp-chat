@@ -222,13 +222,20 @@ public struct MessageRow: View {
     @ViewBuilder
     private var assistantRow: some View {
         VStack(alignment: .leading, spacing: 8) {
-            thinkingSection
+            // Reasoning models stream thinking for seconds before the first
+            // answer token (measured 9.2s on deepseek-v4.1-flash). A lone caret
+            // reads as "stuck", so show a live status + thinking tail instead.
+            if isAwaitingAnswer {
+                StreamingThinkingStatus(startedAt: message.createdAt, thinking: message.thinkingText)
+            } else {
+                thinkingSection
+            }
             operationSection
             replyVersionPicker
             ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
                 partView(part)
             }
-            if message.status == .streaming {
+            if message.status == .streaming, !isAwaitingAnswer {
                 StreamingCaret()
             }
             if let error = message.errorText, !error.isEmpty {
@@ -324,6 +331,11 @@ public struct MessageRow: View {
         .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s))
     }
 
+    /// Streaming and no visible answer text yet.
+    private var isAwaitingAnswer: Bool {
+        message.status == .streaming && message.concatenatedText.isEmpty
+    }
+
     @ViewBuilder
     private var thinkingSection: some View {
         let thinking = message.thinkingText
@@ -348,6 +360,15 @@ public struct MessageRow: View {
         }
     }
 
+    /// `omp-ui` buttons post their text as the next user turn. Ignored while a
+    /// reply is still streaming, same as the composer.
+    private var genUISend: @MainActor @Sendable (String) -> Void {
+        { [model] text in
+            guard !model.isStreaming else { return }
+            Task { await model.sendNow(text: text, attachments: []) }
+        }
+    }
+
     @ViewBuilder
     private func partView(_ part: ContentPart) -> some View {
         switch part {
@@ -355,6 +376,7 @@ public struct MessageRow: View {
             if !value.isEmpty {
                 MarkdownText(value)
                     .foregroundStyle(Color.ompText)
+                    .environment(\.genUISend, genUISend)
             }
         case .thinking:
             EmptyView()
@@ -584,19 +606,102 @@ public struct MessageRow: View {
     }
 }
 
-/// Blinking caret shown while a reply streams.
+/// Pulsing dot at the end of a streaming answer (official ChatGPT cursor).
 public struct StreamingCaret: View {
-    @State private var visible = true
+    @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init() {}
 
     public var body: some View {
-        RoundedRectangle(cornerRadius: 1, style: .continuous)
-            .fill(Color.accentColor)
-            .frame(width: 2, height: 15)
-            .opacity(visible ? 1 : 0.15)
-            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: visible)
-            .onAppear { visible.toggle() }
+        Circle()
+            .fill(Color.ompText)
+            .frame(width: 9, height: 9)
+            .opacity(dim ? 0.35 : 1)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { dim = true }
+            }
+            .accessibilityLabel("正在生成")
+    }
+}
+
+/// Pre-answer state of a streaming reply: shimmering "正在思考", elapsed
+/// seconds, and the tail of the reasoning as it arrives.
+struct StreamingThinkingStatus: View {
+    let startedAt: Date
+    let thinking: String
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    ShimmerText(text: "正在思考", font: .system(size: 14, weight: .medium))
+                    Text(Self.elapsed(from: startedAt, to: context.date))
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+                if !tail.isEmpty {
+                    Text(tail)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineSpacing(3)
+                        .lineLimit(4, reservesSpace: false)
+                        .truncationMode(.head)
+                        .padding(.leading, 10)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(Color.ompBorder).frame(width: 2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("正在思考，\(Self.elapsed(from: startedAt, to: context.date))")
+        }
+    }
+
+    /// Last four non-empty lines of the reasoning stream.
+    private var tail: String {
+        thinking
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(4)
+            .joined(separator: "\n")
+    }
+
+    static func elapsed(from start: Date, to now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return seconds < 60 ? "\(seconds) 秒" : "\(seconds / 60) 分 \(seconds % 60) 秒"
+    }
+}
+
+/// Text with a highlight sweeping left to right; static under Reduce Motion.
+struct ShimmerText: View {
+    let text: String
+    let font: Font
+    @State private var phase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(Color.ompTextTertiary)
+            .overlay {
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.ompText, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width * 0.6)
+                    .offset(x: phase * geo.size.width * 1.6 - geo.size.width * 0.6)
+                }
+                .mask(Text(text).font(font))
+                .opacity(reduceMotion ? 0 : 1)
+            }
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { phase = 1 }
+            }
     }
 }
 

@@ -14,7 +14,7 @@ import OMPDesign
 
 /// Sheet titles → shell routes. The drawer opens these as full-screen sheets.
 enum IOSShellRoute: String, Identifiable {
-    case projects, history, schedules, usage, devices, subagents
+    case projects, history, schedules, usage, devices, subagents, diagnostics
     var id: Self { self }
 }
 
@@ -102,6 +102,7 @@ public struct IOSShell: View {
         case .usage: PaseoUsageSheet()
         case .devices: PaseoDevicesSheet()
         case .subagents: PaseoSubagentsSheet()
+        case .diagnostics: DiagnosticsView()
         }
     }
 
@@ -529,6 +530,9 @@ struct ShellDrawer: View {
 
                 Button { route = .subagents } label: {
                     drawerItem(icon: "person.2", title: "子代理")
+                }.buttonStyle(.plain)
+                Button { route = .diagnostics } label: {
+                    drawerItem(icon: "stethoscope", title: "诊断")
                 }.buttonStyle(.plain)
             }
             .padding(.horizontal, 10)

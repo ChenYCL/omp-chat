@@ -22,6 +22,8 @@ public final class RemoteSession {
     /// How the current sink was opened, so the config pane can say which.
     public var mode: Mode
 
+    /// When the last snapshot arrived, so diagnostics can report its age.
+    public var lastSnapshotAt: Date?
     public enum Mode: String, Sendable {
         case none = "未连接"
         case lan = "局域网"
@@ -34,6 +36,7 @@ public final class RemoteSession {
         isConnected = false
         info = nil
         mode = .none
+        lastSnapshotAt = nil
     }
 
     /// Publishes a freshly paired transport. Called from the 远程 tab on connect.
@@ -46,7 +49,13 @@ public final class RemoteSession {
         self.hostName = hostName
         self.mode = mode
         isConnected = true
+        lastSnapshotAt = Date()
     }
+    /// Records that a snapshot just arrived.
+    public func noteSnapshot() {
+        lastSnapshotAt = Date()
+    }
+
 
     /// Drops the transport. Called from the 远程 tab on disconnect.
     public func detach() {
@@ -55,6 +64,7 @@ public final class RemoteSession {
         isConnected = false
         info = nil
         mode = .none
+        lastSnapshotAt = nil
     }
 }
 
@@ -72,7 +82,9 @@ enum HostRPC {
         cwd: String? = nil,
         maxBytes: Int? = nil,
         timeout: Double? = nil,
-        requestID: String? = nil
+        requestID: String? = nil,
+        background: Bool? = nil,
+        offset: Int? = nil
     ) async throws -> HostRPCResponse {
         let request = HostRPCRequest(
             id: id ?? UUID().uuidString,
@@ -82,7 +94,9 @@ enum HostRPC {
             cwd: cwd,
             maxBytes: maxBytes,
             timeout: timeout,
-            requestID: requestID
+            requestID: requestID,
+            background: background,
+            offset: offset
         )
         return try await sink.call(request)
     }
@@ -105,6 +119,44 @@ enum HostRPC {
         case nil:
             return "主机拒绝了这次操作"
         }
+    }
+    /// One decoded `exec.poll` answer: the appended chunk plus stream state.
+    ///
+    /// `text` is the output appended since `offset` (stdout and stderr merged
+    /// in arrival order, UTF-8 safe at chunk edges); `nextOffset` is what the
+    /// next poll must pass. On `done` the host also answers `exitCode` and the
+    /// cd-tracked `cwd`. An `ok: false` answer carries its `error` instead.
+    struct ProcessedPoll {
+        let text: String
+        let nextOffset: Int
+        let done: Bool
+        let exitCode: Int?
+        let cwd: String?
+        let truncated: Bool
+        /// Host refusal reason (`"shell_disabled" | "not_found" | …`), nil on success.
+        let error: String?
+
+        init(response: HostRPCResponse) {
+            text = response.text ?? ""
+            nextOffset = response.nextOffset ?? 0
+            done = response.done ?? false
+            exitCode = response.exitCode
+            cwd = response.cwd
+            truncated = response.truncated ?? false
+            error = response.ok ? nil : response.error
+        }
+
+        /// True when the host predates `exec.poll`: iOS stubs answer
+        /// `unsupported`, an old macOS host answers an unknown op with
+        /// `bad_request`, and a stripped/relayed hop may say `not_found`.
+        var hostLacksPoll: Bool {
+            error == "unsupported" || error == "bad_request" || error == "not_found"
+        }
+    }
+
+    /// Decodes one `exec.poll` answer; see [`ProcessedPoll`].
+    static func decodePoll(_ response: HostRPCResponse) -> ProcessedPoll {
+        ProcessedPoll(response: response)
     }
 }
 

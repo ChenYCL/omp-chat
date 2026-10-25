@@ -278,6 +278,33 @@ def run(port: int) -> None:
     status, body = box["freecancel"]
     assert status == 200, (status, body)
     print(f"cancel at cap 200: {body}")
+
+    # exec.poll is a known op and, like exec.cancel, is forwarded even when
+    # the room sits at the pending cap.
+    def capped_poll() -> None:
+        box["freepoll"] = http(
+            port, "POST", f"/v1/client/rpc?room={ROOM}",
+            {"id": "freepoll", "op": "exec.poll", "requestID": "cap-0", "offset": 128},
+            timeout=10,
+        )
+
+    thread = threading.Thread(target=capped_poll)
+    thread.start()
+    name, data = host.next_event()
+    poll_request = json.loads(data)
+    assert poll_request["id"] == "freepoll", data
+    assert poll_request["op"] == "exec.poll", poll_request
+    assert poll_request["offset"] == 128, poll_request
+    status, body = http(
+        port, "POST", f"/v1/host/rpc-result?room={ROOM}",
+        {"id": "freepoll", "ok": True, "text": "more", "nextOffset": 132, "done": False},
+    )
+    assert status == 200, (status, body)
+    thread.join(timeout=5)
+    status, body = box["freepoll"]
+    assert status == 200, (status, body)
+    assert body["text"] == "more" and body["nextOffset"] == 132 and body["done"] is False, body
+    print(f"poll at cap 200: {body}")
     # Drain the capped calls so later cases start clean.
     for index in range(32):
         http(port, "POST", f"/v1/host/rpc-result?room={ROOM}", {"id": f"cap-{index}", "ok": True, "text": "x"})

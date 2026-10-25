@@ -61,6 +61,10 @@ public final class RelayHostController {
             return await self.model?.handleHostRPC(request)
                 ?? HostRPCResponse(id: request.id, ok: false, error: "unsupported")
         }
+        server.onDebugReport = { [weak self] in
+            guard let report = await self?.model?.runDiagnostics() else { return Data("{}".utf8) }
+            return (try? report.jsonData()) ?? Data("{}".utf8)
+        }
     }
 
     deinit {
@@ -80,10 +84,14 @@ public final class RelayHostController {
         } catch {
             isRunning = false
             lastError = relayErrorDescription(error)
+            DiagnosticsCenter.shared.record("relay", .error, "start failed on port \(effectivePort)",
+                fields: ["error": lastError ?? ""])
             return
         }
 
         isRunning = true
+        DiagnosticsCenter.shared.record("relay", .info, "listening",
+            fields: ["port": String(server.port)])
         lastError = nil
         let advertiser = RelayAdvertiser(attachedTo: server)
         self.advertiser = advertiser
@@ -131,6 +139,8 @@ public final class RelayHostController {
             )
         } catch {
             hubError = "中继连接失败：\(relayErrorDescription(error))"
+            DiagnosticsCenter.shared.record("relay", .error, "hub connection failed",
+                fields: ["error": hubError ?? ""])
             hubClient = nil
             return
         }
@@ -140,8 +150,11 @@ public final class RelayHostController {
                 do {
                     try await client.publish(model.relaySnapshot())
                     self.hubError = nil
+                    DiagnosticsCenter.shared.record("relay", .info, "hub snapshot published")
                 } catch {
                     self.hubError = "状态上报失败：\(self.relayErrorDescription(error))"
+                    DiagnosticsCenter.shared.record("relay", .error, "hub publish failed",
+                        fields: ["error": self.hubError ?? ""])
                 }
                 let interval = model.isStreaming ? UInt64(800_000_000) : UInt64(2_000_000_000)
                 try? await Task.sleep(nanoseconds: interval)
@@ -168,6 +181,7 @@ public final class RelayHostController {
         server.stop()
         stopHub()
         isRunning = false
+        DiagnosticsCenter.shared.record("relay", .info, "stopped")
     }
 
     /// Refreshes the pairing token (takes effect on next start).

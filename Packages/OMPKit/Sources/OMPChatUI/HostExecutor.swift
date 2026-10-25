@@ -16,8 +16,8 @@ public struct RemoteOperationRecord: Identifiable, Sendable, Equatable {
     }
 }
 
-/// Executes host RPC on the Mac: `info`, `fs.list`, `fs.read`, `exec`, and
-/// `exec.cancel`.
+/// Executes host RPC on the Mac: `info`, `fs.list`, `fs.read`, `exec`,
+/// `exec.cancel`, and `exec.poll`.
 ///
 /// `info` always runs. Everything else answers `shell_disabled` unless
 /// [`shellAllowed`] (backed by `AppSettings.relayAllowShell`) is true.
@@ -28,9 +28,20 @@ public struct RemoteOperationRecord: Identifiable, Sendable, Equatable {
 /// descendants first (the wrapper shell itself ignores it), then SIGINT to
 /// the wrapper, then SIGKILL after 2 s — and the exec answers
 /// `ok: false, error: "cancelled"` with its partial output and exit code 130.
+/// `exec` with `background: true` answers `ok: true, text: "started"`
+/// immediately and keeps running under its request id; `exec.poll` with that
+/// id returns the output appended since the caller's byte `offset` (stdout
+/// and stderr merged in arrival order) as `text`, the cursor as
+/// `nextOffset`, and `done` — with the final `exitCode` and cd-tracked
+/// `cwd` — once the run has ended.
 public struct HostExecutor: Sendable {
     /// Hard cap on a single stdout or stderr capture.
     public static let outputCap = 256 * 1024
+    /// Hard cap on one background run's combined output ring. Beyond it the
+    /// oldest bytes are dropped and polls answer `truncated: true`.
+    public static let streamCap = 1024 * 1024
+    /// Finished background runs stay pollable for this long, then are evicted.
+    public static let pollRetention: TimeInterval = 60
     /// Hard cap on directory entries returned by `fs.list`.
     public static let entryCap = 2000
     /// Default and maximum `exec` runtime.
@@ -48,16 +59,22 @@ public struct HostExecutor: Sendable {
     /// In-flight `exec` processes by request id, so `exec.cancel` can stop
     /// them. Only meaningful on macOS; iOS never populates it.
     private let running: RunningExecRegistry
+    /// How long a finished background run stays pollable. Tests inject a
+    /// short window; production uses [`pollRetention`].
+    private let pollRetention: TimeInterval
+
     public init(
         shellAllowed: Bool,
         homeDirectory: String? = nil,
         log: RemoteOperationLog? = nil,
-        running: RunningExecRegistry? = nil
+        running: RunningExecRegistry? = nil,
+        pollRetention: TimeInterval? = nil
     ) {
         self.shellAllowed = shellAllowed
         self.homeDirectory = homeDirectory ?? Self.realHomeDirectory()
         self.log = log ?? RemoteOperationLog()
         self.running = running ?? RunningExecRegistry()
+        self.pollRetention = pollRetention ?? Self.pollRetention
     }
 
     /// Account home from `getpwuid`, falling back to `NSHomeDirectory()` only
@@ -78,12 +95,20 @@ public struct HostExecutor: Sendable {
 
     public func handle(_ request: HostRPCRequest) async -> HostRPCResponse {
         let op = request.op
-        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec" || op == "exec.cancel" else {
+        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec"
+            || op == "exec.cancel" || op == "exec.poll" else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
         if op != "info", !shellAllowed {
             log.record("\(Self.describe(request)) 已拒绝（未开启文件与终端访问）")
             return HostRPCResponse(id: request.id, ok: false, error: "shell_disabled")
+        }
+        if op == "exec.poll" {
+            guard let target = request.requestID, !target.isEmpty, request.offset ?? 0 >= 0 else {
+                return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
+            }
+            log.record(Self.describe(request))
+            return await poll(request, id: target, offset: request.offset ?? 0)
         }
         log.record(Self.describe(request))
         switch op {
@@ -184,6 +209,9 @@ public struct HostExecutor: Sendable {
         guard FileManager.default.fileExists(atPath: cwd) else {
             return HostRPCResponse(id: request.id, ok: false, error: "not_found", cwd: cwd)
         }
+        if request.background == true {
+            return startBackground(request, command: command, cwd: cwd)
+        }
         let timeout = min(max(request.timeout ?? Self.defaultTimeout, 0.1), Self.maxTimeout)
         let marker = "OMPHOST_CWD_\(UUID().uuidString)"
         let wrapped = "{ \(command)\n }\n__omp_rc=$?\nprintf '\\n\(marker)%s\\n' \"$(pwd)\"\nexit $__omp_rc"
@@ -273,6 +301,12 @@ public struct HostExecutor: Sendable {
         guard let target = request.requestID, !target.isEmpty else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
+        if running.cancelRun(id: target) {
+            if let run = running.lookupRun(id: target) {
+                Self.stopTree(of: run.process, escalated: false)
+            }
+            return HostRPCResponse(id: request.id, ok: true, text: "cancelling")
+        }
         guard let run = running.lookup(id: target) else {
             return HostRPCResponse(id: request.id, ok: true, text: "not_running")
         }
@@ -283,6 +317,120 @@ public struct HostExecutor: Sendable {
         _ = request
         return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
         #endif
+    }
+
+    #if os(macOS)
+    /// `background: true` exec: launch and answer `started` at once. The
+    /// drain task appends output into the run's ring and marks the run done
+    /// when the pipes close and the process exits.
+    private func startBackground(_ request: HostRPCRequest, command: String, cwd: String) -> HostRPCResponse {
+        let marker = "OMPHOST_CWD_\(UUID().uuidString)"
+        let wrapped = "{ \(command)\n }\n__omp_rc=$?\nprintf '\\n\(marker)%s\\n' \"$(pwd)\"\nexit $__omp_rc"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", wrapped]
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        process.environment = Self.childEnvironment(home: homeDirectory)
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        do {
+            try process.run()
+        } catch {
+            return HostRPCResponse(id: request.id, ok: false, error: error.localizedDescription, cwd: cwd)
+        }
+        let run = BackgroundRun(
+            process: process,
+            startCwd: cwd,
+            marker: marker,
+            cap: Self.streamCap,
+            timeout: min(max(request.timeout ?? Self.maxTimeout, 0.1), Self.maxTimeout)
+        )
+        guard running.insertRun(run, id: request.id) else {
+            // The id already fronts a run; do not leak this process.
+            Self.stopTree(of: process, escalated: true)
+            return HostRPCResponse(id: request.id, ok: false, error: "id_in_use", cwd: cwd)
+        }
+        Task.detached(priority: .utility) {
+            await Self.drain(run: run, process: process)
+        }
+        return HostRPCResponse(id: request.id, ok: true, text: "started")
+    }
+
+    /// Pumps both pipes into the run's ring until EOF, then closes the run.
+    ///
+    /// One thread per pipe doing a blocking POSIX `read`: it returns as soon
+    /// as any bytes are available, which is what makes polls incremental.
+    /// `FileHandle.read(upToCount:)` and `readData(ofLength:)` both wait for
+    /// their full length and would coalesce a slow command into one chunk,
+    /// and a readability handler never fires from a task with no run loop.
+    private static func drain(run: BackgroundRun, process: Process) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let box = PipeEOFBox()
+            for handle in [run.outPipe.fileHandleForReading, run.errPipe.fileHandleForReading] {
+                let fd = handle.fileDescriptor
+                Thread.detachNewThread {
+                    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+                    while true {
+                        let count = Darwin.read(fd, &buffer, buffer.count)
+                        if count <= 0 { break }
+                        run.append(Data(buffer.prefix(count)))
+                    }
+                    if box.noteClosed() { continuation.resume() }
+                }
+            }
+        }
+        // Both pipes are at EOF; the process may still be reaping its exit
+        // status. Wait for it so polls report the real exit code.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while process.isRunning, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        run.close(exitCode: process.isRunning ? nil : Int(process.terminationStatus))
+    }
+    #endif
+
+
+    /// `exec.poll`: the appended slice since `offset`, cursor and state.
+    private func poll(_ request: HostRPCRequest, id: String, offset: Int) async -> HostRPCResponse {
+        running.evictFinished(olderThan: pollRetention)
+        guard let run = running.lookupRun(id: id) else {
+            return HostRPCResponse(id: request.id, ok: false, error: "not_found")
+        }
+        let slice = run.snapshot(after: offset)
+        if run.state == .running, run.isExpired() {
+            // The caller polled past the run's timeout: kill the tree and
+            // answer the failure on this same poll.
+            #if os(macOS)
+            Self.stopTree(of: run.process, escalated: false)
+            if await !Self.finished(run.process, within: 2) {
+                Self.stopTree(of: run.process, escalated: true)
+            }
+            #endif
+            run.close(exitCode: nil)
+            return HostRPCResponse(
+                id: request.id, ok: false, error: "timeout",
+                text: slice.text, truncated: slice.truncated ? true : nil,
+                cwd: run.startCwd, nextOffset: slice.nextOffset, done: true
+            )
+        }
+        if run.state != .running {
+            let exitCode = run.cancelled ? 130 : run.exitCode
+            let ok = exitCode != nil
+            let cwd = run.finalCwd.map { resolve($0, base: run.startCwd) } ?? run.startCwd
+            return HostRPCResponse(
+                id: request.id, ok: ok, error: ok ? nil : "timeout",
+                text: slice.text, truncated: slice.truncated ? true : nil,
+                exitCode: exitCode, cwd: cwd,
+                nextOffset: slice.nextOffset, done: true
+            )
+        }
+        return HostRPCResponse(
+            id: request.id, ok: true, text: slice.text,
+            truncated: slice.truncated ? true : nil, nextOffset: slice.nextOffset,
+            done: false
+        )
     }
 
     // MARK: Helpers
@@ -463,10 +611,12 @@ final class RunningExec: @unchecked Sendable {
 }
 
 /// Thread-safe map of request id to running exec, shared by `exec` and
-/// `exec.cancel`.
+/// `exec.cancel`. Background runs (`exec.poll`) live in a second map so the
+/// foreground drain path never has to look at them.
 public final class RunningExecRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: RunningExec] = [:]
+    private var runs: [String: BackgroundRun] = [:]
 
     public init() {}
 
@@ -493,12 +643,54 @@ public final class RunningExecRegistry: @unchecked Sendable {
         defer { lock.unlock() }
         return items[id]?.isCancelled ?? false
     }
+
+    // MARK: Background runs
+
+    /// Registers a background run unless its id is taken; false means the id
+    /// already fronts a run (the caller answers `id_in_use`).
+    func insertRun(_ run: BackgroundRun, id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if runs[id] != nil { return false }
+        runs[id] = run
+        return true
+    }
+
+    func lookupRun(id: String) -> BackgroundRun? {
+        lock.lock()
+        defer { lock.unlock() }
+        return runs[id]
+    }
+
+    func cancelRun(id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let run = runs[id] else { return false }
+        run.markCancelled()
+        return true
+    }
+
+    /// Drops finished runs whose retention window has elapsed, so finished
+    /// work cannot accumulate.
+    func evictFinished(olderThan interval: TimeInterval) {
+        lock.lock()
+        let cutoff = Date().addingTimeInterval(-interval)
+        runs = runs.filter { _, run in
+            if run.state == .running { return true }
+            return run.finishedAt.map { $0 > cutoff } ?? true
+        }
+        lock.unlock()
+    }
 }
 #else
 /// iOS never runs `exec`, so there is nothing to register; the type exists so
 /// `HostExecutor` keeps one initialiser on both platforms.
 public final class RunningExecRegistry: @unchecked Sendable {
     public init() {}
+
+    func lookupRun(id: String) -> BackgroundRun? { nil }
+    func cancelRun(id: String) -> Bool { false }
+    func evictFinished(olderThan interval: TimeInterval) {}
 }
 #endif
 
@@ -572,6 +764,19 @@ private final class ResumeBox: @unchecked Sendable {
         return true
     }
 }
+
+/// Counts the two background pipes closing, so the drain resumes exactly
+/// once both have reached EOF.
+private final class PipeEOFBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var closed = 0
+
+    func noteClosed() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        closed += 1
+        return closed == 2
+    }
+}
 #endif
 
 /// Fixed-capacity log of recent remote operations. Shared by the executor and
@@ -596,5 +801,179 @@ public final class RemoteOperationLog: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return records
+    }
+}
+
+// MARK: - Background runs
+
+/// One background `exec`: the process, both pipes, and the output ring that
+/// `exec.poll` slices. macOS-only; iOS gets the stubs below so every symbol
+/// `HostExecutor` touches exists on both platforms.
+#if os(macOS)
+final class BackgroundRun: @unchecked Sendable {
+    let process: Process
+    let outPipe: Pipe
+    let errPipe: Pipe
+    let startCwd: String
+    let marker: String
+    let cap: Int
+    let timeout: TimeInterval
+    let startedAt = Date()
+
+    private let lock = NSLock()
+    private var ring = StreamRing()
+    private var phase: Phase = .running
+    private var endedAt: Date?
+    private var cancelledFlag = false
+    private var exitCodeValue: Int?
+    private var finalCwdValue: String?
+
+    enum Phase { case running, finished, timedOut }
+
+    init(process: Process, startCwd: String, marker: String, cap: Int, timeout: TimeInterval) {
+        self.process = process
+        self.outPipe = process.standardOutput as! Pipe
+        self.errPipe = process.standardError as! Pipe
+        self.startCwd = startCwd
+        self.marker = marker
+        self.cap = cap
+        self.timeout = timeout
+    }
+
+    /// The slice of combined output after `offset`, plus the cursor the next
+    /// poll must pass.
+    struct Slice { var text: String; var nextOffset: Int; var truncated: Bool }
+
+    var state: Phase { lock.lock(); defer { lock.unlock() }; return phase }
+    var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelledFlag }
+    var exitCode: Int? { lock.lock(); defer { lock.unlock() }; return exitCodeValue }
+    var finalCwd: String? { lock.lock(); defer { lock.unlock() }; return finalCwdValue }
+    var finishedAt: Date? { lock.lock(); defer { lock.unlock() }; return endedAt }
+    var totalBytes: Int { lock.lock(); defer { lock.unlock() }; return ring.total }
+
+    func markCancelled() {
+        lock.lock(); cancelledFlag = true; lock.unlock()
+    }
+
+    func isExpired() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return phase == .running && Date().timeIntervalSince(startedAt) > timeout
+    }
+
+    /// Appends raw bytes from one pipe. Chunks from both pipes land here in
+    /// arrival order.
+    func append(_ data: Data) {
+        lock.lock(); ring.append(data, cap: cap); lock.unlock()
+    }
+
+    /// Marks the run finished. `exitCode == nil` means it was killed for
+    /// running past its timeout.
+    func close(exitCode: Int?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard phase == .running else { return }
+        exitCodeValue = exitCode
+        if let (clean, cwd) = ring.stripMarker(marker) {
+            ring.replace(clean)
+            finalCwdValue = cwd
+        }
+        phase = exitCode == nil ? .timedOut : .finished
+        endedAt = Date()
+    }
+
+    func snapshot(after offset: Int) -> Slice {
+        lock.lock(); defer { lock.unlock() }
+        return ring.slice(after: offset, cap: cap)
+    }
+}
+#else
+/// iOS never runs shell commands, so a background run is only a shape the
+/// poll path can type-check against.
+final class BackgroundRun: @unchecked Sendable {
+    enum Phase { case running, finished, timedOut }
+    struct Slice { var text: String; var nextOffset: Int; var truncated: Bool }
+    var state: Phase { .running }
+    var cancelled: Bool { false }
+    var exitCode: Int? { nil }
+    var finalCwd: String? { nil }
+    var finishedAt: Date? { nil }
+    var totalBytes: Int { 0 }
+    func isExpired() -> Bool { false }
+    func markCancelled() {}
+    func close(exitCode: Int?) {}
+    func snapshot(after offset: Int) -> Slice { Slice(text: "", nextOffset: offset, truncated: false) }
+}
+#endif
+
+/// Byte ring for one background run's combined output. Not thread-safe: the
+/// owning `BackgroundRun` serialises every call under its own lock.
+///
+/// The buffer never grows past `cap`. When it would, the oldest bytes are
+/// dropped and `base` (the logical index of byte 0) advances, so a caller's
+/// offset keeps meaning "how many bytes I have seen".
+private struct StreamRing {
+    private var bytes = Data()
+    private var base = 0
+
+    /// Logical length of the stream so far, including dropped bytes.
+    var total: Int { base + bytes.count }
+
+    mutating func append(_ data: Data, cap: Int) {
+        bytes.append(data)
+        if bytes.count > cap {
+            let drop = bytes.count - cap
+            bytes.removeFirst(drop)
+            base += drop
+        }
+    }
+
+    /// Replaces the buffer wholesale when the cwd marker is stripped at
+    /// close. The logical cursor is left where it is, so a caller who already
+    /// read past the end gets nothing back rather than a replay.
+    mutating func replace(_ data: Data) {
+        bytes = data
+    }
+
+    func slice(after offset: Int, cap: Int) -> BackgroundRun.Slice {
+        let start = max(offset, base)
+        var from = start - base
+        // A poll landing inside a multi-byte character skips its tail; the
+        // previous poll already delivered the head.
+        // A caller may pass an offset that is past the end (the ring was
+        // replaced) or inside a dropped prefix; both must clamp instead of
+        // trapping on bytes[from..<end].
+        if from > bytes.count { from = bytes.count }
+        if from > 0 {
+            while from < bytes.count, Self.isContinuation(bytes[from]) { from += 1 }
+        }
+        // Hold back a trailing partial character so the next poll completes it.
+        var end = bytes.count
+        if end > from {
+            var index = end - 1
+            while index > from, Self.isContinuation(bytes[index]) { index -= 1 }
+            if index >= from, end - index < Self.sequenceLength(bytes[index]) { end = index }
+        }
+        if end < from { end = from }
+        let text = String(decoding: bytes[from..<end], as: UTF8.self)
+        return BackgroundRun.Slice(text: text, nextOffset: base + end, truncated: base > 0)
+    }
+
+    private static func isContinuation(_ byte: UInt8) -> Bool { byte & 0b1100_0000 == 0b1000_0000 }
+
+    private static func sequenceLength(_ lead: UInt8) -> Int {
+        if lead & 0b1000_0000 == 0 { return 1 }
+        if lead & 0b1110_0000 == 0b1100_0000 { return 2 }
+        if lead & 0b1111_0000 == 0b1110_0000 { return 3 }
+        if lead & 0b1111_1000 == 0b1111_0000 { return 4 }
+        return 1
+    }
+
+    /// Pulls the trailing cwd marker out of the buffer, returning the output
+    /// without it and the path it recorded. `nil` when the marker is absent.
+    func stripMarker(_ marker: String) -> (Data, String)? {
+        let text = String(decoding: bytes, as: UTF8.self)
+        let (clean, cwd) = HostExecutor.stripCWDMarker(text, marker: marker)
+        guard let cwd else { return nil }
+        return (Data(clean.utf8), cwd)
     }
 }

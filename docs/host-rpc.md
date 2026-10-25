@@ -20,21 +20,23 @@
 ```swift
 public struct HostRPCRequest {
     public var id: String
-    public var op: String          // "info" | "fs.list" | "fs.read" | "exec" | "exec.cancel"
+    public var op: String          // "info" | "fs.list" | "fs.read" | "exec" | "exec.cancel" | "exec.poll"
     public var path: String?
     public var command: String?
     public var cwd: String?
     public var maxBytes: Int?
     public var timeout: Double?
-    public var requestID: String?  // exec.cancel: the id of the exec to cancel
+    public var requestID: String?  // exec.cancel / exec.poll: the exec's id
+    public var background: Bool?   // exec: answer "started" and keep running
+    public var offset: Int?        // exec.poll: bytes the caller already has
 
 public struct HostFSEntry { public var name: String; public var isDirectory: Bool; public var size: Int?; public var modified: Date? }
 public struct HostInfo { public var hostName: String; public var user: String; public var home: String; public var cwd: String; public var gitBranch: String?; public var gitDirty: Int? }
 public struct HostRPCResponse {
-    public var id: String; public var ok: Bool; public var error: String?
-    public var entries: [HostFSEntry]?; public var text: String?; public var truncated: Bool?
     public var stdout: String?; public var stderr: String?; public var exitCode: Int?
     public var cwd: String?; public var info: HostInfo?
+    public var nextOffset: Int?    // exec.poll: cursor for the next poll
+    public var done: Bool?         // exec.poll: true once the run finished
 }
 ```
 
@@ -52,6 +54,17 @@ public struct HostRPCResponse {
   stdout / stderr 与 `exitCode: 130`。`requestID` 不存在或已结束：`ok: true,
   text: "not_running"`（幂等，重发无害）。iOS 上的执行器不跑命令，回答
   `ok: false, error: "unsupported"`。
+- `exec` 带 `background: true` 时不等命令结束：立刻回答 `ok: true, text: "started"`，
+  进程按请求 `id` 登记，继续跑。输出靠 `exec.poll` 取：body 带 `requestID`（那次 exec
+  的 `id`）和 `offset`（调用方已经拿到的字节数，首次传 0）。回答 `ok: true`，`text`
+  是自 `offset` 以来新增的输出（stdout 与 stderr 按到达顺序合并，分块边界按 UTF-8
+  字符切，不会切开一个多字节字符），`nextOffset` 是下次该传的偏移，`done` 表示是否
+  结束。`done: true` 时同时带 `exitCode` 和 cd 跟踪后的 `cwd`。未知 id：
+  `ok: false, error: "not_found"`。单次运行的输出缓冲上限 1 MB，超出丢弃最旧的字节并
+  回答 `truncated: true`。结束后的运行保留 60 秒可继续 poll，之后回收。
+  `exec.cancel` 对后台运行同样有效，下一次 poll 看到 `exitCode: 130, done: true`。
+  不带 `background` 的 `exec` 行为不变。iOS 上 `exec.poll` 与 `exec` 一样回答
+  `unsupported`。
 
 ## 传输
 
@@ -74,9 +87,9 @@ body 是 `HostRPCRequest` JSON，响应是 `HostRPCResponse` JSON。
    Hub 按 `id` 找到 future 并完成它，客户端拿到 `200` + 该 JSON。
 3. 无主机在线，或主机在等待期间断开：`409`。挂起的 future 在断开时全部取消。
 4. 130 秒没有结果：`504`。
-5. `op` 不在 `info | fs.list | fs.read | exec | exec.cancel`：`400`（Hub 拒绝未知操作，不转发给主机）。
-6. 每个房间同时挂起的 RPC 上限 32，超出 `429`。`exec.cancel` **不受这个上限约束**：
-   房间满载时它照样转发，否则取消会被自己人堵死。
+5. `op` 不在 `info | fs.list | fs.read | exec | exec.cancel | exec.poll`：`400`（Hub 拒绝未知操作，不转发给主机）。
+6. 每个房间同时挂起的 RPC 上限 32，超出 `429`。`exec.cancel` 和 `exec.poll` **不受这个上限约束**：
+   房间满载时照样转发，否则取消和读取会被自己人堵死。
 7. 手机终端的 Ctrl-C 先发 `exec.cancel`（带在跑命令的 `id`），再取消本地等待；
    收到 `cancelled` 后徽章显示 `130 已取消`，已打印的部分输出保留。
 

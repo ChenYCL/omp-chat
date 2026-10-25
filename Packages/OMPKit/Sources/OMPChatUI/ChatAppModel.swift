@@ -185,11 +185,21 @@ public final class ChatAppModel {
     }
 
     private func bootstrapOnce() async {
-        conversations = (try? await store.loadAll()) ?? []
-        providers = (try? await store.loadProviders()) ?? []
-        models = (try? await store.loadModelCatalog()) ?? []
-        settings = (try? await store.loadSettings()) ?? AppSettings()
-        projects = (try? await store.loadProjects()) ?? []
+        do {
+            conversations = try await store.loadAll()
+            providers = try await store.loadProviders()
+            models = try await store.loadModelCatalog()
+            settings = try await store.loadSettings()
+            projects = try await store.loadProjects()
+        } catch {
+            conversations = []
+            providers = []
+            models = []
+            settings = AppSettings()
+            projects = []
+            DiagnosticsCenter.shared.record("workspace", .error, "workspace load failed",
+                fields: ["error": error.localizedDescription])
+        }
         for provider in providers {
             apiKeys[provider.id] = (try? secrets.secret(for: provider.keychainAccount)) ?? ""
         }
@@ -373,7 +383,13 @@ public final class ChatAppModel {
     private func persistProjects() {
         let store = self.store
         let snapshot = projects
-        Task { try? await store.saveProjects(snapshot) }
+        Task {
+            do { try await store.saveProjects(snapshot) }
+            catch {
+                DiagnosticsCenter.shared.record("workspace", .error, "projects save failed",
+                    fields: ["error": error.localizedDescription])
+            }
+        }
     }
 
     @discardableResult
@@ -540,6 +556,8 @@ public final class ChatAppModel {
         )
 
         isStreaming = true
+        DiagnosticsCenter.shared.record("stream", .info, "stream started",
+            fields: ["host": provider.baseURL.host ?? "", "model": model.id])
         streamingConversationID = conversation.id
         errorMessage = nil
         streamTask?.cancel()
@@ -847,8 +865,13 @@ public final class ChatAppModel {
     ) async {
         var failure: Error?
         var finishReason: FinishReason = .stop
+        var firstTokenMillis: Int?
+        let started = Date()
         do {
             for try await event in adapter.stream(request) {
+                if firstTokenMillis == nil, case .textDelta = event {
+                    firstTokenMillis = Int(Date().timeIntervalSince(started) * 1000)
+                }
                 if Task.isCancelled { break }
                 apply(event, conversationID: conversationID, assistantID: assistantID)
                 if case .finished(let reason) = event { finishReason = reason }
@@ -883,6 +906,15 @@ public final class ChatAppModel {
         streamingConversationID = nil
         streamTask = nil
         if let failure, !cancelled { errorMessage = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription }
+        var fields = ["host": providerHost(conversationID), "model": request.modelID]
+        if let firstTokenMillis { fields["firstTokenMs"] = String(firstTokenMillis) }
+        if let http = (failure as? ProviderError).flatMap(Self.httpStatus) { fields["status"] = String(http) }
+        if let failure, !cancelled {
+            fields["error"] = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription
+            DiagnosticsCenter.shared.record("stream", .error, "stream failed", fields: fields)
+        } else {
+            DiagnosticsCenter.shared.record("stream", .info, cancelled ? "stream cancelled" : "stream finished", fields: fields)
+        }
         if var conversation = conversation(conversationID) {
             if conversation.title == "新对话" || conversation.title == "图片消息" {
                 if let first = conversation.messages.first(where: { $0.role == .user }) {
@@ -897,6 +929,18 @@ public final class ChatAppModel {
             persist(conversation)
         }
     }
+    private func providerHost(_ conversationID: UUID) -> String {
+        guard let conversation = conversation(conversationID),
+              let providerID = conversation.providerID,
+              let provider = providers.first(where: { $0.id == providerID }) else { return "" }
+        return provider.baseURL.host ?? ""
+    }
+
+    private static func httpStatus(_ error: ProviderError) -> Int? {
+        if case .http(let status, _) = error { return status }
+        return nil
+    }
+
 
     private func apply(_ event: StreamEvent, conversationID: UUID, assistantID: UUID) {
         updateMessage(conversationID: conversationID, messageID: assistantID) { message in
@@ -1024,7 +1068,12 @@ public final class ChatAppModel {
 
     public func saveSettings(_ newValue: AppSettings) async {
         settings = newValue
-        try? await store.saveSettings(newValue)
+        do {
+            try await store.saveSettings(newValue)
+        } catch {
+            DiagnosticsCenter.shared.record("workspace", .error, "settings save failed",
+                fields: ["error": error.localizedDescription])
+        }
     }
 
     // MARK: Helpers
@@ -1051,10 +1100,12 @@ public final class ChatAppModel {
     private func systemPrompt(for conversation: Conversation) -> String? {
         let base = (conversation.systemPrompt ?? "").isEmpty ? settings.systemPrompt : (conversation.systemPrompt ?? "")
         let custom = settings.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        let combined = [base.trimmingCharacters(in: .whitespacesAndNewlines), custom]
+        // The omp-ui guide always rides last so the client can render native
+        // interfaces; user/system instructions above it still take priority.
+        let combined = [base.trimmingCharacters(in: .whitespacesAndNewlines), custom, GenUIGuide.systemPrompt]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        return combined.isEmpty ? nil : combined
+        return combined
     }
 
     private func conversation(_ id: UUID) -> Conversation? {
@@ -1103,7 +1154,13 @@ public final class ChatAppModel {
     private func persist(_ conversation: Conversation) {
         guard !conversation.isTemporary else { return }
         let store = self.store
-        Task { try? await store.save(conversation) }
+        Task {
+            do { try await store.save(conversation) }
+            catch {
+                DiagnosticsCenter.shared.record("workspace", .error, "conversation save failed",
+                    fields: ["error": error.localizedDescription])
+            }
+        }
     }
 
     public func dismissError() { errorMessage = nil }
@@ -1405,7 +1462,50 @@ public final class ChatAppModel {
     /// shell operations require `settings.relayAllowShell`.
     public func handleHostRPC(_ request: HostRPCRequest) async -> HostRPCResponse {
         hostExecutor.shellAllowed = settings.relayAllowShell
-        return await hostExecutor.handle(request)
+        let started = Date()
+        let response = await hostExecutor.handle(request)
+        let millis = Int(Date().timeIntervalSince(started) * 1000)
+        var fields = ["op": request.op, "ms": String(millis), "ok": response.ok ? "true" : "false"]
+        if let command = request.command {
+            fields["command"] = String(command.prefix(80))
+        }
+        if let error = response.error { fields["error"] = error }
+        DiagnosticsCenter.shared.record("rpc", response.ok ? .info : .warn, "host rpc \(request.op)", fields: fields)
+        return response
+    }
+    /// Runs every health check and returns a report carrying the last 50
+    /// events. Also what `GET /debug/report` serves.
+    public func runDiagnostics(
+        pairedHostProbe: (@Sendable () async -> Bool)? = nil,
+        lastSnapshotAt: Date? = nil
+    ) async -> DiagnosticsReport {
+        let age = lastSnapshotAt.map { Date().timeIntervalSince($0) }
+
+        var context = DiagnosticsContext(
+            providers: providers,
+            apiKeys: apiKeys,
+            storeDirectory: storageDirectoryURL,
+            relayEnabled: settings.relayEnabled,
+            relayPort: settings.relayPort,
+            relayListening: relayController?.isRunning ?? false,
+            relayToken: settings.relayToken,
+            relayRoomCode: settings.relayRoomCode,
+            relayHubURL: settings.relayHubURL,
+            relayAllowShell: settings.relayAllowShell,
+            pairedHostReachable: nil,
+            lastSnapshotAge: age,
+            transport: transport
+        )
+        context.pairedHostProbe = pairedHostProbe
+
+        let checks = await DiagnosticsChecks.runAll(context)
+        return DiagnosticsReport(
+            appVersion: DiagnosticsReport.appVersion(),
+            platform: DiagnosticsReport.currentPlatform,
+            osVersion: DiagnosticsReport.currentOSVersion,
+            checks: checks,
+            events: DiagnosticsCenter.shared.recent(50)
+        )
     }
 }
 

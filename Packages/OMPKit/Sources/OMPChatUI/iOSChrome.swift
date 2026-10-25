@@ -383,11 +383,12 @@ struct PaseoTerminalPane: View {
     @State private var history: [String] = []
     @State private var historyIndex: Int?
     @State private var refusal: String?
-    @State private var failure: String?
-    /// The command currently on the wire. `inflightID` is the `exec` request
-    /// id on the host, so Ctrl-C can send `exec.cancel` for it.
-    @State private var inflight: Task<Void, Never>?
-    @State private var inflightID: String?
+    /// Live output only scrolls to the bottom while the user has not swiped
+    /// up to read earlier lines; any manual scroll pauses it until they
+    /// return to the bottom edge.
+    @State private var autoScrollEnabled = true
+    /// Polling tasks must not outlive the pane or a backgrounded app.
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -401,6 +402,17 @@ struct PaseoTerminalPane: View {
             }
         }
         .task(id: session.isConnected) { await refreshPrompt() }
+        .onDisappear {
+            // Leaving the pane (or the whole host tab) must not leak the
+            // polling task; the host keeps the process, Ctrl-C's badge stays.
+            stopPolling()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Backgrounding the app tears the local poll loop down; the host
+            // process keeps running and the run stays pollable for 60 s, but
+            // no task outlives the scene.
+            if phase != .active { stopPolling() }
+        }
     }
 
     private var console: some View {
@@ -424,7 +436,18 @@ struct PaseoTerminalPane: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .onChange(of: entries.count) { _, _ in
+                    if autoScrollEnabled {
+                        withAnimation(.linear(duration: 0.1)) { proxy.scrollTo("prompt", anchor: .bottom) }
+                    }
+                }
+                .onChange(of: entries.map(\.output.count)) { _, _ in
+                    guard autoScrollEnabled else { return }
                     withAnimation(.linear(duration: 0.1)) { proxy.scrollTo("prompt", anchor: .bottom) }
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.bounds.maxY - geometry.containerSize.height - geometry.contentInsets.bottom < 4
+                } action: { _, atBottom in
+                    autoScrollEnabled = atBottom
                 }
             }
             .background(Color.ompCanvas)
@@ -568,30 +591,31 @@ struct PaseoTerminalPane: View {
         let working = cwd
         let requestID = UUID().uuidString
         inflightID = requestID
+        autoScrollEnabled = true
         inflight = Task {
             defer { inflight = nil }
             do {
-                let response = try await HostRPC.call(
+                let started = try await HostRPC.call(
                     sink, op: "exec", id: requestID, command: command,
-                    cwd: working.isEmpty ? nil : working, timeout: 30
+                    cwd: working.isEmpty ? nil : working, timeout: 30,
+                    background: true
                 )
                 guard !Task.isCancelled else { return }
-                guard response.ok else {
-                    if response.error == "shell_disabled" {
-                        refusal = HostRPC.message(for: response)
-                        finish(index, output: HostRPC.message(for: response), exitCode: nil)
-                    } else if response.error == "cancelled" {
-                        // The host killed the tree; keep whatever it printed.
-                        let partial = Self.rendered(response)
-                        finish(index, output: partial.isEmpty ? "^C 已取消" : "^C 已取消\n" + partial, exitCode: 130)
-                    } else {
-                        finish(index, output: HostRPC.message(for: response), exitCode: nil)
-                    }
+                // Streaming path: the host accepted `background` and parked
+                // the process under this request id. Poll `exec.poll` and
+                // append every chunk live.
+                if started.ok, started.text == "started" {
+                    await pollLoop(sink: sink, requestID: requestID, index: index)
                     return
                 }
-                finish(index, output: Self.rendered(response), exitCode: response.exitCode)
-                if let next = response.cwd, !next.isEmpty { cwd = next }
-                await refreshPrompt()
+                // Old host: it answered the plain blocking exec as before.
+                if started.ok {
+                    finish(index, output: Self.rendered(started), exitCode: started.exitCode)
+                    if let next = started.cwd, !next.isEmpty { cwd = next }
+                    await refreshPrompt()
+                    return
+                }
+                handleExecRefusal(started, index: index)
             } catch is CancellationError {
                 finish(index, output: "^C 已取消", exitCode: 130)
             } catch {
@@ -600,17 +624,121 @@ struct PaseoTerminalPane: View {
             }
         }
     }
+
+    /// Streams one background run: polls `exec.poll` every 300 ms (backing
+    /// off to 1 s after 20 empty polls), appends the stripped chunks to the
+    /// entry's scrollback, and finishes with the exit-code badge, the
+    /// cd-tracked cwd and a prompt refresh. A host that predates the op
+    /// (`unsupported` / unknown op) falls back to one blocking `exec`.
+    private func pollLoop(
+        sink: any RelayRPCSink,
+        requestID: String,
+        index: Int
+    ) async {
+        var offset = 0
+        var emptyPolls = 0
+        while !Task.isCancelled {
+            do {
+                let poll = HostRPC.decodePoll(try await HostRPC.call(
+                    sink, op: "exec.poll", id: "\(requestID)-p\(offset)",
+                    cwd: cwd.isEmpty ? nil : cwd,
+                    requestID: requestID, offset: offset
+                ))
+                if poll.hostLacksPoll {
+                    await fallbackBlockingExec(sink: sink, requestID: requestID, index: index)
+                    return
+                }
+                guard poll.error == nil else {
+                    finish(index, output: HostRPC.message(for: .init(
+                        id: requestID, ok: false, error: poll.error
+                    )), exitCode: nil)
+                    return
+                }
+                if !poll.text.isEmpty {
+                    append(index, chunk: poll.text, truncated: poll.truncated)
+                    emptyPolls = 0
+                } else {
+                    emptyPolls += 1
+                }
+                offset = poll.nextOffset
+                if poll.done {
+                    if let next = poll.cwd, !next.isEmpty { cwd = next }
+                    await refreshPrompt()
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                finish(index, output: error.localizedDescription, exitCode: nil)
+                return
+            }
+            try? await Task.sleep(nanoseconds: emptyPolls > 20 ? 1_000_000_000 : 300_000_000)
+        }
+    }
+
+    /// The previous non-streaming behaviour, used when the host cannot poll:
+    /// one blocking `exec` that answers once with everything it printed.
+    private func fallbackBlockingExec(
+        sink: any RelayRPCSink,
+        requestID: String,
+        index: Int
+    ) async {
+        do {
+            let response = try await HostRPC.call(
+                sink, op: "exec", id: requestID, command: entries[index].command,
+                cwd: cwd.isEmpty ? nil : cwd, timeout: 30
+            )
+            guard !Task.isCancelled else { return }
+            guard response.ok else {
+                handleExecRefusal(response, index: index)
+                return
+            }
+            finish(index, output: Self.rendered(response), exitCode: response.exitCode)
+            if let next = response.cwd, !next.isEmpty { cwd = next }
+            await refreshPrompt()
+        } catch is CancellationError {
+            finish(index, output: "^C 已取消", exitCode: 130)
+        } catch {
+            guard !Task.isCancelled else { return }
+            finish(index, output: error.localizedDescription, exitCode: nil)
+        }
+    }
+
+    /// Shared exec refusal handling: a shell-disabled answer locks the pane,
+    /// everything else becomes that entry's output.
+    private func handleExecRefusal(_ response: HostRPCResponse, index: Int) {
+        if response.error == "shell_disabled" {
+            refusal = HostRPC.message(for: response)
+            finish(index, output: HostRPC.message(for: response), exitCode: nil)
+        } else {
+            finish(index, output: HostRPC.message(for: response), exitCode: nil)
+        }
+    }
+
+    /// Appends one stripped chunk to the entry's live scrollback. Partial
+    /// UTF-8 at the buffer edge stays raw until the next poll completes it.
+    private func append(index: Int, chunk: String, truncated: Bool) {
+        guard entries.indices.contains(index) else { return }
+        var text = ANSIStripping.strip(chunk)
+        if truncated { text += "\n…输出已超过 1 MB，较早的内容被丢弃" }
+        if !text.isEmpty {
+            entries[index].output += text
+        }
+    }
+
     private func finish(_ index: Int, output: String, exitCode: Int?) {
         guard entries.indices.contains(index) else { return }
-        entries[index].output = output
+        if !output.isEmpty { entries[index].output = output }
         entries[index].exitCode = exitCode
         entries[index].running = false
     }
 
-    /// Ctrl-C: send `exec.cancel` so the host kills the real process, and
-    /// drop the local wait. The exec answers `error: "cancelled"` with its
-    /// partial output and exit code 130; if that answer still arrives before
-    /// the task unwinds it wins, otherwise the pane shows ^C 130.
+    /// Ctrl-C: send `exec.cancel` for the pinned request id so the host kills
+    /// the real process, and stop the local polling loop (the next poll would
+    /// answer `done: true` with exit code 130, but the badge is already up).
+    /// Leaving the pane or backgrounding the app calls the same teardown
+    /// without touching the host process.
     private func interrupt() {
         guard let inflight else { return }
         if let requestID = inflightID, let sink = session.sink {
@@ -623,12 +751,19 @@ struct PaseoTerminalPane: View {
                 )
             }
         }
-        inflight.cancel()
-        self.inflight = nil
-        inflightID = nil
+        stopPolling()
         if let index = entries.indices.last, entries[index].running {
             finish(index, output: "^C", exitCode: 130)
         }
+    }
+
+    /// Cancels the in-flight task and clears the pinned request id, so no
+    /// orphaned poll keeps hitting the host after the pane is gone. The host
+    /// side process (if any) keeps running; the run stays pollable there.
+    private func stopPolling() {
+        inflight?.cancel()
+        inflight = nil
+        inflightID = nil
     }
 
     /// Completes the current token against the names in `cwd`, via `fs.list`.

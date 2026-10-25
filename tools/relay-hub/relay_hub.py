@@ -27,8 +27,10 @@ MAX_COMMAND_LOG = 200
 PING_INTERVAL = 15.0
 RPC_TIMEOUT_SECONDS = 130.0
 MAX_PENDING_RPC = 32
-KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "exec", "exec.cancel"}
-CAP_EXEMPT_RPC_OPS = {"exec.cancel"}
+KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "exec", "exec.cancel", "exec.poll"}
+# exec.cancel and exec.poll stay forwardable at the pending cap: a poll is
+# what drains a background exec, and blocking it would stall the run it reads.
+CAP_EXEMPT_RPC_OPS = {"exec.cancel", "exec.poll"}
 
 
 def new_room_code() -> str:

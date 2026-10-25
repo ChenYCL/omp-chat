@@ -263,6 +263,188 @@ final class HostExecutorTests: XCTestCase {
         XCTAssertEqual(response.error, "bad_request")
     }
 
+    // MARK: - background exec + exec.poll
+
+    func testBackgroundExecStartsImmediately() async {
+        let executor = executor(allowed: true)
+        let started = Date()
+        let response = await executor.handle(HostRPCRequest(
+            id: "bg", op: "exec", command: "sleep 30", cwd: root.path, background: true
+        ))
+        XCTAssertTrue(response.ok, response.error ?? "")
+        XCTAssertEqual(response.text, "started")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "a background exec must not wait for the command")
+        _ = await executor.handle(HostRPCRequest(id: "k", op: "exec.cancel", requestID: "bg"))
+    }
+
+    func testPollsReturnAppendedChunksWithCursor() async throws {
+        let executor = executor(allowed: true)
+        let started = await executor.handle(HostRPCRequest(
+            id: "chunks", op: "exec",
+            command: "printf one; sleep 0.3; printf two",
+            cwd: root.path, background: true
+        ))
+        XCTAssertEqual(started.text, "started")
+
+        var offset = 0
+        var seen = ""
+        var polls = 0
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            let poll = await executor.handle(HostRPCRequest(
+                id: "p\(polls)", op: "exec.poll", requestID: "chunks", offset: offset
+            ))
+            XCTAssertTrue(poll.ok, poll.error ?? "")
+            seen += poll.text ?? ""
+            XCTAssertGreaterThanOrEqual(poll.nextOffset ?? -1, offset)
+            offset = poll.nextOffset ?? offset
+            polls += 1
+            if poll.done == true { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(seen, "onetwo")
+        XCTAssertGreaterThanOrEqual(polls, 2, "output must arrive across polls, not in one shot")
+    }
+
+    func testLongCommandIsObservedAcrossAtLeastThreePolls() async throws {
+        let executor = executor(allowed: true)
+        _ = await executor.handle(HostRPCRequest(
+            id: "slow3", op: "exec",
+            command: "printf a; sleep 0.5; printf b; sleep 0.5; printf c",
+            cwd: root.path, background: true
+        ))
+        var offset = 0
+        var chunks: [String] = []
+        var done = false
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !done {
+            let poll = await executor.handle(HostRPCRequest(
+                id: "s\(chunks.count)", op: "exec.poll", requestID: "slow3", offset: offset
+            ))
+            if let text = poll.text, !text.isEmpty { chunks.append(text) }
+            offset = poll.nextOffset ?? offset
+            done = poll.done == true
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(done)
+        XCTAssertGreaterThanOrEqual(
+            chunks.count, 3,
+            "a multi-second command must be visible incrementally, saw \(chunks)"
+        )
+    }
+
+    func testPollReportsDoneExitCodeAndCwd() async throws {
+        let sub = root.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        let executor = executor(allowed: true)
+        _ = await executor.handle(HostRPCRequest(
+            id: "done1", op: "exec", command: "cd work && printf ok", cwd: root.path, background: true
+        ))
+        let final = try await pollUntilDone(executor, id: "done1")
+        XCTAssertTrue(final.ok)
+        XCTAssertEqual(final.done, true)
+        XCTAssertEqual(final.exitCode, 0)
+        XCTAssertEqual(final.cwd, sub.resolvingSymlinksInPath().path)
+        XCTAssertEqual(final.text, "ok")
+    }
+
+    func testCancelOnBackgroundRun() async throws {
+        let executor = executor(allowed: true)
+        _ = await executor.handle(HostRPCRequest(
+            id: "bgkill", op: "exec", command: "printf before; sleep 30", cwd: root.path, background: true
+        ))
+        // Let the printf land before the cancel.
+        try await Task.sleep(for: .milliseconds(400))
+        let ack = await executor.handle(HostRPCRequest(id: "k", op: "exec.cancel", requestID: "bgkill"))
+        XCTAssertTrue(ack.ok)
+        let final = try await pollUntilDone(executor, id: "bgkill")
+        XCTAssertEqual(final.done, true)
+        XCTAssertEqual(final.exitCode, 130)
+        XCTAssertTrue(final.text?.contains("before") ?? false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(try Self.pgrep("sleep 30"), [])
+    }
+
+    func testPollUnknownIdIsNotFound() async {
+        let executor = executor(allowed: true)
+        let response = await executor.handle(HostRPCRequest(
+            id: "ghost", op: "exec.poll", requestID: "no-such-run", offset: 0
+        ))
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "not_found")
+    }
+
+    func testPollRequiresShellGate() async {
+        let executor = executor(allowed: false)
+        let response = await executor.handle(HostRPCRequest(
+            id: "g", op: "exec.poll", requestID: "x", offset: 0
+        ))
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "shell_disabled")
+    }
+
+    func testFinishedRunIsEvictedAfterRetention() async throws {
+        let executor = HostExecutor(shellAllowed: true, homeDirectory: root.path, pollRetention: 0.3)
+        _ = await executor.handle(HostRPCRequest(
+            id: "short", op: "exec", command: "printf hi", cwd: root.path, background: true
+        ))
+        let final = try await pollUntilDone(executor, id: "short")
+        XCTAssertEqual(final.text, "hi")
+        try await Task.sleep(for: .milliseconds(500))
+        let gone = await executor.handle(HostRPCRequest(
+            id: "later", op: "exec.poll", requestID: "short", offset: 0
+        ))
+        XCTAssertEqual(gone.error, "not_found")
+    }
+
+    func testStreamCapDropsOldestAndSetsTruncated() async throws {
+        let executor = executor(allowed: true)
+        // More than the 1 MB ring, printed in one go.
+        _ = await executor.handle(HostRPCRequest(
+            id: "big", op: "exec",
+            command: "python3 -c 'import sys; sys.stdout.write(\"x\" * 1500000)'",
+            cwd: root.path, timeout: 30, background: true
+        ))
+        var offset = 0
+        var total = 0
+        var sawTruncated = false
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            let poll = await executor.handle(HostRPCRequest(
+                id: "bp", op: "exec.poll", requestID: "big", offset: offset
+            ))
+            total += poll.text?.count ?? 0
+            if poll.truncated == true { sawTruncated = true }
+            offset = poll.nextOffset ?? offset
+            if poll.done == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(sawTruncated, "overflowing the 1 MB ring must set truncated")
+        XCTAssertLessThanOrEqual(total, HostExecutor.streamCap)
+    }
+
+    /// Polls `id` until `done`, failing the test if it never arrives.
+    private func pollUntilDone(_ executor: HostExecutor, id: String) async throws -> HostRPCResponse {
+        var offset = 0
+        var collected = ""
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            let poll = await executor.handle(HostRPCRequest(
+                id: "\(id)-poll", op: "exec.poll", requestID: id, offset: offset
+            ))
+            collected += poll.text ?? ""
+            offset = poll.nextOffset ?? offset
+            if poll.done == true {
+                var answer = poll
+                answer.text = collected
+                return answer
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("run \(id) never finished")
+        return HostRPCResponse(id: id, ok: false, error: "timeout")
+    }
+
     /// `pgrep -f` as an array of pids, so tests can prove processes died.
     static func pgrep(_ pattern: String) throws -> [String] {
         let process = Process()

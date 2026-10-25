@@ -1,4 +1,5 @@
 import SwiftUI
+import OMPCore
 import OMPDesign
 
 /// Lightweight markdown: fenced code blocks are split out so they can render
@@ -81,7 +82,11 @@ public struct MarkdownText: View {
                     }
                     .fixedSize(horizontal: false, vertical: true)
                 case .code(let language, let code):
-                    CodeBlockView(language: language, code: code)
+                    if GenUIDocument.isGenUILanguage(language) {
+                        GenUIView(source: code)
+                    } else {
+                        CodeBlockView(language: language, code: code)
+                    }
                 case .table(let headers, let rows):
                     MarkdownTableView(headers: headers, rows: rows)
                 case .math(let equation):
@@ -294,6 +299,7 @@ public struct MarkdownText: View {
 public struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
+    @State private var containerWidth: CGFloat = 0
 
     public init(headers: [String], rows: [[String]]) {
         self.headers = headers
@@ -349,7 +355,11 @@ public struct MarkdownTableView: View {
                     }
                 }
             }
+            .frame(minWidth: containerWidth, alignment: .leading)
         }
+        // Without this the Grid is only as wide as its content while the border
+        // spans the full column, leaving an empty strip on the right.
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { containerWidth = $0 }
         // Official tables sit on the transcript surface with only a hairline
         // border; a filled card read as a black slab in dark mode.
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.officialLG, style: .continuous))

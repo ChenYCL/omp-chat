@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, remoteControl, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, remoteControl, diagnostics, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -31,6 +31,7 @@ public struct ProviderSettingsView: View {
             case .sorting: "会话排序"
             case .dataControls: "数据控制"
             case .remoteControl: "远程控制"
+            case .diagnostics: "诊断"
             case .providers: "连接"
             case .about: "关于"
             }
@@ -47,6 +48,7 @@ public struct ProviderSettingsView: View {
             case .sorting: "arrow.up.arrow.down"
             case .dataControls: "externaldrive"
             case .providers: "point.3.connected.trianglepath.dotted"
+            case .diagnostics: "stethoscope"
             case .remoteControl: "antenna.radiowaves.left.and.right"
             case .about: "info.circle"
             }
@@ -228,6 +230,8 @@ public struct ProviderSettingsView: View {
             #endif
         case .providers:
             settingsCard { providersSection }
+        case .diagnostics:
+            settingsCard { diagnosticsSection }
         case .about:
             settingsCard { aboutSection }
         }
@@ -836,6 +840,12 @@ public struct ProviderSettingsView: View {
                 Text("粤语 (zh-HK)").tag("zh-HK")
                 Text("日语 (ja-JP)").tag("ja-JP")
             }
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section("诊断") {
+            DiagnosticsView()
         }
     }
 

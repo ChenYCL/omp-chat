@@ -1,22 +1,29 @@
 import Foundation
 
 /// One host-RPC request. `op` is `"info" | "fs.list" | "fs.read" | "exec" |
-/// "exec.cancel"`.
+/// "exec.cancel" | "exec.poll"`.
 ///
 /// Dates travel as ISO8601 via [`RelayDate`]. `info` is always allowed;
 /// `fs.list`, `fs.read`, and `exec` run only when the host setting
 /// `AppSettings.relayAllowShell` is true, otherwise the host answers
 /// `ok: false, error: "shell_disabled"`. `exec.cancel` follows the same gate
-/// and carries `requestID`: the `id` of the in-flight `exec` to stop.
+/// and carries `requestID`: the `id` of the in-flight `exec` to stop. The
+/// same two keys drive `exec.poll`, which reads a background `exec`'s output.
 public struct HostRPCRequest: Codable, Sendable, Equatable {
     public var id: String
     public var op: String
     public var path: String?
     public var command: String?
     public var cwd: String?
-    /// `exec.cancel` only: the `id` of the running `exec` to cancel. Old
-    /// documents without the key decode as `nil`.
+    /// `exec` only: run without waiting for completion. The host answers
+    /// immediately with `text: "started"`; output arrives via `exec.poll`.
+    /// Old requests without the key decode as `nil` (blocking, as before).
+    public var background: Bool?
+    /// `exec.cancel` and `exec.poll` only: the `id` of the `exec` run to
+    /// stop or read. Old documents without the key decode as `nil`.
     public var requestID: String?
+    /// `exec.poll` only: bytes of the combined output the caller already has.
+    public var offset: Int?
     public var maxBytes: Int?
     public var timeout: Double?
 
@@ -28,7 +35,9 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         cwd: String? = nil,
         maxBytes: Int? = nil,
         timeout: Double? = nil,
-        requestID: String? = nil
+        requestID: String? = nil,
+        background: Bool? = nil,
+        offset: Int? = nil
     ) {
         self.id = id
         self.op = op
@@ -38,6 +47,8 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         self.maxBytes = maxBytes
         self.timeout = timeout
         self.requestID = requestID
+        self.background = background
+        self.offset = offset
     }
 }
 
@@ -114,6 +125,10 @@ public struct HostInfo: Codable, Sendable, Equatable {
 /// "bad_request" | "unsupported"`, or free text. `exec` returns `stdout`,
 /// `stderr`, `exitCode`, and the resulting `cwd` (a `cd` sticks because the
 /// client passes `cwd` back on the next call). `fs.read` returns `text`.
+/// A background `exec` returns `text: "started"`; `exec.poll` returns the
+/// output appended since `offset` as `text`, the cursor as `nextOffset`,
+/// `done` when the run has finished, and — once done — `exitCode` plus the
+/// cd-tracked `cwd`.
 public struct HostRPCResponse: Codable, Sendable, Equatable {
     public var id: String
     public var ok: Bool
@@ -126,6 +141,11 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
     public var exitCode: Int?
     public var cwd: String?
     public var info: HostInfo?
+    /// `exec.poll` only: caller's next byte offset into the combined output.
+    public var nextOffset: Int?
+    /// `exec.poll` only: true once the run has finished and the final
+    /// `exitCode` and `cwd` are attached.
+    public var done: Bool?
 
     public init(
         id: String,
@@ -138,7 +158,9 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
         stderr: String? = nil,
         exitCode: Int? = nil,
         cwd: String? = nil,
-        info: HostInfo? = nil
+        info: HostInfo? = nil,
+        nextOffset: Int? = nil,
+        done: Bool? = nil
     ) {
         self.id = id
         self.ok = ok
@@ -151,6 +173,8 @@ public struct HostRPCResponse: Codable, Sendable, Equatable {
         self.exitCode = exitCode
         self.cwd = cwd
         self.info = info
+        self.nextOffset = nextOffset
+        self.done = done
     }
 }
 

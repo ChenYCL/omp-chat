@@ -20,7 +20,10 @@ public final class RemoteRelayClient: Sendable {
     /// `GET /pair` — first-time handshake; confirms the token and returns host name + rev.
     public func pair() async throws -> PairResult {
         let data = try await dataRequest(path: "/pair")
-        return try jsonDecoder().decode(PairResult.self, from: data)
+        let result = try jsonDecoder().decode(PairResult.self, from: data)
+        DiagnosticsCenter.shared.record("relay", .info, "client paired",
+            fields: ["host": host])
+        return result
     }
 
     /// `GET /snapshot` — full structured state mirror.
@@ -43,6 +46,8 @@ public final class RemoteRelayClient: Sendable {
                         request.timeoutInterval = 25
                         let (bytes, response) = try await URLSession.shared.bytes(for: request)
                         try assertOK(response)
+                        DiagnosticsCenter.shared.record("relay", .info, "client state stream connected",
+                            fields: ["host": host])
                         backoff = 1
                         for try await event in sseEvents(bytes) {
                             guard event.name == "rev" || event.name == "hello" else { continue }
