@@ -2,12 +2,42 @@ import Foundation
 import Network
 
 /// Commands the host app consumes from a paired remote controller.
-public enum RelayCommand: Sendable {
+///
+/// The set is deliberately the *action* surface rather than a data-sync API:
+/// a phone must be able to drive the Mac session end to end (select, send,
+/// stop, regenerate, branch, delete, rename, feedback, model, flags) without
+/// ever holding authoritative state of its own.
+public enum RelayCommand: Sendable, Equatable {
     /// Remote text submission; `nil` conversationID means "create a new
     /// conversation on the host, then send".
     case input(conversationID: String?, text: String)
     /// Ask the host to stop generating in the given conversation.
     case stop(conversationID: String)
+    /// Switch the host's selected conversation.
+    case select(conversationID: String)
+    /// Create a fresh conversation on the host and select it.
+    case newConversation
+    /// Rename a conversation.
+    case rename(conversationID: String, title: String)
+    /// Delete a conversation.
+    case delete(conversationID: String)
+    /// Regenerate the last assistant reply.
+    case regenerate(conversationID: String)
+    /// Delete one message from a conversation.
+    case deleteMessage(conversationID: String, messageID: String)
+    /// Edit a user message and resend it (keeps the previous version).
+    case editAndResend(conversationID: String, messageID: String, text: String)
+    /// Branch a new conversation from a message.
+    case branch(conversationID: String, messageID: String)
+    /// Set feedback on an assistant message: 1 like, -1 dislike, 0 clear.
+    case feedback(conversationID: String, messageID: String, value: Int)
+    /// Switch the model used by a conversation.
+    case setModel(conversationID: String, modelID: String)
+    /// Toggle pin / archive / lock / unread on a conversation.
+    case togglePin(conversationID: String)
+    case toggleArchive(conversationID: String)
+    case toggleLock(conversationID: String)
+    case setUnread(conversationID: String, unread: Bool)
 }
 
 /// Errors thrown by [`RelayServer.start(port:token:)`].
@@ -27,7 +57,10 @@ public enum RelayServerError: Error, Sendable {
 /// - `GET /state` → `text/event-stream`; sends `event: hello` on connect,
 ///   `event: rev` on every [`update(_:)`], and a `: ping` comment when the
 ///   state has been idle for 15 seconds.
-/// - `POST /input` / `POST /stop` → forwarded through `onInput`, serially.
+/// - `POST /command` → flat [`RelayCommandWire`] body; the full action
+///   surface (select/new/rename/delete/regenerate/edit/branch/feedback/
+///   setModel/pin/archive/lock/unread) goes through this one route.
+/// - `POST /input` / `POST /stop` → legacy shortcuts, same serial dispatch.
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
@@ -316,6 +349,14 @@ public final class RelayServer: @unchecked Sendable {
             lastBroadcastAt = Date()
             send(Data(head.utf8), id: id)
             send(Data("event: hello\ndata: {\"rev\":\(snapshot.rev)}\n\n".utf8), id: id)
+        case ("POST", "/command"):
+            guard let wire = decode(RelayCommandWire.self, from: request.body),
+                  let command = wire.command else {
+                send(json(ErrorBody(ok: false), status: "400 Bad Request"), id: id)
+                return
+            }
+            dispatch(command)
+            send(json(ErrorBody(ok: true), status: "200 OK"), id: id)
         case ("POST", "/input"):
             guard let body = decode(InputBody.self, from: request.body),
                   !body.text.isEmpty else {

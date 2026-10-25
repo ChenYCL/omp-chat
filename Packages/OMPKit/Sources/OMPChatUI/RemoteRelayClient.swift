@@ -193,14 +193,12 @@ public final class RemoteRelayClient: Sendable {
 }
 
 extension RemoteRelayClient: RelayCommandSink {
-    /// LAN transport adapter so both connection modes share the remote screens.
+    /// LAN adapter so both connection modes share the remote screens: every
+    /// command posts its flat wire form to `/command`, which the Mac maps back
+    /// onto `RelayCommand`.
     public func submit(_ command: RelayCommand) async throws {
-        switch command {
-        case .input(let conversationID, let text):
-            _ = try await send(text: text, conversationID: conversationID)
-        case .stop(let conversationID):
-            try await stop(conversationID: conversationID)
-        }
+        let body = try jsonEncoder().encode(RelayCommandWire(command))
+        _ = try await dataRequest(path: "/command", method: "POST", body: body)
     }
 }
 

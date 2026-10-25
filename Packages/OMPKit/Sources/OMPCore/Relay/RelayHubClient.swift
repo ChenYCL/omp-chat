@@ -154,16 +154,9 @@ public final class RelayHubClient: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String?]
-        switch command {
-        case .input(let conversationID, let text):
-            body = ["kind": "input", "conversationID": conversationID, "text": text]
-        case .stop(let conversationID):
-            body = ["kind": "stop", "conversationID": conversationID, "text": nil]
-        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        request.httpBody = try encoder.encode(body)
+        request.httpBody = try encoder.encode(RelayCommandWire(command))
         let (data, response) = try await session.data(for: request)
         try Self.assertOK(data: data, response: response)
     }
@@ -246,12 +239,10 @@ public final class RelayHubClient: @unchecked Sendable {
         lock.unlock()
 
         for (name, payload) in events where name == "command" {
-            guard let decoded = try? JSONDecoder().decode(HubCommand.self, from: Data(payload.utf8)) else {
+            guard let wire = try? JSONDecoder().decode(RelayCommandWire.self, from: Data(payload.utf8)),
+                  let command = wire.command else {
                 continue
             }
-            let command: RelayCommand = decoded.kind == "stop"
-                ? .stop(conversationID: decoded.conversationID ?? "")
-                : .input(conversationID: decoded.conversationID, text: decoded.text ?? "")
             lock.lock()
             let handler = commandHandler
             lock.unlock()
@@ -259,12 +250,6 @@ public final class RelayHubClient: @unchecked Sendable {
                 Task { await handler(command) }
             }
         }
-    }
-
-    private struct HubCommand: Decodable {
-        let kind: String
-        let conversationID: String?
-        let text: String?
     }
 
     private static func assertOK(data: Data, response: URLResponse) throws {

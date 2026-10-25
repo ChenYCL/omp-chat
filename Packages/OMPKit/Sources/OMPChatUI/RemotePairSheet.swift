@@ -62,11 +62,12 @@ public struct RemoteScreen: View {
         .onDisappear(perform: disconnect)
         .fullScreenCover(item: $selectedItem) { item in
             NavigationStack {
-                RemoteConversationScreen(
+                RemoteConsoleScreen(
                     conversationID: item.id,
                     client: activeSink,
                     hostName: hostName,
-                    conversationProvider: currentConversation
+                    conversationProvider: currentConversation,
+                    onDismiss: { selectedItem = nil }
                 )
                 .environment(model)
             }
@@ -78,8 +79,6 @@ public struct RemoteScreen: View {
     private var pairingForm: some View {
         VStack(spacing: 0) {
             headerBar(title: "远程") { EmptyView() }
-
-            Spacer(minLength: 12)
 
             HStack(spacing: 10) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
@@ -96,6 +95,7 @@ public struct RemoteScreen: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 18)
+            .padding(.top, 4)
             .padding(.bottom, 14)
 
             Picker("连接方式", selection: $mode) {
@@ -495,175 +495,6 @@ struct RemoteConversationRow: View {
         .padding(.vertical, 3)
         .background(Color.yellow.opacity(0.14), in: Capsule())
         .fixedSize()
-    }
-}
-
-// MARK: - Remote Conversation Screen
-
-/// Read-only mirrored transcript of one Mac conversation, with a send bar and
-/// a stop button while the host is streaming. Presented as a full-screen cover,
-/// it re-reads the conversation through `conversationProvider` on every render.
-struct RemoteConversationScreen: View {
-    let conversationID: String
-    let client: (any RelayCommandSink)?
-    let hostName: String
-    let conversationProvider: (String) -> RelayConversation?
-    @State private var draft = ""
-    @State private var sending = false
-    @State private var stopInFlight = false
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if let conversation = currentConversation {
-                transcript(of: conversation)
-                composer(for: conversation)
-            } else {
-                VStack(spacing: 8) {
-                    ProgressView()
-                    Text("正在同步会话…")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color.ompTextTertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .background(Color.ompCanvas)
-        .navigationTitle(hostName.isEmpty ? "远程会话" : hostName)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("关闭") { dismiss() }
-            }
-        }
-    }
-
-    private var currentConversation: RelayConversation? {
-        conversationProvider(conversationID)
-    }
-
-    private func transcript(of conversation: RelayConversation) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(conversation.messages, id: \.id) { message in
-                        RemoteMessageBubble(message: message)
-                            .id(message.id)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            }
-            .onChange(of: conversation.messages.last?.id) {
-                if let last = conversation.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
-            }
-        }
-    }
-
-    private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !sending && client != nil
-    }
-
-    private func composer(for conversation: RelayConversation) -> some View {
-        HStack(spacing: 8) {
-            TextField("发送消息", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14.5))
-                .lineLimit(1...5)
-                .onSubmit(send)
-
-            if conversation.isStreaming {
-                Button {
-                    guard let client, !stopInFlight else { return }
-                    stopInFlight = true
-                    Task {
-                        try? await client.submit(.stop(conversationID: conversationID))
-                        stopInFlight = false
-                    }
-                } label: {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.ompPrimarySolid)
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.ompInverseText)
-                                .frame(width: 10, height: 10)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(stopInFlight)
-            } else {
-                Button(action: send) {
-                    Circle()
-                        .fill(canSend ? Color.ompPrimarySolid : Color.ompPrimarySolid.opacity(0.35))
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(Color.ompInverseText)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.ompCard, in: Capsule())
-        .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private func send() {
-        guard canSend, let client else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        sending = true
-        Task {
-            defer { sending = false }
-            do {
-                try await client.submit(.input(conversationID: conversationID, text: text))
-                draft = ""
-            } catch {
-                // Keep the draft; the next rev brings the authoritative host state.
-            }
-        }
-    }
-}
-
-// MARK: - Message Bubble
-
-struct RemoteMessageBubble: View {
-    let message: RelayMessage
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if message.role == "user" { Spacer(minLength: 56) }
-            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 4) {
-                Text(message.text)
-                    .font(.system(size: 14.5))
-                    .foregroundStyle(Color.ompText)
-                    .textSelection(.enabled)
-                HStack(spacing: 5) {
-                    Text(RelativeDateTimeFormatter.ompRelay.string(for: message.ts) ?? "")
-                    if message.streaming {
-                        Image(systemName: "circle.dotted")
-                            .font(.system(size: 9))
-                    }
-                }
-                .font(.system(size: 10.5))
-                .foregroundStyle(Color.ompTextTertiary)
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background(
-                message.role == "user" ? Color.ompUserBubble : Color.ompFill,
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            if message.role != "user" { Spacer(minLength: 56) }
-        }
     }
 }
 

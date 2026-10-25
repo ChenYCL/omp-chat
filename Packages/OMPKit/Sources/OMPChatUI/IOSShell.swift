@@ -157,12 +157,17 @@ struct ChatScreen: View {
             topBar
             Divider().opacity(0.6)
             ZStack(alignment: .bottom) {
-                ChatTranscriptView()
-                VStack(spacing: 8) {
-                    scrollChevron
-                    StatusChipsRow(showingSubagents: $showingSubagents)
+                if showsEmptyState {
+                    emptyState
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ChatTranscriptView()
+                    VStack(spacing: 8) {
+                        scrollChevron
+                        IOSStatusChips(showingSubagents: $showingSubagents)
+                    }
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 8)
             }
         }
         .background(Color.ompCanvas)
@@ -192,8 +197,6 @@ struct ChatScreen: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("shell.drawer")
             .accessibilityLabel("打开抽屉")
-            .accessibilityIdentifier("shell.drawer")
-            .accessibilityLabel("打开抽屉")
 
             Spacer()
 
@@ -201,15 +204,26 @@ struct ChatScreen: View {
 
             Spacer()
 
-            Button {
-                model.showSettings = true
+            Menu {
+                Button {
+                    model.showSettings = true
+                } label: {
+                    Label("设置", systemImage: "gearshape")
+                }
+                if let conversation = model.selectedConversation {
+                    ShareLink(item: model.exportMarkdown(conversation)) {
+                        Label("导出 Markdown", systemImage: "doc.badge.arrow.up")
+                    }
+                    ShareLink(item: model.exportHTML(conversation)) {
+                        Label("分享会话", systemImage: "square.and.arrow.up")
+                    }
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Color.ompText)
                     .frame(width: 36, height: 36)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 8)
         .frame(height: IOSShellMetrics.topBarHeight)
@@ -236,12 +250,12 @@ struct ChatScreen: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Text(model.selectedConversation?.title ?? "OMP Chat")
+                Text(displayTitle)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.ompText)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.ompTextTertiary)
             }
             .padding(.horizontal, 12)
@@ -263,99 +277,47 @@ struct ChatScreen: View {
         }
         .buttonStyle(.plain)
     }
+
+    /// True while the transcript has nothing to show (fresh conversation).
+    private var showsEmptyState: Bool {
+        guard let conversation = model.selectedConversation else { return true }
+        return conversation.messages.isEmpty && !model.needsSetup
+    }
+
+    /// Official empty state: 62pt circle on ompFill + neutral sparkle,
+    /// 23pt semibold title, 14pt secondary subtitle.
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle().fill(Color.ompFill)
+                    .frame(width: 62, height: 62)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundStyle(Color.ompTextSecondary)
+            }
+            VStack(spacing: 6) {
+                (Text("今天想在 ")
+                    + Text(model.activeProvider?.name ?? "OMP Chat").underline()
+                    + Text(" 里聊些什么？"))
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+                    .multilineTextAlignment(.center)
+                Text(model.activeModel?.id ?? "选择一个模型开始")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.ompTextSecondary)
+            }
+            .padding(.horizontal, 24)
+        }
+    }
+
+    /// Top-bar title; falls back to 新对话 when unset or blank.
+    private var displayTitle: String {
+        let title = model.selectedConversation?.title.trimmingCharacters(in: .whitespaces) ?? ""
+        return title.isEmpty ? "新对话" : title
+    }
+
 }
 
-// MARK: - Status Chips (Moshi floating row)
-
-/// Floating chips above the transcript tail: `∠ +932 -288` / `Ω 子代理 · 25` / tool time.
-struct StatusChipsRow: View {
-    @Environment(ChatAppModel.self) private var model
-    @Binding var showingSubagents: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if let diff = totalDiff {
-                chip {
-                    Image(systemName: "angle")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.ompTextTertiary)
-                    Text("+\(diff.added)")
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.ompFlat(rgb: 0x1F7A34))
-                    Text("-\(diff.removed)")
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.red)
-                }
-            } else if let usage = model.selectedConversation?.messages.compactMap(\.usage).last {
-                chip {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.ompFlat(rgb: 0x1F7A34))
-                    Text(TokenFormat.compact(usage.inputTokens))
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.accentColor)
-                    Text(TokenFormat.compact(usage.outputTokens))
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                }
-            }
-
-
-            Button {
-                showingSubagents = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "person.2")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.ompTextTertiary)
-                    Text(toolCount > 0 ? "操作 · \(toolCount)" : "子代理 · \(model.sortedConversations.count)")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Color.ompTextSecondary)
-                }
-            }
-            .buttonStyle(.plain)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-    }
-
-    private func chip(@ViewBuilder content: () -> some View) -> some View {
-        HStack(spacing: 5) { content() }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Color.ompCard, in: Capsule())
-            .shadow(color: Color.black.opacity(0.05), radius: 4, y: 1)
-    }
-
-    private var totalDiff: (added: Int, removed: Int)? {
-        guard let conversation = model.selectedConversation else { return nil }
-        var added = 0
-        var removed = 0
-        for msg in conversation.messages {
-            for part in msg.parts {
-                if case .toolResult(let result) = part {
-                    for line in result.outputText.split(separator: "\n", omittingEmptySubsequences: false) {
-                        if line.hasPrefix("+"), !line.hasPrefix("+++") { added += 1 }
-                        else if line.hasPrefix("-"), !line.hasPrefix("---") { removed += 1 }
-                    }
-                }
-            }
-        }
-        return (added == 0 && removed == 0) ? nil : (added, removed)
-    }
-
-    private var toolCount: Int {
-        guard let conversation = model.selectedConversation else { return 0 }
-        return conversation.messages.reduce(0) { count, msg in
-            count + msg.parts.filter {
-                if case .toolCall = $0 { return true }
-                return false
-            }.count
-        }
-    }
-}
 
 // MARK: - Composer Tool Strip (Moshi: 文件 | 终端 | 配置)
 
@@ -371,14 +333,14 @@ struct ComposerToolBar: View {
             divider
             toolItem(IOSShell.HostPane.config, icon: "slider.horizontal.3", title: "配置")
         }
-        .frame(height: 36)
+        .frame(height: 30)
         .background(IOSShellMetrics.tabBarBackground)
     }
 
     private var divider: some View {
         Rectangle()
             .fill(Color.ompBorder)
-            .frame(width: 0.5, height: 16)
+            .frame(width: 0.5, height: 14)
     }
 
     private func toolItem(_ pane: IOSShell.HostPane, icon: String, title: String) -> some View {
@@ -459,8 +421,6 @@ struct HostScreen: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("shell.drawer")
             .accessibilityLabel("打开抽屉")
-            .accessibilityIdentifier("shell.drawer")
-            .accessibilityLabel("打开抽屉")
 
             Spacer()
 
@@ -496,7 +456,6 @@ struct ShellDrawer: View {
     let onSelectConversation: (UUID) -> Void
 
     @State private var search = ""
-    @State private var showSearch = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -521,37 +480,27 @@ struct ShellDrawer: View {
             .padding(.bottom, 14)
             .accessibilityIdentifier("shell.drawer.panel")
 
-            if showSearch {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.ompTextTertiary)
-                    TextField("搜索会话…", text: $search)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5))
-                    if !search.isEmpty {
-                        Button { search = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.ompTextTertiary)
-                        }
-                        .buttonStyle(.plain)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextTertiary)
+                TextField("搜索会话…", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !search.isEmpty {
+                    Button { search = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompTextTertiary)
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-            } else {
-                Button {
-                    withAnimation(Theme.Motion.quick) { showSearch = true }
-                } label: {
-                    drawerItem(icon: "magnifyingglass", title: "搜索")
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10)
             }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
 
             VStack(spacing: 2) {
                 Button { route = .projects } label: {
@@ -599,10 +548,13 @@ struct ShellDrawer: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Text(conv.title)
-                                    .font(.system(size: 12.5))
+                                    .font(.system(size: 14))
                                     .foregroundStyle(Color.ompText)
                                     .lineLimit(1)
                                 Spacer()
+                                Text(conv.updatedAt.formatted(.relative(presentation: .named)))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.ompTextTertiary)
                                 if model.streamingConversationID == conv.id {
                                     ProgressView().controlSize(.mini)
                                 } else if conv.hasUnread {
@@ -615,8 +567,8 @@ struct ShellDrawer: View {
                                         .foregroundStyle(.orange)
                                 }
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
                             .background(
                                 conv.id == model.selectedConversationID
                                     ? Color.ompFill
@@ -629,6 +581,12 @@ struct ShellDrawer: View {
                 }
                 .padding(.horizontal, 6)
             }
+            Spacer(minLength: 0)
+
+            Divider()
+            userChip
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.ompCard)
@@ -644,23 +602,50 @@ struct ShellDrawer: View {
     }
 
     private func drawerItem(icon: String, title: String, badge: String? = nil) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 13))
+                .font(.system(size: 15))
                 .foregroundStyle(Color.ompText)
-                .frame(width: 20)
+                .frame(width: 22)
             Text(title)
-                .font(.system(size: 13.5, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Color.ompText)
             Spacer()
             if let badge {
                 Text(badge)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Color.ompTextTertiary)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 44)
+        .contentShape(Rectangle())
+    }
+
+    /// Bottom user chip: real provider/model state, no fake account.
+    private var userChip: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.ompPrimarySolid)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompInverseText)
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.activeProvider?.name ?? "未配置供应商")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.ompText)
+                    .lineLimit(1)
+                Text(model.activeModel?.id ?? "默认模型")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .frame(height: 44)
         .contentShape(Rectangle())
     }
 }
@@ -716,6 +701,7 @@ struct PaseoComposerBar: View {
                 .accessibilityLabel("消息输入框")
                 .font(.system(size: 15))
                 .lineLimit(1...6)
+                .frame(maxHeight: IOSShellMetrics.composerMaxHeight, alignment: .bottom)
                 .padding(.vertical, (IOSShellMetrics.composerMinHeight - 20) / 2)
                 // Grows with content up to 6 lines; explicit caps make the
                 // vertical-axis field jump straight to its maximum.
@@ -762,12 +748,13 @@ struct PaseoComposerBar: View {
                 model.send()
             } label: {
                 Circle()
-                    .fill(canSend ? Color.ompPrimarySolid : Color.ompFill)
+                    .fill(Color.ompPrimarySolid)
                     .frame(width: IOSShellMetrics.sendButtonSize, height: IOSShellMetrics.sendButtonSize)
+                    .opacity(canSend ? 1 : 0.3)
                     .overlay(
                         Image(systemName: "arrow.up")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(canSend ? Color.ompInverseText : Color.ompTextTertiary)
+                            .foregroundStyle(Color.ompInverseText)
                     )
             }
             .buttonStyle(.plain)

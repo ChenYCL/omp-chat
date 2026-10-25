@@ -62,8 +62,10 @@ struct PaseoFilesPane: View {
             // Path Header row: / on left, ≡: and Q on right
             HStack {
                 Text(directory.path)
-                    .font(.system(size: 12, weight: .medium).monospaced())
+                    .font(.system(size: 13, weight: .medium).monospaced())
                     .foregroundStyle(Color.ompTextSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
                 Spacer()
                 HStack(spacing: 12) {
                     Image(systemName: "list.bullet")
@@ -85,7 +87,11 @@ struct PaseoFilesPane: View {
                     HStack(spacing: 10) {
                         Image(systemName: entry.isDir ? "folder.fill" : "doc")
                             .font(.system(size: 13))
-                            .foregroundStyle(entry.isDir ? Color.black : Color.ompTextTertiary)
+                            .foregroundStyle(entry.isDir ? Color.ompText : Color.ompTextTertiary)
+                            .frame(width: 20)
+PUT 103:=103:
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
                             .frame(width: 20)
                         Text(entry.name)
                             .font(.system(size: 13))
@@ -248,6 +254,8 @@ struct PaseoTerminalPane: View {
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(Color.blue.opacity(0.8))
                         TextField("", text: $input)
+                .accessibilityIdentifier("host.terminal.input")
+                .accessibilityLabel("终端命令输入")
                             .textFieldStyle(.plain)
                             .font(.system(size: 11.5, design: .monospaced))
                             .focused($isInputFocused)

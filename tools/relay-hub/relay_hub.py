@@ -303,7 +303,13 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 await writer.drain()
                 writer.close()
                 return
-            if command.get("kind") not in {"input", "stop"}:
+            allowed = {
+                "input", "stop", "select", "newConversation", "rename", "delete",
+                "regenerate", "deleteMessage", "editAndResend", "branch",
+                "feedback", "setModel", "togglePin", "toggleArchive",
+                "toggleLock", "setUnread",
+            }
+            if command.get("kind") not in allowed:
                 writer.write(response("400 Bad Request", {"error": "bad kind"}))
                 await writer.drain()
                 writer.close()

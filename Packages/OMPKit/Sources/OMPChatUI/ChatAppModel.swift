@@ -1224,20 +1224,105 @@ public final class ChatAppModel {
     }
 
     /// Executes one command coming from a paired remote controller.
+    ///
+    /// Every branch reuses the same model methods the desktop UI calls, so a
+    /// phone-driven action is indistinguishable from a local one and always
+    /// persists through the normal save path.
     public func handleRelayCommand(_ command: RelayCommand) async {
+        func uuid(_ raw: String) -> UUID? { UUID(uuidString: raw) }
+
         switch command {
         case .input(let conversationID, let text):
-            if let rawID = conversationID, let uuid = UUID(uuidString: rawID),
-               conversations.contains(where: { $0.id == uuid }) {
-                selectedConversationID = uuid
+            if let rawID = conversationID, let id = uuid(rawID),
+               conversations.contains(where: { $0.id == id }) {
+                selectedConversationID = id
             } else {
                 _ = newConversation()
             }
             await sendNow(text: text, attachments: [])
+
         case .stop(let conversationID):
-            if let uuid = UUID(uuidString: conversationID), uuid == streamingConversationID {
+            if let id = uuid(conversationID), id == streamingConversationID {
                 stop()
             }
+
+        case .select(let conversationID):
+            guard let id = uuid(conversationID),
+                  conversations.contains(where: { $0.id == id }) else { return }
+            selectedConversationID = id
+
+        case .newConversation:
+            _ = newConversation()
+
+        case .rename(let conversationID, let title):
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, let id = uuid(conversationID) else { return }
+            renameConversation(id, title: trimmed)
+
+        case .delete(let conversationID):
+            guard let id = uuid(conversationID) else { return }
+            deleteConversation(id)
+
+        case .regenerate(let conversationID):
+            guard let id = uuid(conversationID) else { return }
+            selectedConversationID = id
+            regenerateLast()
+
+        case .deleteMessage(let conversationID, let messageID):
+            guard let conversation = uuid(conversationID),
+                  conversations.contains(where: { $0.id == conversation }),
+                  let message = uuid(messageID) else { return }
+            selectedConversationID = conversation
+            deleteMessage(message)
+
+        case .editAndResend(let conversationID, let messageID, let text):
+            guard let conversation = uuid(conversationID),
+                  conversations.contains(where: { $0.id == conversation }),
+                  let message = uuid(messageID) else { return }
+            selectedConversationID = conversation
+            editAndResend(message, newText: text)
+
+        case .branch(let conversationID, let messageID):
+            guard let conversation = uuid(conversationID),
+                  conversations.contains(where: { $0.id == conversation }),
+                  let message = uuid(messageID) else { return }
+            selectedConversationID = conversation
+            if let branched = branch(from: message) {
+                selectedConversationID = branched.id
+            }
+
+        case .feedback(let conversationID, let messageID, let value):
+            guard let conversation = uuid(conversationID),
+                  conversations.contains(where: { $0.id == conversation }),
+                  let message = uuid(messageID) else { return }
+            selectedConversationID = conversation
+            setFeedback(message, value: value)
+
+        case .setModel(let conversationID, let modelID):
+            guard let conversation = uuid(conversationID),
+                  let id = UUID(uuidString: conversationID),
+                  conversations.contains(where: { $0.id == id }) else { return }
+            if let descriptor = availableModels.first(where: { $0.id == modelID })
+                ?? models.first(where: { $0.id == modelID }) {
+                selectedConversationID = conversation
+                setModel(descriptor)
+            }
+
+        case .togglePin(let conversationID):
+            guard let id = uuid(conversationID) else { return }
+            togglePin(id)
+
+        case .toggleArchive(let conversationID):
+            guard let id = uuid(conversationID) else { return }
+            toggleArchive(id)
+
+        case .toggleLock(let conversationID):
+            guard let id = uuid(conversationID) else { return }
+            toggleLock(id)
+
+        case .setUnread(let conversationID, let unread):
+            guard let id = uuid(conversationID) else { return }
+            setUnread(id, unread: unread)
         }
     }
 }

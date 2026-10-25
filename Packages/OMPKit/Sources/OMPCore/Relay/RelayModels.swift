@@ -163,3 +163,110 @@ public struct RelaySnapshot: Codable, Sendable, Equatable {
         try container.encode(conversations, forKey: .conversations)
     }
 }
+
+/// Wire form of a [`RelayCommand`]: one flat JSON object so a hand-rolled
+/// server, the Python hub and both apps can share a single encoding.
+public struct RelayCommandWire: Codable, Sendable, Equatable {
+    public var kind: String
+    public var conversationID: String?
+    public var messageID: String?
+    public var text: String?
+    public var title: String?
+    public var value: Int?
+    public var modelID: String?
+    public var unread: Bool?
+
+    public init(
+        kind: String,
+        conversationID: String? = nil,
+        messageID: String? = nil,
+        text: String? = nil,
+        title: String? = nil,
+        value: Int? = nil,
+        modelID: String? = nil,
+        unread: Bool? = nil
+    ) {
+        self.kind = kind
+        self.conversationID = conversationID
+        self.messageID = messageID
+        self.text = text
+        self.title = title
+        self.value = value
+        self.modelID = modelID
+        self.unread = unread
+    }
+
+    public init(_ command: RelayCommand) {
+        switch command {
+        case .input(let conversationID, let text):
+            self.init(kind: "input", conversationID: conversationID, text: text)
+        case .stop(let conversationID):
+            self.init(kind: "stop", conversationID: conversationID)
+        case .select(let conversationID):
+            self.init(kind: "select", conversationID: conversationID)
+        case .newConversation:
+            self.init(kind: "newConversation")
+        case .rename(let conversationID, let title):
+            self.init(kind: "rename", conversationID: conversationID, title: title)
+        case .delete(let conversationID):
+            self.init(kind: "delete", conversationID: conversationID)
+        case .regenerate(let conversationID):
+            self.init(kind: "regenerate", conversationID: conversationID)
+        case .deleteMessage(let conversationID, let messageID):
+            self.init(kind: "deleteMessage", conversationID: conversationID, messageID: messageID)
+        case .editAndResend(let conversationID, let messageID, let text):
+            self.init(kind: "editAndResend", conversationID: conversationID, messageID: messageID, text: text)
+        case .branch(let conversationID, let messageID):
+            self.init(kind: "branch", conversationID: conversationID, messageID: messageID)
+        case .feedback(let conversationID, let messageID, let value):
+            self.init(kind: "feedback", conversationID: conversationID, messageID: messageID, value: value)
+        case .setModel(let conversationID, let modelID):
+            self.init(kind: "setModel", conversationID: conversationID, modelID: modelID)
+        case .togglePin(let conversationID):
+            self.init(kind: "togglePin", conversationID: conversationID)
+        case .toggleArchive(let conversationID):
+            self.init(kind: "toggleArchive", conversationID: conversationID)
+        case .toggleLock(let conversationID):
+            self.init(kind: "toggleLock", conversationID: conversationID)
+        case .setUnread(let conversationID, let unread):
+            self.init(kind: "setUnread", conversationID: conversationID, unread: unread)
+        }
+    }
+
+    /// The strongly-typed command, or `nil` for an unknown `kind`.
+    public var command: RelayCommand? {
+        switch kind {
+        case "input": return .input(conversationID: conversationID, text: text ?? "")
+        case "stop": return .stop(conversationID: conversationID ?? "")
+        case "select": return conversationID.map { .select(conversationID: $0) }
+        case "newConversation": return .newConversation
+        case "rename":
+            guard let conversationID, let title else { return nil }
+            return .rename(conversationID: conversationID, title: title)
+        case "delete": return conversationID.map { .delete(conversationID: $0) }
+        case "regenerate": return conversationID.map { .regenerate(conversationID: $0) }
+        case "deleteMessage":
+            guard let conversationID, let messageID else { return nil }
+            return .deleteMessage(conversationID: conversationID, messageID: messageID)
+        case "editAndResend":
+            guard let conversationID, let messageID, let text else { return nil }
+            return .editAndResend(conversationID: conversationID, messageID: messageID, text: text)
+        case "branch":
+            guard let conversationID, let messageID else { return nil }
+            return .branch(conversationID: conversationID, messageID: messageID)
+        case "feedback":
+            guard let conversationID, let messageID, let value else { return nil }
+            return .feedback(conversationID: conversationID, messageID: messageID, value: value)
+        case "setModel":
+            guard let conversationID, let modelID else { return nil }
+            return .setModel(conversationID: conversationID, modelID: modelID)
+        case "togglePin": return conversationID.map { .togglePin(conversationID: $0) }
+        case "toggleArchive": return conversationID.map { .toggleArchive(conversationID: $0) }
+        case "toggleLock": return conversationID.map { .toggleLock(conversationID: $0) }
+        case "setUnread":
+            guard let conversationID, let unread else { return nil }
+            return .setUnread(conversationID: conversationID, unread: unread)
+        default: return nil
+        }
+    }
+}
