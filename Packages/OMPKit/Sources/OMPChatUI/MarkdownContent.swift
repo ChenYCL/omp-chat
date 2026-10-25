@@ -447,6 +447,7 @@ public struct MarkdownMathView: View {
 public struct CodeBlockView: View {
     let language: String?
     let code: String
+    @Environment(\.ompSearchHighlight) private var highlight
 
     /// Blocks longer than this fold behind an "展开全部 / 收起" pill.
     private static let foldThreshold = 20
@@ -553,7 +554,7 @@ public struct CodeBlockView: View {
                     .padding(.trailing, 14)
                     .textSelection(.enabled)
                 } else {
-                    Text(visibleCode)
+                    Text(Self.highlightedCode(visibleCode, query: highlight))
                         .font(.system(size: 13, design: .monospaced))
                         .lineSpacing(2)
                         .textSelection(.enabled)
@@ -564,6 +565,16 @@ public struct CodeBlockView: View {
             }
         }
         .frame(maxHeight: 320)
+    }
+
+    /// Code is not Markdown, so it is highlighted as plain text: same query,
+    /// same literal matching, no syntax parsing to disturb.
+    static func highlightedCode(_ code: String, query: String?) -> AttributedString {
+        var attributed = AttributedString(code)
+        if let query, !query.isEmpty {
+            MarkdownText.applyHighlight(query, to: &attributed)
+        }
+        return attributed
     }
 
     private var copyButton: some View {

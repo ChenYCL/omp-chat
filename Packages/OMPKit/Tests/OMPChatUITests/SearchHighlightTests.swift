@@ -41,4 +41,18 @@ final class SearchHighlightTests: XCTestCase {
         let attributed = highlighted("a.b 与 axb", query: "a.b")
         XCTAssertEqual(highlightedRuns(attributed), ["a.b"], "点号按字面匹配，不能当成通配符")
     }
+
+    func testCodeLinesAreHighlightedAsPlainText() {
+        let attributed = CodeBlockView.highlightedCode("let mermaid = 1\nmermaid += 1", query: "mermaid")
+        let runs = attributed.runs.compactMap { run in
+            run.backgroundColor == nil ? nil : String(attributed[run.range].characters)
+        }
+        XCTAssertEqual(runs, ["mermaid", "mermaid"], "代码里的每处命中都要标")
+        XCTAssertEqual(String(attributed.characters), "let mermaid = 1\nmermaid += 1", "文字本身不变")
+    }
+
+    func testCodeWithoutQueryKeepsPlainText() {
+        let attributed = CodeBlockView.highlightedCode("plain()", query: nil)
+        XCTAssertTrue(attributed.runs.allSatisfy { $0.backgroundColor == nil })
+    }
 }
