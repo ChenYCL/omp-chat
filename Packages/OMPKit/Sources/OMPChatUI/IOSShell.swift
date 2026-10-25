@@ -524,6 +524,14 @@ struct ShellDrawer: View {
                     drawerItem(icon: "folder", title: "项目", badge: "\(model.projects.count)")
                 }.buttonStyle(.plain)
 
+                Button {
+                    _ = model.newTemporaryConversation()
+                    route = nil
+                    closeDrawer()
+                } label: {
+                    drawerItem(icon: "timer", title: "临时对话")
+                }.buttonStyle(.plain)
+
                 Button { route = .history } label: {
                     drawerItem(icon: "clock", title: "会话历史", badge: "\(model.sortedConversations.count)")
                 }.buttonStyle(.plain)
