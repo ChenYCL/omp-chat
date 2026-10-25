@@ -20,6 +20,7 @@ struct SidePanel: View {
     @State private var entries: [Entry] = []
     @State private var changes: [Change] = []
     @State private var state: LoadState = .idle
+    @State private var openFile: OpenFile?
     @State private var picking = false
 
     private struct Entry: Identifiable {
@@ -117,35 +118,138 @@ struct SidePanel: View {
     private var fileList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
-                Text(GitInfo.tildified(directory))
-                    .font(.system(size: 10.5).monospaced())
-                    .foregroundStyle(Color.ompTextTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                if entries.isEmpty, state != .loading {
+                HStack(spacing: 6) {
+                    Button {
+                        goUp()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(directory == "/" ? Color.ompTextTertiary : Color.ompTextSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(directory == "/")
+                    .help("上一级")
+                    Text(GitInfo.tildified(directory))
+                        .font(.system(size: 10.5).monospaced())
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+
+                if let openFile {
+                    openedFile(openFile)
+                } else if entries.isEmpty, state != .loading {
                     Text("这个目录是空的")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.ompTextTertiary)
                         .padding(12)
                 }
                 ForEach(entries) { entry in
-                    HStack(spacing: 6) {
-                        Image(systemName: entry.isDirectory ? "folder" : "doc")
-                            .font(.system(size: 10))
-                            .foregroundStyle(entry.isDirectory ? Color.ompText : Color.ompTextTertiary)
-                            .frame(width: 14)
-                        Text(entry.name)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.ompText)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
+                    Button {
+                        open(entry)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: entry.isDirectory ? "folder" : "doc")
+                                .font(.system(size: 10))
+                                .foregroundStyle(entry.isDirectory ? Color.ompText : Color.ompTextTertiary)
+                                .frame(width: 14)
+                            Text(entry.name)
+                                .font(.system(size: 12))
+                                .foregroundStyle(openFile?.url.lastPathComponent == entry.name
+                                                 ? Color.ompText : Color.ompTextSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 12)
-                    .frame(height: 24)
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// A file opened from the list: its text, read here rather than over the
+    /// phone's channel because this is the Mac itself.
+    private struct OpenFile {
+        var url: URL
+        var text: String
+        var truncated: Bool
+    }
+
+    private func openedFile(_ file: OpenFile) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(file.url.lastPathComponent)
+                    .font(.system(size: 11, weight: .semibold).monospaced())
+                    .foregroundStyle(Color.ompText)
+                if file.truncated {
+                    Text("仅前 256 KB")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+                Spacer()
+                Button {
+                    openFile = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("收起")
+            }
+            ScrollView {
+                Text(file.text)
+                    .font(.system(size: 10.5).monospaced())
+                    .foregroundStyle(Color.ompText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 320)
+        }
+        .padding(10)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 8)
+    }
+
+    private func open(_ entry: Entry) {
+        let path = directory == "/" ? "/\(entry.name)" : "\(directory)/\(entry.name)"
+        if entry.isDirectory {
+            openFile = nil
+            directory = path
+            Task { await refresh() }
+            return
+        }
+        let cap = 256 * 1024
+        guard let handle = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? handle.close() }
+        let data = (try? handle.read(upToCount: cap + 1)) ?? Data()
+        let truncated = data.count > cap
+        let body = data.prefix(cap)
+        // Binary files would render as noise; say so instead of showing it.
+        if body.contains(0) {
+            openFile = OpenFile(url: URL(fileURLWithPath: path), text: "二进制文件，不显示内容。", truncated: false)
+            return
+        }
+        openFile = OpenFile(
+            url: URL(fileURLWithPath: path),
+            text: String(decoding: body, as: UTF8.self),
+            truncated: truncated
+        )
+    }
+
+    private func goUp() {
+        guard directory != "/" else { return }
+        openFile = nil
+        directory = (directory as NSString).deletingLastPathComponent
+        if directory.isEmpty { directory = "/" }
+        Task { await refresh() }
     }
 
     private var changeList: some View {
