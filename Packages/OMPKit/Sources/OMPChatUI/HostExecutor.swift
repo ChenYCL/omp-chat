@@ -892,6 +892,11 @@ final class BackgroundRun: @unchecked Sendable {
 final class BackgroundRun: @unchecked Sendable {
     enum Phase { case running, finished, timedOut }
     struct Slice { var text: String; var nextOffset: Int; var truncated: Bool }
+    /// The poll path resolves a finished run's cwd against this on both
+    /// platforms, so the stub must expose it too.
+    let startCwd: String
+
+    init(startCwd: String) { self.startCwd = startCwd }
     var state: Phase { .running }
     var cancelled: Bool { false }
     var exitCode: Int? { nil }

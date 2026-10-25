@@ -387,6 +387,12 @@ struct PaseoTerminalPane: View {
     /// up to read earlier lines; any manual scroll pauses it until they
     /// return to the bottom edge.
     @State private var autoScrollEnabled = true
+    /// Transport-level error shown above the scrollback (RPC failures).
+    @State private var failure: String?
+    /// The poll loop for the command currently running on the Mac.
+    @State private var inflight: Task<Void, Never>?
+    /// Request id of that command, needed for `exec.cancel`.
+    @State private var inflightID: String?
     /// Polling tasks must not outlive the pane or a backgrounded app.
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var inputFocused: Bool
@@ -655,7 +661,7 @@ struct PaseoTerminalPane: View {
                     return
                 }
                 if !poll.text.isEmpty {
-                    append(index, chunk: poll.text, truncated: poll.truncated)
+                    append(index: index, chunk: poll.text, truncated: poll.truncated)
                     emptyPolls = 0
                 } else {
                     emptyPolls += 1
