@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import OMPCore
 import OMPDesign
 
@@ -673,6 +674,7 @@ struct PaseoComposerBar: View {
     @Environment(ChatAppModel.self) private var model
     @State private var showVoiceSheet = false
     @State private var showImageSheet = false
+    @State private var importingFile = false
 
     var body: some View {
         @Bindable var model = model
@@ -691,6 +693,11 @@ struct PaseoComposerBar: View {
                     } label: {
                         Label("打开语音输入", systemImage: "mic")
                     }
+                }
+                Button {
+                    importingFile = true
+                } label: {
+                    Label("添加附件", systemImage: "paperclip")
                 }
                 Menu("提示词模板") {
                     Button("代码审查") {
@@ -736,6 +743,14 @@ struct PaseoComposerBar: View {
         .padding(.bottom, 8)
         .sheet(isPresented: $showVoiceSheet) {
             VoiceModeSheet().environment(model)
+        }
+        .fileImporter(isPresented: $importingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                do { try model.attach(url: url, removeSandboxScope: scoped) }
+                catch { model.dismissError() }
+            }
         }
         .sheet(isPresented: $showImageSheet) {
             ImageGenerationSheet().environment(model)
