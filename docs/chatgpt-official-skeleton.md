@@ -102,7 +102,7 @@ Account、General、Appearance、Keyboard shortcuts、Archived chats、Data cont
 |---|---|---|
 | 侧栏多 Tab 竖排轨 | `sidebarElectron.rail.*` | 已删图标轨，改官方单栏侧栏 |
 | 活动视图（未读/进行中/待回复） | `priorityThreads.*` | 已做：侧栏与手机抽屉顶部「待处理」分区列出未读、正在生成、以及待回复（最后一条是用户发言或回复失败）的会话，无内容时隐藏，且不在下方列表重复。 |
-| 组织方式 By project / By connection | `groupByMenu.*`、`flatProjectSidebar.filter` | 有项目分组，无连接分组与 All/Chat/Work 过滤 |
+| 组织方式 By project / By connection | `groupByMenu.*`、`flatProjectSidebar.filter` | 有项目分组与自定义分区，无「按连接」分组与 All/Chat/Work 过滤 |
 | 行级置顶/已读/归档/重命名/删除 | `pinThread`、`markRead`… | 已交付 |
 | 分区批量归档 | `customSections.*`、`archiveProjectThreads.*` | 已交付 |
 | 用量告警 | `usageAlert.*` | 已交付 |
@@ -111,4 +111,4 @@ Account、General、Appearance、Keyboard shortcuts、Archived chats、Data cont
 | 用量额度剩余 | `composer.mode.rateLimit.*` | 只有上下文容量气泡 |
 | 侧面板多 tab（Browser / Files / Changes） | `thread.sidePanel.*` | 已做终端/文件/改动三个 tab（⌘J 或顶栏按钮）：终端真的跑 zsh，文件列当前目录，改动读 `git status --porcelain`，并可选择别的文件夹。没做 Browser 页。 |
 | Mermaid | `codeBlock.mermaid` | 已做：原生渲染 flowchart/graph 与 sequenceDiagram（`MermaidDocument` 解析，`MermaidView` 用 Canvas 画箭头；循环边绕到框图外侧走虚线）。其余类型仍显示源码，不猜。 |
-| 定时任务真实调度 | `settings.automations.*` | 只有 UI 面板 |
+| 定时任务真实调度 | `settings.automations.*` | 已删：沙盒里的 Mac 读不到 crontab（`crontab -l` 被拒，spool 文件只有 root 可读），原来的面板是编造的任务，已整页移除。 |
