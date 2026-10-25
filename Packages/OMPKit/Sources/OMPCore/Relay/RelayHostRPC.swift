@@ -114,6 +114,12 @@ public struct HostInfo: Codable, Sendable, Equatable {
     public var cwd: String
     public var gitBranch: String?
     public var gitDirty: Int?
+    /// macOS version, e.g. "26.0.1". Optional so older hosts still decode.
+    public var osVersion: String?
+    /// CPU architecture, e.g. "arm64".
+    public var chip: String?
+    /// Physical memory in bytes.
+    public var memoryBytes: Int?
 
     public init(
         hostName: String,
@@ -121,7 +127,10 @@ public struct HostInfo: Codable, Sendable, Equatable {
         home: String,
         cwd: String,
         gitBranch: String? = nil,
-        gitDirty: Int? = nil
+        gitDirty: Int? = nil,
+        osVersion: String? = nil,
+        chip: String? = nil,
+        memoryBytes: Int? = nil
     ) {
         self.hostName = hostName
         self.user = user
@@ -129,6 +138,9 @@ public struct HostInfo: Codable, Sendable, Equatable {
         self.cwd = cwd
         self.gitBranch = gitBranch
         self.gitDirty = gitDirty
+        self.osVersion = osVersion
+        self.chip = chip
+        self.memoryBytes = memoryBytes
     }
 }
 

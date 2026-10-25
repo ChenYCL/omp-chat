@@ -591,4 +591,12 @@ final class HostExecutorTests: XCTestCase {
         let denied = await locked.handle(HostRPCRequest(id: "w5", op: "fs.write", path: file.path, prompt: "x"))
         XCTAssertEqual(denied.error, "shell_disabled")
     }
+
+    func testInfoReportsTheMachine() async {
+        let response = await executor(allowed: false).handle(HostRPCRequest(id: "hw", op: "info"))
+        XCTAssertTrue(response.ok)
+        XCTAssertFalse(response.info?.osVersion?.isEmpty ?? true, "应带系统版本")
+        XCTAssertFalse(response.info?.chip?.isEmpty ?? true, "应带芯片")
+        XCTAssertGreaterThan(response.info?.memoryBytes ?? 0, 0, "应带物理内存")
+    }
 }

@@ -225,6 +225,20 @@ public struct HostExecutor: Sendable {
 
     // MARK: Operations
 
+    /// "arm64" reads better as "Apple 芯片" on Apple Silicon; anything else
+    /// (Intel) is shown as reported.
+    static func chipName() -> String {
+        #if arch(arm64)
+        return "Apple 芯片"
+        #else
+        var system = utsname()
+        uname(&system)
+        return withUnsafePointer(to: &system.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+        #endif
+    }
+
     private func info(_ request: HostRPCRequest) -> HostRPCResponse {
         let cwd = resolve(request.cwd ?? request.path, base: homeDirectory)
         #if os(macOS)
@@ -243,7 +257,10 @@ public struct HostExecutor: Sendable {
                 home: homeDirectory,
                 cwd: cwd,
                 gitBranch: git?.branch,
-                gitDirty: git?.dirty
+                gitDirty: git?.dirty,
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                chip: Self.chipName(),
+                memoryBytes: Int(ProcessInfo.processInfo.physicalMemory)
             )
         )
     }

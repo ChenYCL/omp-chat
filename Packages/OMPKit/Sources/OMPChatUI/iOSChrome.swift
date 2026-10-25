@@ -1199,6 +1199,11 @@ struct PaseoConfigPane: View {
             if let info = session.info {
                 Section("主机") {
                     row("主机名", info.hostName)
+                    if let version = info.osVersion { row("系统", version) }
+                    if let chip = info.chip { row("芯片", chip) }
+                    if let bytes = info.memoryBytes {
+                        row("内存", ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory))
+                    }
                     row("用户", info.user)
                     row("家目录", info.home)
                     row("当前目录", info.cwd)
