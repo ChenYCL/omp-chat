@@ -62,6 +62,15 @@ final class LegacyConnectionTests: XCTestCase {
         XCTAssertFalse(settings.foldLegacyConnection(), "第二次不应再有改动")
     }
 
+    func testLegacyRoomCodeBecomesADeviceAndTheFieldIsCleared() {
+        var settings = AppSettings(remoteHubURL: "https://hub.example", remoteRoomCode: "ABC123")
+        XCTAssertTrue(settings.foldLegacyConnection())
+        XCTAssertEqual(settings.remoteRoomCode, "")
+        XCTAssertEqual(settings.pairedDevices.map(\.roomCode), ["ABC123"])
+        XCTAssertEqual(settings.pairedDevices.first?.transport, .room)
+        XCTAssertFalse(settings.foldLegacyConnection())
+    }
+
     func testExistingDeviceForTheSameEndpointIsNotOverwritten() {
         var settings = AppSettings(remoteHost: "mac.local", remotePort: 8795, remoteToken: "old")
         settings.pairedDevices.upsert(PairedDevice(name: "Studio", transport: .lan, host: "mac.local", port: 8795, token: "new"))
@@ -131,6 +140,28 @@ final class PairedDeviceVaultTests: XCTestCase {
         let d = device("keep-me")
         XCTAssertEqual(PairedDeviceVault.persistable([d], previous: [], secrets: vault)[0].token, "keep-me")
         XCTAssertFalse(PairedDeviceVault.hydrate([d], secrets: vault).needsRewrite, "迁移失败不能让文档丢掉令牌")
+    }
+
+    func testRoomCodeIsVaultedAndRestored() throws {
+        let vault = MemorySecrets()
+        let room = PairedDevice(name: "Mac", transport: .room, hubURL: "https://hub.example", roomCode: "ROOM42")
+        let stored = PairedDeviceVault.persistable([room], previous: [], secrets: vault)
+        XCTAssertEqual(stored[0].roomCode, "")
+        XCTAssertEqual(stored[0].hubURL, "https://hub.example", "中继地址不是凭据，照常落盘")
+        let json = String(decoding: try JSONEncoder().encode(stored), as: UTF8.self)
+        XCTAssertFalse(json.contains("ROOM42"), "房间码不能出现在落盘的 JSON 里")
+        let back = PairedDeviceVault.hydrate(stored, secrets: vault)
+        XCTAssertEqual(back.devices[0].roomCode, "ROOM42")
+        XCTAssertEqual(back.devices[0].endpointKey, room.endpointKey, "读回后去重键必须和配对时一致")
+        XCTAssertFalse(back.needsRewrite)
+    }
+
+    func testForgottenRoomDeviceLeavesNoRoomCodeInTheVault() {
+        let vault = MemorySecrets()
+        let room = PairedDevice(name: "Mac", transport: .room, hubURL: "https://h", roomCode: "ROOM42")
+        _ = PairedDeviceVault.persistable([room], previous: [], secrets: vault)
+        _ = PairedDeviceVault.persistable([], previous: [room], secrets: vault)
+        XCTAssertNil(vault.values[PairedDeviceVault.roomAccount(for: room.id)] ?? nil)
     }
 
     func testForgottenDeviceIsRemovedFromVault() {

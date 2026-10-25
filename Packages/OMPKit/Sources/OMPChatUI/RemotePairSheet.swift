@@ -398,8 +398,6 @@ public struct RemoteScreen: View {
 
     private func persistRoom(room: String, hub: String) {
         var settings = model.settings
-        settings.remoteRoomCode = room
-        settings.remoteHubURL = hub
         remember(
             PairedDevice(name: hostName, transport: .room, hubURL: hub, roomCode: room),
             in: &settings
@@ -441,27 +439,26 @@ public struct RemoteScreen: View {
     }
 
     private func loadSavedConnection() {
-        let settings = model.settings
-        if roomField.isEmpty {
-            roomField = settings.remoteRoomCode
-            hubField = settings.remoteHubURL
-            if !settings.remoteRoomCode.isEmpty { mode = .room }
-            else if !settings.remoteHost.isEmpty { mode = .lan }
+        // Prefill from the saved Macs (vault-backed), newest first; the old
+        // single-connection settings fields are only read once, for migration.
+        let devices = model.settings.pairedDevices
+        let fresh = roomField.isEmpty && hostField.isEmpty
+        if roomField.isEmpty, let room = devices.first(where: { $0.transport == .room }) {
+            roomField = room.roomCode
+            hubField = room.hubURL
         }
-        guard hostField.isEmpty, !settings.remoteHost.isEmpty else { return }
-        hostField = settings.remoteHost
-        portField = String(settings.remotePort)
-        // The token lives in the device list (vault-backed), not in the old
-        // single-connection field.
-        tokenField = settings.pairedDevices.first {
-            $0.transport == .lan && $0.host == settings.remoteHost && $0.port == settings.remotePort
-        }?.token ?? ""
+        if hostField.isEmpty, let lan = devices.first(where: { $0.transport == .lan }) {
+            hostField = lan.host
+            portField = String(lan.port)
+            tokenField = lan.token
+        }
+        if fresh, let newest = devices.first {
+            mode = newest.transport == .room ? .room : .lan
+        }
     }
 
     private func persistConnection(host: String, port: UInt16, token: String) {
         var settings = model.settings
-        settings.remoteHost = host
-        settings.remotePort = port
         remember(
             PairedDevice(name: hostName, transport: .lan, host: host, port: port, token: token),
             in: &settings

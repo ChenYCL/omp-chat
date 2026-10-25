@@ -117,18 +117,27 @@ extension Array where Element == PairedDevice {
     }
 }
 
-/// Keeps pairing tokens out of `workspace.json`.
+/// Keeps pairing credentials out of `workspace.json`.
 ///
-/// The settings document stores devices with an empty `token`; the real value
-/// lives in the secret store under one account per device. A token is only
-/// dropped from the document once the vault write succeeded, so a failing
-/// vault degrades to the old plaintext behaviour instead of losing the token.
+/// Both the LAN token and the room code are enough to drive the Mac, so the
+/// settings document stores them blank; the real values live in the secret
+/// store, one account per device and field. A value is only dropped from the
+/// document once its vault write succeeded, so a failing vault degrades to the
+/// old plaintext behaviour instead of losing the credential.
 public enum PairedDeviceVault {
+    /// Token account name predates the room code; kept so existing vault
+    /// entries still resolve.
     public static func account(for id: UUID) -> String { "paired-device.\(id.uuidString)" }
+    public static func roomAccount(for id: UUID) -> String { "paired-device.\(id.uuidString).room" }
 
-    /// Fills each device's token from the vault. A token still sitting in the
-    /// document (written by an earlier build) is moved into the vault, and
-    /// `needsRewrite` tells the caller to save the document without it.
+    private static var fields: [(field: WritableKeyPath<PairedDevice, String>, account: (UUID) -> String)] {
+        [(\.token, account(for:)), (\.roomCode, roomAccount(for:))]
+    }
+
+    /// Fills each device's credentials from the vault. A value still sitting in
+    /// the document (older build, or kept after a failed vault write) is the
+    /// newest one: it overwrites the vault, and `needsRewrite` tells the caller
+    /// to save the document without it.
     public static func hydrate(
         _ devices: [PairedDevice],
         secrets: any SecretStoring
@@ -136,23 +145,23 @@ public enum PairedDeviceVault {
         var needsRewrite = false
         let hydrated = devices.map { device -> PairedDevice in
             var device = device
-            if !device.token.isEmpty {
-                // A token in the document is either from an older build or was
-                // kept there because a vault write failed — both mean it is the
-                // newest value, so it wins over whatever the vault holds.
-                if (try? secrets.setSecret(device.token, for: account(for: device.id))) != nil {
-                    needsRewrite = true
+            for (field, account) in fields {
+                let name = account(device.id)
+                if !device[keyPath: field].isEmpty {
+                    if (try? secrets.setSecret(device[keyPath: field], for: name)) != nil {
+                        needsRewrite = true
+                    }
+                } else if let saved = (try? secrets.secret(for: name)) ?? nil {
+                    device[keyPath: field] = saved
                 }
-            } else if let saved = (try? secrets.secret(for: account(for: device.id))) ?? nil {
-                device.token = saved
             }
             return device
         }
         return (hydrated, needsRewrite)
     }
 
-    /// Writes every token to the vault, drops vault entries of devices that
-    /// were forgotten, and returns the devices as they should be persisted.
+    /// Writes every credential to the vault, drops vault entries of devices
+    /// that were forgotten, and returns the devices as they should be persisted.
     public static func persistable(
         _ devices: [PairedDevice],
         previous: [PairedDevice],
@@ -160,13 +169,14 @@ public enum PairedDeviceVault {
     ) -> [PairedDevice] {
         let kept = Set(devices.map(\.id))
         for gone in previous where !kept.contains(gone.id) {
-            try? secrets.setSecret(nil, for: account(for: gone.id))
+            for (_, account) in fields { try? secrets.setSecret(nil, for: account(gone.id)) }
         }
         return devices.map { device in
             var device = device
-            guard !device.token.isEmpty else { return device }
-            if (try? secrets.setSecret(device.token, for: account(for: device.id))) != nil {
-                device.token = ""
+            for (field, account) in fields where !device[keyPath: field].isEmpty {
+                if (try? secrets.setSecret(device[keyPath: field], for: account(device.id))) != nil {
+                    device[keyPath: field] = ""
+                }
             }
             return device
         }
@@ -174,22 +184,38 @@ public enum PairedDeviceVault {
 }
 
 extension AppSettings {
-    /// Folds the pre-device-list connection (`remoteHost/Port/Token`) into
-    /// `pairedDevices` and clears the plaintext token field. Returns true when
-    /// the document changed and must be saved.
+    /// Folds the pre-device-list connection fields (`remoteHost/Port/Token`,
+    /// `remoteHubURL/RoomCode`) into `pairedDevices` and clears the plaintext
+    /// credentials. Returns true when the document changed and must be saved.
     public mutating func foldLegacyConnection() -> Bool {
-        guard !remoteToken.isEmpty else { return false }
-        if !remoteHost.isEmpty {
-            let legacy = PairedDevice(
-                name: remoteHost, transport: .lan, host: remoteHost, port: remotePort, token: remoteToken,
-                lastConnectedAt: Date(timeIntervalSince1970: 0)
-            )
-            // A device already saved for this endpoint keeps its own (newer) row.
-            if !pairedDevices.contains(where: { $0.endpointKey == legacy.endpointKey }) {
-                pairedDevices.upsert(legacy)
+        var changed = false
+        if !remoteToken.isEmpty {
+            if !remoteHost.isEmpty {
+                adoptLegacy(PairedDevice(
+                    name: remoteHost, transport: .lan, host: remoteHost, port: remotePort, token: remoteToken,
+                    lastConnectedAt: Date(timeIntervalSince1970: 0)
+                ))
             }
+            remoteToken = ""
+            changed = true
         }
-        remoteToken = ""
-        return true
+        if !remoteRoomCode.isEmpty {
+            if !remoteHubURL.isEmpty {
+                adoptLegacy(PairedDevice(
+                    name: remoteRoomCode, transport: .room, hubURL: remoteHubURL, roomCode: remoteRoomCode,
+                    lastConnectedAt: Date(timeIntervalSince1970: 0)
+                ))
+            }
+            remoteRoomCode = ""
+            changed = true
+        }
+        return changed
+    }
+
+    /// A device already saved for this endpoint keeps its own (newer) row.
+    private mutating func adoptLegacy(_ legacy: PairedDevice) {
+        if !pairedDevices.contains(where: { $0.endpointKey == legacy.endpointKey }) {
+            pairedDevices.upsert(legacy)
+        }
     }
 }

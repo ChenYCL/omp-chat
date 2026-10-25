@@ -45,7 +45,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var accentColorHex: String
     /// Notify when a reply finishes while the app is in the background.
     public var completionNotifications: Bool
-    /// LAN remote relay client side (iOS): last paired Mac host.
+    /// iOS, legacy: the single-Mac connection from before `pairedDevices`.
+    /// Only read by `foldLegacyConnection()`; nothing writes these any more.
     public var remoteHost: String
     public var remotePort: UInt16
     public var remoteToken: String
@@ -59,9 +60,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var relayHubURL: String
     /// Relay hub host side (macOS): 6-character room code shared with the phone.
     public var relayRoomCode: String
-    /// Relay hub controller side (iOS): hub base URL.
+    /// iOS, legacy: hub URL and room code from before `pairedDevices`; folded
+    /// into the device list (room code into the vault) on load.
     public var remoteHubURL: String
-    /// Relay hub controller side (iOS): room code typed by the user.
     public var remoteRoomCode: String
     /// Relay host side (macOS): allow a paired phone to read files and run
     /// shell commands. Off by default; `info` stays available either way.
