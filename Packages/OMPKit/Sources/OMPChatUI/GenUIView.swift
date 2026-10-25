@@ -486,10 +486,8 @@ struct GenUIField: View {
                 if let title {
                     Text(title).font(.system(size: 13)).foregroundStyle(palette.primary)
                 }
-                // SwiftUI buttons rather than a segmented Picker: inside the
-                // transcript the UIKit segmented control never took a tap
-                // (measured in UI tests), while the same buttons used by
-                // `tabs` do.
+                // Same button style as `tabs`, with a per-option id and the
+                // selected trait so the choice is addressable and announced.
                 let current = form.value(node)
                 HStack(spacing: 2) {
                     ForEach(node.options ?? [], id: \.self) { option in
@@ -521,8 +519,8 @@ struct GenUIField: View {
                 if let title {
                     Text(title).font(.system(size: 13)).foregroundStyle(palette.primary)
                 }
-                // Single line so Return (完成) ends editing: with the keyboard
-                // open, taps on the select below were not delivered.
+                // Single line so Return (完成) closes the keyboard: while it is
+                // up, the composer bar covers the controls just below the field.
                 TextField(node.placeholder ?? "", text: form.binding(node))
                     .submitLabel(.done)
                     .accessibilityIdentifier(identifier)
