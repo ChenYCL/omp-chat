@@ -79,6 +79,25 @@
 - iOS 端：`RemoteRelayClient`（`URLSession.bytes` 逐行解析 SSE，断线 1s→5s 退避重连）+ `RemotePairSheet`（配对表单 → 主机会话列表 → 只读远程会话屏，可发送与停止）；主界面右下角天线按钮进入
 - 协议文档 `docs/relay-protocol.md`；设计取舍：镜像结构化状态而非字符流/截屏，SSE 推 rev 后按需全量拉快照
 
+### 2.8 手机端完整操控台（moshi / collie / herdr 的内核）
+
+iPhone 不是只读镜像，而是能完成全部交互的远程控制台。所有动作都表达为 `RelayCommand`，
+由 Mac 用自己的模型方法执行 —— 单一事实来源，手机不持有权威状态。
+
+- 指令面 16 条：发送 / 停止 / 切换会话 / 新建 / 重命名 / 删除 / 重新生成 / 删除单条消息 /
+  编辑重发 / 从消息分支 / 赞踩 / 切换模型 / 置顶 / 归档 / 锁定 / 标记未读
+- 线格式 `RelayCommandWire`（扁平 JSON），LAN 服务端、中继、Python hub、双端共用同一份编码
+- `RemoteConsoleScreen`：助手正文走画布 + 流式光标、用户气泡、长按操作菜单、状态 chips、
+  流式感知输入条、顶栏菜单（重命名/重生成/置顶/归档/未读/删除）
+
+### 2.9 跨网络（房间码 + 公网中继，对齐网易 UU 远程的拓扑）
+
+- 两端都向外拨号到同一台中继，用 6 位房间码相遇：**不需要同一 Wi-Fi、不需要公网 IP、不开端口**
+- `tools/relay-hub/relay_hub.py`：零依赖 asyncio 参考实现（主机流 / 状态上报 / 客户端流 /
+  指令转发 / 房间回收 / 同 IP 配对限速）
+- 设置 → 远程控制「跨网络」开关 + 中继地址 + 房间码（复制/换一个）；LAN 与中继**并行运行**
+- 协议 `docs/relay-hub.md`；中继只转发结构化会话状态，不保存聊天内容
+
 ## 3. 架构约束（不可破坏）
 
 - 会话解码一律 `decodeIfPresent`，新增字段必须有默认值，旧 `workspace.json` 必须能打开。
@@ -93,6 +112,7 @@
 
 - `cd Packages/OMPKit && swift test --jobs 4`：OMPCoreTests + OMPChatUITests 全绿（当前 46 个）。
 - macOS 与 iOS Simulator 双端 `xcodebuild` 通过后，`ditto` 覆盖 `/Applications/OMPChat.app`。
+- iOS UI 测试：`xcodebuild -scheme OMPChatiOS -destination 'platform=iOS Simulator,id=<UDID>' test`，7 个用例覆盖三 Tab / 抽屉 / 主机四态（含真实终端）/ 远程配对 / 发送与草稿 / 深色模式，截图导出到 `/tmp/ompchat-uitest-shots`。
 - 每个功能一个提交，推送 `origin/main`（仓库已配置 `http.proxy` 走本机 7897）。
 
 ## 5. 演进路线（按优先级）
