@@ -141,6 +141,70 @@ public struct ComposerBar: View {
         .padding(.bottom, 2)
     }
 
+    /// `b` → `**`, `i` → `*`, `u` → `~~`? No: ⌘U is underline, which Markdown has
+    /// no syntax for, so it wraps in `<u>` — matching what the renderer shows.
+    public static func markdownWrap(for characters: String) -> (open: String, close: String)? {
+        switch characters.lowercased() {
+        case "b": return ("**", "**")
+        case "i": return ("*", "*")
+        case "u": return ("<u>", "</u>")
+        default: return nil
+        }
+    }
+
+    /// Wraps the whole draft (or unwraps it when it already is) and reports
+    /// whether anything changed. TextField exposes no selection range, so this
+    /// works on the whole field, which is what the shortcut does on an empty
+    /// selection anyway.
+    @discardableResult
+    public static func wrapSelection(_ text: inout String, with wrap: (open: String, close: String)) -> Bool {
+        let trimmed = text
+        guard !trimmed.isEmpty else { return false }
+        // Only unwrap when this exact marker is the whole run: `**x**` is bold,
+        // and ⚘ italic must not cannibalise one asterisk from each side and
+        // leave `*x*`. A longer run means the text carries other styling, so
+        // wrap instead (bold then italic gives `***x***`).
+        if isWrapped(trimmed, open: wrap.open, close: wrap.close),
+           hasMarker(trimmed, marker: wrap.open) {
+            text = String(trimmed.dropFirst(wrap.open.count).dropLast(wrap.close.count))
+        } else {
+            text = wrap.open + trimmed + wrap.close
+        }
+        return true
+    }
+
+    /// Whether this marker is currently applied at the edges.
+    /// `**x**` carries bold only, `***x***` bold and italic, and
+    /// `<u>x</u>` underline, so a star run is counted as a set of markers:
+    /// two stars mean bold, an odd one means italic. Without this, adding
+    /// italic to bold stripped one star from each side and produced `*x*`.
+    private static func hasMarker(_ text: String, marker: String) -> Bool {
+        let leading = leadingRun(text)
+        let trailing = trailingRun(text)
+        guard leading > 0, trailing > 0 else { return false }
+        switch marker {
+        case "**": return leading >= 2 && leading % 2 == 0
+        case "*": return leading % 2 == 1
+        default: return leading == marker.count && trailing == marker.count
+        }
+    }
+
+    private static func isWrapped(_ text: String, open: String, close: String) -> Bool {
+        text.hasPrefix(open) && text.hasSuffix(close)
+            && text.count > open.count + close.count
+    }
+
+    /// Length of the leading run of the text's first character.
+    private static func leadingRun(_ text: String) -> Int {
+        guard let first = text.first else { return 0 }
+        return text.prefix { $0 == first }.count
+    }
+
+    private static func trailingRun(_ text: String) -> Int {
+        guard let last = text.last else { return 0 }
+        return text.reversed().prefix { $0 == last }.count
+    }
+
     /// RichTextInput: official 16pt with 1.5 leading.
     private var composerInput: some View {
         @Bindable var model = model
@@ -152,6 +216,8 @@ public struct ComposerBar: View {
             .focused($focused)
             .focusEffectDisabled()
             .padding(.top, 2)
+            // Bold/italic/underline live on the app's 格式 menu: a TextField
+            // never delivers command-modified keys to onKeyPress.
             .onKeyPress(phases: .down) { press in
                 guard press.key == .return, !press.modifiers.contains(.shift) else { return .ignored }
                 guard model.settings.sendOnReturn else { return .ignored }
@@ -202,6 +268,7 @@ public struct ComposerBar: View {
             .help("添加素材与工具")
 
             webSearchPill
+            formatPills
             modelPill
 
             Button {
@@ -241,6 +308,29 @@ public struct ComposerBar: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 32)
+    }
+
+    /// Bold / italic / underline as source-markup buttons, the clickable form
+    /// of ⌘B / ⌘I / ⌘U (official composer.formatToolbar).
+    private var formatPills: some View {
+        HStack(spacing: 2) {
+            ForEach([("B", "b", "加粗 ⌘B"), ("I", "i", "斜体 ⌘I"), ("U", "u", "下划线 ⌘U")], id: \.1) { item in
+                Button {
+                    if let wrap = Self.markdownWrap(for: item.1) {
+                        Self.wrapSelection(&model.draft, with: wrap)
+                    }
+                } label: {
+                    Text(item.0)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.draft.isEmpty)
+                .help(item.2)
+            }
+        }
     }
 
     /// 🌐 联网 toggle pill (real `webSearchEnabled` state).
