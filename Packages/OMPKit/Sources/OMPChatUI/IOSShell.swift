@@ -754,6 +754,24 @@ struct ShellDrawer: View {
         return model.sortedConversations.filter { ids.contains($0.id) }
     }
 
+    /// Reorders within the visible list and persists the new indexes.
+    private func moveRow(_ conv: Conversation, by step: Int) {
+        var order = model.sortedConversations
+        guard let from = order.firstIndex(where: { $0.id == conv.id }) else { return }
+        let to = from + step
+        guard order.indices.contains(to) else { return }
+        let moved = order.remove(at: from)
+        order.insert(moved, at: to)
+        model.reorderConversations(order)
+    }
+
+    private func setManualOrder() {
+        var settings = model.settings
+        settings.conversationSort = "manual"
+        // Persisted through the model so the desktop sidebar agrees.
+        Task { await model.saveSettings(settings) }
+    }
+
     private func conversationRow(_ conv: Conversation) -> some View {
             Button {
                 onSelectConversation(conv.id)
@@ -799,6 +817,21 @@ struct ShellDrawer: View {
                 }
                 Button { model.toggleArchive(conv.id) } label: {
                     Label(conv.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
+                }
+                Divider()
+                // Moving rows is only meaningful in manual order; offering it
+                // under a date sort would change nothing on screen.
+                if model.settings.conversationSort == "manual" {
+                    Button { moveRow(conv, by: -1) } label: {
+                        Label("上移", systemImage: "arrow.up")
+                    }
+                    Button { moveRow(conv, by: 1) } label: {
+                        Label("下移", systemImage: "arrow.down")
+                    }
+                } else {
+                    Button { setManualOrder() } label: {
+                        Label("切换为手动排序", systemImage: "arrow.up.arrow.down")
+                    }
                 }
                 Divider()
                 Button(role: .destructive) { model.deleteConversation(conv.id) } label: {

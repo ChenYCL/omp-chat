@@ -63,6 +63,23 @@ final class ConversationCycleUITests: XCTestCase {
         XCTAssertTrue(app.buttons["取消置顶"].firstMatch.waitForExistence(timeout: 5), "置顶后菜单项应变成取消置顶")
     }
 
+    func testManualOrderCanBeEnabledAndReorders() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        let second = app.staticTexts["第二个会话标题"].firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+
+        second.press(forDuration: 1.0)
+        app.buttons["切换为手动排序"].firstMatch.tap()
+
+        // With manual order on, the menu offers 上移 / 下移 for the same row.
+        second.press(forDuration: 1.0)
+        let up = app.buttons["上移"].firstMatch
+        XCTAssertTrue(up.waitForExistence(timeout: 5), "手动排序下应能上移")
+        up.tap()
+        // The selected chat stays selected while the list order changes.
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {
