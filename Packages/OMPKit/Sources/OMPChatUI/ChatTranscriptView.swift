@@ -49,6 +49,12 @@ public struct ChatTranscriptView: View {
             .onChange(of: model.selectedConversationID) { _, _ in
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .ompScrollToMessage)) { note in
+                guard let id = note.userInfo?["messageID"] as? UUID else { return }
+                withAnimation(Theme.Motion.quick) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .ompScrollToBottom)) { _ in
                 withAnimation(Theme.Motion.quick) {
                     proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)

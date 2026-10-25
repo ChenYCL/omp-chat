@@ -118,3 +118,15 @@ public enum MarkdownFormatting {
         return NSRange(location: location, length: clamped)
     }
 }
+
+/// Position arithmetic for in-chat search: which hit to move to next.
+public enum SearchCursor {
+    /// Next index in `0..<count` after `current`, wrapping both ways.
+    /// `current == nil` means nothing was jumped to yet: "next" starts at the
+    /// first hit and "previous" at the last.
+    public static func step(from current: Int?, by step: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        let base = current ?? (step > 0 ? -1 : 0)
+        return ((base + step) % count + count) % count
+    }
+}

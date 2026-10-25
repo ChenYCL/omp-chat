@@ -71,4 +71,12 @@ final class MarkdownFormattingTests: XCTestCase {
         XCTAssertEqual(ComposerBar.style(for: "u"), .underline)
         XCTAssertNil(ComposerBar.style(for: "x"))
     }
+
+    func testSearchCursorWrapsBothWays() {
+        XCTAssertEqual(SearchCursor.step(from: nil, by: 1, count: 3), 0, "还没跳过时，下一处是第一处")
+        XCTAssertEqual(SearchCursor.step(from: nil, by: -1, count: 3), 2, "上一处从最后一处开始")
+        XCTAssertEqual(SearchCursor.step(from: 2, by: 1, count: 3), 0, "走到末尾回到开头")
+        XCTAssertEqual(SearchCursor.step(from: 0, by: -1, count: 3), 2, "开头往前回到末尾")
+        XCTAssertNil(SearchCursor.step(from: nil, by: 1, count: 0), "没有匹配就没有下一处")
+    }
 }

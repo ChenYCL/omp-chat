@@ -13,6 +13,8 @@ public extension Notification.Name {
     static let ompToggleSidebar = Notification.Name("omp.toggleSidebar")
     static let ompVoiceMode = Notification.Name("omp.voiceMode")
     static let ompScrollToBottom = Notification.Name("omp.scrollToBottom")
+    /// userInfo["messageID"]: scroll that message into view (in-chat search).
+    static let ompScrollToMessage = Notification.Name("omp.scrollToMessage")
     static let ompToggleTerminal = Notification.Name("omp.toggleTerminal")
 }
 
@@ -111,6 +113,8 @@ public struct ChatDetailView: View {
     @State private var showOptions = false
     @State private var inChatSearch = ""
     @State private var showInChatSearch = false
+    /// Message the search currently sits on, so the label can show "2/5".
+    @State private var matchCursor: UUID?
     @State private var showRenameAlert = false
     @State private var renamingTitle = ""
     @ObservedObject private var network = NetworkMonitor.shared
@@ -367,9 +371,15 @@ public struct ChatDetailView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                 if !inChatSearch.isEmpty {
-                    Text("\(matchCount) 处")
+                    Text(matchLabel)
                         .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(Color.ompTextTertiary)
+                    // Jump between hits instead of only counting them: ⌃↓ / ⌃↑
+                    // and these arrows move the transcript to each match.
+                    // A 9pt glyph alone is a few pixels of hit area; the frame
+                    // and contentShape make the whole 18×18 square clickable.
+                    matchButton("chevron.up", help: "上一处 (⌃↑)", key: .upArrow) { moveMatch(by: -1) }
+                    matchButton("chevron.down", help: "下一处 (⌃↓)", key: .downArrow) { moveMatch(by: 1) }
                 }
                 Button {
                     showInChatSearch = false
@@ -389,12 +399,56 @@ public struct ChatDetailView: View {
         }
     }
 
-    private var matchCount: Int {
+    private func matchButton(
+        _ symbol: String, help: String, key: KeyEquivalent, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(matches.count < 2 ? Color.ompTextTertiary : Color.ompTextSecondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(matches.count < 2)
+        .keyboardShortcut(key, modifiers: .control)
+        .help(help)
+    }
+
+    /// Messages containing the query, in transcript order.
+    private var matches: [UUID] {
         let query = inChatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, let conversation = model.selectedConversation else { return 0 }
+        guard !query.isEmpty, let conversation = model.selectedConversation else { return [] }
         return conversation.messages.filter {
             $0.concatenatedText.localizedCaseInsensitiveContains(query)
-        }.count
+        }.map(\.id)
+    }
+
+    private var matchCount: Int { matches.count }
+
+    /// "2/5" while walking hits, count alone when nothing was jumped to yet.
+    private var matchLabel: String {
+        let hits = matches
+        guard !hits.isEmpty else { return "无匹配" }
+        if let index = matchCursor, let position = hits.firstIndex(of: index) {
+            return "\(position + 1)/\(hits.count)"
+        }
+        return "\(hits.count) 处"
+    }
+
+    private func moveMatch(by step: Int) {
+        let hits = matches
+        guard !hits.isEmpty else { return }
+        let current = matchCursor.flatMap { hits.firstIndex(of: $0) }
+        guard let next = SearchCursor.step(from: current, by: step, count: hits.count) else { return }
+        matchCursor = hits[next]
+        if let id = matchCursor {
+            NotificationCenter.default.post(
+                name: .ompScrollToMessage,
+                object: nil,
+                userInfo: ["messageID": id]
+            )
+        }
     }
 
     private func shareConversation() {
