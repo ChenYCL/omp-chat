@@ -36,25 +36,13 @@ struct OMPChatApp: App {
                 // Menu commands, not onKeyPress: SwiftUI's TextField does not
                 // deliver command-modified keys to onKeyPress, so the same
                 // shortcuts had to live on menu items to fire at all.
-                Button("加粗") {
-                    if let wrap = ComposerBar.markdownWrap(for: "b") {
-                        ComposerBar.wrapSelection(&model.draft, with: wrap)
-                    }
-                }
+                Button("加粗") { model.applyMarkdown(.bold) }
                 .keyboardShortcut("b", modifiers: [.command, .shift])
 
-                Button("斜体") {
-                    if let wrap = ComposerBar.markdownWrap(for: "i") {
-                        ComposerBar.wrapSelection(&model.draft, with: wrap)
-                    }
-                }
+                Button("斜体") { model.applyMarkdown(.italic) }
                 .keyboardShortcut("i", modifiers: .command)
 
-                Button("下划线") {
-                    if let wrap = ComposerBar.markdownWrap(for: "u") {
-                        ComposerBar.wrapSelection(&model.draft, with: wrap)
-                    }
-                }
+                Button("下划线") { model.applyMarkdown(.underline) }
                 .keyboardShortcut("u", modifiers: .command)
             }
             CommandMenu("对话") {

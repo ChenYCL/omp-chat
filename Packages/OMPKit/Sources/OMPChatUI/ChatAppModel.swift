@@ -50,6 +50,13 @@ public final class ChatAppModel {
         }
     }
     public var draft = ""
+    /// Applies bold / italic / underline to the draft. The composer is a
+    /// SwiftUI TextField, which exposes no selection, so this covers the whole
+    /// draft; `MarkdownFormatting` already takes a range for when it can.
+    public func applyMarkdown(_ style: MarkdownFormatting.Style) {
+        draft = MarkdownFormatting.toggle(style, in: draft, selection: nil).text
+    }
+
     /// The composer's 联网 pill. When on, the next request asks the gateway
     /// to search the web server-side (`tools: [{type: web_search}]`).
     public var webSearchEnabled = false
