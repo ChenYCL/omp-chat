@@ -787,6 +787,24 @@ struct ShellDrawer: View {
                 )
             }
             .buttonStyle(.plain)
+            // Rows live in a ScrollView, not a List, so swipeActions does not
+            // apply; a context menu is the phone's equivalent for the desktop
+            // row's pin / archive / delete menu.
+            .contextMenu {
+                Button { model.togglePin(conv.id) } label: {
+                    Label(conv.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
+                }
+                Button { model.setUnread(conv.id, unread: !conv.hasUnread) } label: {
+                    Label(conv.hasUnread ? "标记已读" : "标记未读", systemImage: "envelope.badge")
+                }
+                Button { model.toggleArchive(conv.id) } label: {
+                    Label(conv.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
+                }
+                Divider()
+                Button(role: .destructive) { model.deleteConversation(conv.id) } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
     }
 
     private var filteredConversations: [Conversation] {

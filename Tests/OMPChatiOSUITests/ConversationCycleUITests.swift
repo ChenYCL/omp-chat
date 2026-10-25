@@ -49,6 +49,20 @@ final class ConversationCycleUITests: XCTestCase {
         XCTAssertEqual(rows.count, 1, "未读会话只应在 待处理 里出现一次")
     }
 
+    func testDrawerRowMenuPinsAndUnpins() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        let row = app.staticTexts["第二个会话标题"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+
+        // Long-press opens the row's menu; 置顶 should become 取消置顶 after it runs.
+        row.press(forDuration: 1.0)
+        app.buttons["置顶"].firstMatch.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "置顶后抽屉应仍在")
+
+        row.press(forDuration: 1.0)
+        XCTAssertTrue(app.buttons["取消置顶"].firstMatch.waitForExistence(timeout: 5), "置顶后菜单项应变成取消置顶")
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {
