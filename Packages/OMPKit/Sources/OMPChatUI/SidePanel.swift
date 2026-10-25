@@ -12,6 +12,7 @@ struct SidePanel: View {
         case terminal = "终端"
         case files = "文件"
         case changes = "改动"
+        case browser = "浏览器"
         var id: String { rawValue }
     }
 
@@ -51,6 +52,8 @@ struct SidePanel: View {
                 fileList
             case .changes:
                 changeList
+            case .browser:
+                BrowserPane()
             }
         }
         .background(Color.ompCanvas)
