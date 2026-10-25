@@ -308,6 +308,7 @@ public struct MacShellSidebar: View {
                     ForEach(filtered) { row($0) }
                     if filtered.isEmpty { emptyHint }
                 } else {
+                    prioritySection
                     pinnedSection
                     customSections
                     projectSections
@@ -408,6 +409,26 @@ public struct MacShellSidebar: View {
     }
 
     // MARK: Sections
+
+    /// Official `priorityThreads` idea: what wants attention right now —
+    /// unread replies and whichever conversation is still generating. Hidden
+    /// when there is nothing waiting, so it never takes space for nothing.
+    private var priorityItems: [Conversation] {
+        model.sortedConversations.filter { conversation in
+            guard !conversation.isArchived, !conversation.isLocked else { return false }
+            return conversation.hasUnread || conversation.id == model.streamingConversationID
+        }
+    }
+
+    private var prioritySection: some View {
+        let items = priorityItems
+        return Group {
+            if !items.isEmpty {
+                sectionHeader("待处理")
+                ForEach(items) { row($0) }
+            }
+        }
+    }
 
     private var pinnedSection: some View {
         let pinned = model.sortedConversations.filter { $0.isPinned && !$0.isArchived && !$0.isLocked }
