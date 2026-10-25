@@ -288,6 +288,13 @@ struct ChatScreen: View {
             } label: {
                 Label("临时对话", systemImage: "eye.slash")
             }
+            Divider()
+            Button { model.selectPreviousConversation() } label: {
+                Label("上一个对话", systemImage: "chevron.up")
+            }
+            Button { model.selectNextConversation() } label: {
+                Label("下一个对话", systemImage: "chevron.down")
+            }
             if let conversation = model.selectedConversation {
                 Divider()
                 Button {
@@ -325,6 +332,7 @@ struct ChatScreen: View {
             .padding(.vertical, 6)
             .background(Color.ompFill.opacity(0.6), in: Capsule())
         }
+        .accessibilityIdentifier("shell.title")
     }
 
     private var scrollChevron: some View {

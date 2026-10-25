@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		133E9B06146BB48356845D06 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FC10A98B20FF37D0174B36AB /* OMPDesign */; };
 		17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */; };
+		1B15124E89A25F4F838DE4AB /* ConversationCycleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7742882C23E4FCE286846479 /* ConversationCycleUITests.swift */; };
 		3981CFCF8D9E62773D6B1E14 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */; };
 		50F968C61F4012EB0E471103 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0FF631BA1332E6394354C5A7 /* OMPCore */; };
 		5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 9F83DF7DC8DC788D829018A6 /* OMPDesign */; };
@@ -44,6 +45,7 @@
 		57D198FF73A36BECC16ED550 /* OMPChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OMPChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A3C954699D33223A1C904DD /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenUIUITests.swift; sourceTree = "<group>"; };
+		7742882C23E4FCE286846479 /* ConversationCycleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationCycleUITests.swift; sourceTree = "<group>"; };
 		7B84D82AF8BFB3AB1B2A9C82 /* OMPChatiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OMPChatiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B9AFA16587DE442308853B9 /* OMPChatiOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OMPChatiOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesUITests.swift; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 		CC2B83CCDE0E72715966B326 /* OMPChatiOSUITests */ = {
 			isa = PBXGroup;
 			children = (
+				7742882C23E4FCE286846479 /* ConversationCycleUITests.swift */,
 				86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */,
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
@@ -343,6 +346,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1B15124E89A25F4F838DE4AB /* ConversationCycleUITests.swift in Sources */,
 				618F843E0DEE2728DDA2C57D /* DevicesUITests.swift in Sources */,
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
