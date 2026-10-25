@@ -71,11 +71,11 @@ public struct ProviderSettingsView: View {
                 providersSection
                 defaultModelSection
                 generationSection
-                iosPersonalizationSection
+                personalizationSection
                 appearanceSection
                 speechSection
-                iosNotificationsSection
-                iosSortingSection
+                notificationsSection
+                sortingSection
                 iosDataControlsSection
                 aboutSection
             }
@@ -327,43 +327,6 @@ public struct ProviderSettingsView: View {
             shortcutRow("折叠侧栏", "⌘B")
             shortcutRow("上一个 / 下一个对话", "⌥↑ / ⌥↓")
             shortcutRow("偏好设置", "⌘,")
-        }
-    }
-
-    private var sortingSection: some View {
-        Section {
-            Picker("排序方式", selection: $draft.conversationSort) {
-                Text("最近更新").tag("updated")
-                Text("创建时间").tag("created")
-                Text("手动排序").tag("manual")
-            }
-            .pickerStyle(.inline)
-        } header: {
-            Text("侧栏会话排序")
-        } footer: {
-            Text("手动排序时，拖拽会话行调整的顺序会被保留；置顶会话始终排在最前。")
-        }
-    }
-
-    private var personalizationSection: some View {
-        Section {
-            TextField("全局自定义指令", text: $draft.customInstructions, axis: .vertical)
-                .lineLimit(3...8)
-            Toggle("记忆上下文（跨对话记住要点）", isOn: $draft.enableMemories)
-        } header: {
-            Text("个性化")
-        } footer: {
-            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效；「ChatGPT → 设置 → 个性化 → 自定义指令」同款。")
-        }
-    }
-
-    private var notificationsSection: some View {
-        Section {
-            Toggle("后台生成完成时通知我", isOn: $draft.completionNotifications)
-        } header: {
-            Text("通知")
-        } footer: {
-            Text("App 在后台时，回复生成完毕会发送系统通知。首次开启需要授权通知权限。")
         }
     }
 
@@ -675,14 +638,22 @@ public struct ProviderSettingsView: View {
     }
     #endif
 
+    private var sortingSection: some View {
+        Section {
+            Picker("排序方式", selection: $draft.conversationSort) {
+                Text("最近更新").tag("updated")
+                Text("创建时间").tag("created")
+                Text("手动排序").tag("manual")
+            }
+            .pickerStyle(.inline)
+        } header: {
+            Text("侧栏会话排序")
+        } footer: {
+            Text("手动排序时，拖拽会话行调整的顺序会被保留；置顶会话始终排在最前。")
+        }
+    }
 
-    // MARK: iOS-only settings sections
-    //
-    // 个性化 / 通知 / 排序 / 数据控制 live inside the desktop's `#if os(macOS)`
-    // block, so the phone's form could not reach them. Same controls, same
-    // `draft`; data controls share instead of using NSSavePanel.
-
-    private var iosPersonalizationSection: some View {
+    private var personalizationSection: some View {
         Section {
             TextField("全局自定义指令", text: $draft.customInstructions, axis: .vertical)
                 .lineLimit(3...8)
@@ -690,11 +661,11 @@ public struct ProviderSettingsView: View {
         } header: {
             Text("个性化")
         } footer: {
-            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效。")
+            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效；「ChatGPT → 设置 → 个性化 → 自定义指令」同款。")
         }
     }
 
-    private var iosNotificationsSection: some View {
+    private var notificationsSection: some View {
         Section {
             Toggle("后台生成完成时通知我", isOn: $draft.completionNotifications)
         } header: {
@@ -704,19 +675,11 @@ public struct ProviderSettingsView: View {
         }
     }
 
-    private var iosSortingSection: some View {
-        Section {
-            Picker("排序方式", selection: $draft.conversationSort) {
-                Text("最近更新").tag("updated")
-                Text("创建时间").tag("created")
-                Text("手动排序").tag("manual")
-            }
-        } header: {
-            Text("侧栏会话排序")
-        } footer: {
-            Text("手动排序时，会话行菜单里的上移/下移会被保留；置顶会话始终排在最前。")
-        }
-    }
+
+    // MARK: iOS-only settings sections
+    //
+    // 数据控制 needs a different export control per platform (ShareLink here,
+    // NSSavePanel on macOS); 个性化 / 通知 / 排序 are shared above.
 
     private var iosDataControlsSection: some View {
         Section {
