@@ -118,6 +118,25 @@ final class GenUIUITests: XCTestCase {
         )
     }
 
+    func testDeletingAMessageAsksFirst() {
+        openSeededChat()
+        let message = app.staticTexts["总览说明一行。"].firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+
+        // The row menu's delete item carries the system's English "Trash"
+        // accessibility label, not the visible 删除.
+        message.press(forDuration: 1.0)
+        let trash = app.buttons.matching(identifier: "Trash").allElementsBoundByIndex.last { $0.isHittable }
+        XCTAssertNotNil(trash, "消息菜单应有删除项")
+        trash?.tap()
+
+        let sheet = app.sheets["删除这条消息？"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "删除单条消息应先确认")
+        XCTAssertTrue(message.exists, "确认前消息还在")
+        sheet.buttons["删除消息"].firstMatch.tap()
+        XCTAssertFalse(message.waitForExistence(timeout: 3), "确认后消息被删除")
+    }
+
     // MARK: - Helpers
 
     /// The seeded conversation is already selected at launch, so the chat

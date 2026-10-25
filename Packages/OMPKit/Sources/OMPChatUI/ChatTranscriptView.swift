@@ -5,6 +5,7 @@ import OMPDesign
 public struct ChatTranscriptView: View {
     @Environment(ChatAppModel.self) private var model
     @State private var showingBatchDeleteConfirmation = false
+    @State private var pendingMessageDelete: ChatMessage?
 
     public init() {}
 
@@ -49,6 +50,21 @@ public struct ChatTranscriptView: View {
             .onChange(of: model.selectedConversationID) { _, _ in
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
+            .confirmationDialog(
+                "删除这条消息？",
+                isPresented: Binding(get: { pendingMessageDelete != nil },
+                                     set: { if !$0 { pendingMessageDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: pendingMessageDelete
+            ) { message in
+                Button("删除消息", role: .destructive) {
+                    model.deleteMessage(message.id)
+                    pendingMessageDelete = nil
+                }
+                Button("取消", role: .cancel) { pendingMessageDelete = nil }
+            } message: { _ in
+                Text("删除后无法撤销。")
+            }
             .onReceive(NotificationCenter.default.publisher(for: .ompScrollToMessage)) { note in
                 guard let id = note.userInfo?["messageID"] as? UUID else { return }
                 withAnimation(Theme.Motion.quick) {
@@ -73,7 +89,8 @@ public struct ChatTranscriptView: View {
                 model.editAndResend(message.id, newText: text)
             } : nil,
             branch: { _ = model.branch(from: message.id) },
-            delete: { model.deleteMessage(message.id) },
+            // Deleting one message asks first, like deleting a chat does.
+            delete: { pendingMessageDelete = message },
             regenerate: message.role == .assistant ? { model.regenerateLast() } : nil,
             feedback: message.role == .assistant ? { value in
                 model.setFeedback(message.id, value: value)
