@@ -159,6 +159,7 @@ struct ChatScreen: View {
     let onOpenHostPane: (IOSShell.HostPane) -> Void
 
     @State private var showingSubagents = false
+    @State private var showingHistory = false
 
     init(
         onOpenDrawer: @escaping () -> Void = {},
@@ -197,6 +198,12 @@ struct ChatScreen: View {
             }
             .background(IOSShellMetrics.tabBarBackground)
         }
+        .sheet(isPresented: $showingHistory) {
+            PaseoSessionHistorySheet { id in
+                model.selectedConversationID = id
+            }
+            .environment(model)
+        }
         .sheet(isPresented: $showingSubagents) {
             NavigationStack { CLISessionsSheet() }
                 .environment(model)
@@ -224,6 +231,9 @@ struct ChatScreen: View {
             Spacer()
 
             Menu {
+                Button { showingHistory = true } label: {
+                    Label("搜索会话", systemImage: "magnifyingglass")
+                }
                 Button {
                     model.showSettings = true
                 } label: {
