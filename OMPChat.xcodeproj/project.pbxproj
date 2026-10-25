@@ -20,6 +20,7 @@
 		8CD1E4FF8E40450ACBF400D9 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0D24C4132E82A847FFEFC53A /* OMPChatUI */; };
 		90CA8714BE45F88765ABAF5B /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3C954699D33223A1C904DD /* SmokeTests.swift */; };
 		979E72E7690ACF24609BEDC1 /* OMPChatiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */; };
+		984DCC911C4A5A81AA890EC4 /* ExportMenuUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */; };
 		BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */; };
 		BF6A5C9C9D79E4BFE7F4B915 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5186DC0EFA32A3939E576ACE /* OMPChatUI */; };
 		C9C6F4B0CB7844B7154C87A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D76CE3C86BE12307212872C4 /* Assets.xcassets */; };
@@ -59,6 +60,7 @@
 		A28AFEA8439E281774F3A040 /* OMPChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatApp.swift; sourceTree = "<group>"; };
 		C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D76CE3C86BE12307212872C4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMenuUITests.swift; sourceTree = "<group>"; };
 		FF0E7E503D25CD720139B116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -147,6 +149,7 @@
 				5E043CE04B4BDDC2BDA7AB8D /* ArchivedChatsUITests.swift */,
 				7742882C23E4FCE286846479 /* ConversationCycleUITests.swift */,
 				86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */,
+				D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */,
 				55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */,
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
@@ -358,6 +361,7 @@
 				EC5666AA69FA95C6FAED370B /* ArchivedChatsUITests.swift in Sources */,
 				1B15124E89A25F4F838DE4AB /* ConversationCycleUITests.swift in Sources */,
 				618F843E0DEE2728DDA2C57D /* DevicesUITests.swift in Sources */,
+				984DCC911C4A5A81AA890EC4 /* ExportMenuUITests.swift in Sources */,
 				CA365FC444C45754602D0920 /* FindInChatUITests.swift in Sources */,
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,

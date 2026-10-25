@@ -281,6 +281,14 @@ struct ChatScreen: View {
                     ShareLink(item: model.exportHTML(conversation)) {
                         Label("分享会话", systemImage: "square.and.arrow.up")
                     }
+                    // JSON is the backup format the desktop exports, and the one
+                    // 导入 reads back; the phone could not produce it.
+                    ShareLink(
+                        item: model.exportJSON(conversation),
+                        preview: SharePreview("\(conversation.title).json")
+                    ) {
+                        Label("导出 JSON 备份", systemImage: "curlybraces")
+                    }
                 }
             } label: {
                 Image(systemName: "ellipsis")
