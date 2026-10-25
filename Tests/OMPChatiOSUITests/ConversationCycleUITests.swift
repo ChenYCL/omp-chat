@@ -34,11 +34,19 @@ final class ConversationCycleUITests: XCTestCase {
         // down the sidebar to the older one, 上一个对话 comes back.
         title.tap()
         app.buttons["下一个对话"].firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["第一个会话标题"].waitForExistence(timeout: 5), "下一个对话应走到侧栏里更早的那条")
+        XCTAssertTrue(app.staticTexts["未读会话标题"].waitForExistence(timeout: 5), "下一个对话应走到侧栏里更早的那条")
 
         title.tap()
         app.buttons["上一个对话"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["第二个会话标题"].waitForExistence(timeout: 5), "上一个对话应回到更新的那条")
+    }
+
+    func testDrawerListsUnreadConversationUnderPendingWithoutDuplicatingIt() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["待处理"].waitForExistence(timeout: 5), "抽屉应有 待处理 分组")
+        // 待处理 + 主列表各出现一次就会重复；标题只应有一处。
+        let rows = app.staticTexts.matching(identifier: "未读会话标题")
+        XCTAssertEqual(rows.count, 1, "未读会话只应在 待处理 里出现一次")
     }
 
     // MARK: - Helpers
@@ -56,6 +64,12 @@ final class ConversationCycleUITests: XCTestCase {
                 "status": "complete",
             ]
         }
+        func unreadConversation(_ title: String, minute: Int) -> [String: Any] {
+            var item = conversation(title, "未读的一条", minute: minute)
+            item["hasUnread"] = true
+            return item
+        }
+
         func conversation(_ title: String, _ body: String, minute: Int) -> [String: Any] {
             [
                 "alternativeReplies": [],
@@ -75,6 +89,7 @@ final class ConversationCycleUITests: XCTestCase {
         let workspace: [String: Any] = [
             "conversations": [
                 conversation("第一个会话标题", "第一段内容", minute: 0),
+                unreadConversation("未读会话标题", minute: 3),
                 conversation("第二个会话标题", "第二段内容", minute: 5),
             ],
             "models": [],

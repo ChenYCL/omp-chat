@@ -619,41 +619,20 @@ struct ShellDrawer: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    ForEach(filteredConversations) { conv in
-                        Button {
-                            onSelectConversation(conv.id)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(conv.title)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(Color.ompText)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(conv.updatedAt.formatted(.relative(presentation: .named)))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Color.ompTextTertiary)
-                                if model.streamingConversationID == conv.id {
-                                    ProgressView().controlSize(.mini)
-                                } else if conv.hasUnread {
-                                    Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                                } else if conv.id == model.selectedConversationID {
-                                    Circle().fill(Color.ompText).frame(width: 5, height: 5)
-                                } else if conv.isPinned {
-                                    Image(systemName: "pin.fill")
-                                        .font(.system(size: 8))
-                                        .foregroundStyle(.orange)
-                                }
-                            }
+                    if search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !priorityConversations.isEmpty {
+                        Text("待处理")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color.ompTextTertiary)
                             .padding(.horizontal, 12)
-                            .frame(height: 44)
-                            .background(
-                                conv.id == model.selectedConversationID
-                                    ? Color.ompFill
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            )
+                            .padding(.top, 2)
+                            .padding(.bottom, 4)
+                        ForEach(priorityConversations) { conv in
+                            conversationRow(conv)
                         }
-                        .buttonStyle(.plain)
+                        Divider().padding(.horizontal, 12).padding(.vertical, 6)
+                    }
+                    ForEach(filteredConversations) { conv in
+                        conversationRow(conv)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -670,11 +649,61 @@ struct ShellDrawer: View {
         .shadow(color: Color.black.opacity(0.12), radius: 16, x: 8, y: 0)
     }
 
+
+    /// Unread replies and whichever conversation is still generating — the
+    /// phone's counterpart to the desktop sidebar's 待处理 section.
+    private var priorityConversations: [Conversation] {
+        model.sortedConversations.filter { conversation in
+            guard !conversation.isArchived, !conversation.isLocked else { return false }
+            return conversation.hasUnread || conversation.id == model.streamingConversationID
+        }
+    }
+
+    private func conversationRow(_ conv: Conversation) -> some View {
+            Button {
+                onSelectConversation(conv.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(conv.title)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.ompText)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(conv.updatedAt.formatted(.relative(presentation: .named)))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    if model.streamingConversationID == conv.id {
+                        ProgressView().controlSize(.mini)
+                    } else if conv.hasUnread {
+                        Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    } else if conv.id == model.selectedConversationID {
+                        Circle().fill(Color.ompText).frame(width: 5, height: 5)
+                    } else if conv.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+                .background(
+                    conv.id == model.selectedConversationID ? Color.ompFill : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+            }
+            .buttonStyle(.plain)
+    }
+
     private var filteredConversations: [Conversation] {
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return Array(model.sortedConversations.prefix(20)) }
+        // While the 待处理 group is shown, its rows are not repeated below.
+        let shown = Set(search.isEmpty ? priorityConversations.map(\.id) : [])
+        if q.isEmpty {
+            return Array(model.sortedConversations.filter { !shown.contains($0.id) }.prefix(20))
+        }
         return model.sortedConversations.filter {
-            $0.title.lowercased().contains(q) || $0.lastMessagePreview.lowercased().contains(q)
+            !shown.contains($0.id)
+                && ($0.title.lowercased().contains(q) || $0.lastMessagePreview.lowercased().contains(q))
         }
     }
 
