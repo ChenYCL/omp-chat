@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		07A7685C6105EF440E89EEA7 /* SettingsSectionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */; };
 		0A86B37163AE346E5698374C /* LockedChatsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */; };
 		133E9B06146BB48356845D06 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FC10A98B20FF37D0174B36AB /* OMPDesign */; };
 		17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */; };
@@ -61,6 +62,7 @@
 		C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D76CE3C86BE12307212872C4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMenuUITests.swift; sourceTree = "<group>"; };
+		ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSectionsUITests.swift; sourceTree = "<group>"; };
 		FF0E7E503D25CD720139B116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -154,6 +156,7 @@
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
 				5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */,
+				ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */,
 			);
 			path = OMPChatiOSUITests;
 			sourceTree = "<group>";
@@ -366,6 +369,7 @@
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
 				0A86B37163AE346E5698374C /* LockedChatsUITests.swift in Sources */,
+				07A7685C6105EF440E89EEA7 /* SettingsSectionsUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

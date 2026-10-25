@@ -71,8 +71,12 @@ public struct ProviderSettingsView: View {
                 providersSection
                 defaultModelSection
                 generationSection
+                iosPersonalizationSection
                 appearanceSection
                 speechSection
+                iosNotificationsSection
+                iosSortingSection
+                iosDataControlsSection
                 aboutSection
             }
             .formStyle(.grouped)
@@ -671,6 +675,65 @@ public struct ProviderSettingsView: View {
     }
     #endif
 
+
+    // MARK: iOS-only settings sections
+    //
+    // 个性化 / 通知 / 排序 / 数据控制 live inside the desktop's `#if os(macOS)`
+    // block, so the phone's form could not reach them. Same controls, same
+    // `draft`; data controls share instead of using NSSavePanel.
+
+    private var iosPersonalizationSection: some View {
+        Section {
+            TextField("全局自定义指令", text: $draft.customInstructions, axis: .vertical)
+                .lineLimit(3...8)
+            Toggle("记忆上下文（跨对话记住要点）", isOn: $draft.enableMemories)
+        } header: {
+            Text("个性化")
+        } footer: {
+            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效。")
+        }
+    }
+
+    private var iosNotificationsSection: some View {
+        Section {
+            Toggle("后台生成完成时通知我", isOn: $draft.completionNotifications)
+        } header: {
+            Text("通知")
+        } footer: {
+            Text("App 在后台时，回复生成完毕会发送系统通知。首次开启需要授权通知权限。")
+        }
+    }
+
+    private var iosSortingSection: some View {
+        Section {
+            Picker("排序方式", selection: $draft.conversationSort) {
+                Text("最近更新").tag("updated")
+                Text("创建时间").tag("created")
+                Text("手动排序").tag("manual")
+            }
+        } header: {
+            Text("侧栏会话排序")
+        } footer: {
+            Text("手动排序时，会话行菜单里的上移/下移会被保留；置顶会话始终排在最前。")
+        }
+    }
+
+    private var iosDataControlsSection: some View {
+        Section {
+            let stats = model.workspaceStats
+            LabeledContent("会话", value: "\(stats.conversations) 个")
+            LabeledContent("消息", value: "\(stats.messages) 条")
+            LabeledContent("媒体", value: "\(stats.mediaFiles) 个")
+            LabeledContent("存储目录", value: stats.formattedSize)
+            ShareLink(item: model.exportWorkspaceJSON(), preview: SharePreview("ompchat-export.json")) {
+                Label("导出全部数据 (JSON)", systemImage: "square.and.arrow.up.on.square")
+            }
+        } header: {
+            Text("数据控制")
+        } footer: {
+            Text("导出包含全部会话、项目与设置的 JSON 备份。")
+        }
+    }
 
     // MARK: Sections
 
