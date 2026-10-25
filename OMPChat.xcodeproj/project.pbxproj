@@ -26,6 +26,7 @@
 		BF6A5C9C9D79E4BFE7F4B915 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5186DC0EFA32A3939E576ACE /* OMPChatUI */; };
 		C9C6F4B0CB7844B7154C87A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D76CE3C86BE12307212872C4 /* Assets.xcassets */; };
 		CA365FC444C45754602D0920 /* FindInChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */; };
+		EC05558BD7AF4B090C6F9AED /* ProjectsSheetUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340CB594D324926FCC2C18FE /* ProjectsSheetUITests.swift */; };
 		EC5666AA69FA95C6FAED370B /* ArchivedChatsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E043CE04B4BDDC2BDA7AB8D /* ArchivedChatsUITests.swift */; };
 		F87C63434CEFB4FCEA42EE48 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 15AFBE83C4C7E348CCC85E43 /* OMPCore */; };
 		FBCD95E7695E05B7DC0E3877 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC29DA60AA29334933C2023A /* OMPCore */; };
@@ -45,6 +46,7 @@
 		0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSShellUITests.swift; sourceTree = "<group>"; };
 		1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatiOSApp.swift; sourceTree = "<group>"; };
 		31530891343AF9A448A307AF /* OMPKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OMPKit; path = Packages/OMPKit; sourceTree = SOURCE_ROOT; };
+		340CB594D324926FCC2C18FE /* ProjectsSheetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsSheetUITests.swift; sourceTree = "<group>"; };
 		383AF11ED8E7A70913E2E055 /* OMPChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OMPChat.entitlements; sourceTree = "<group>"; };
 		436F03FF8C7B1AA4F96688D6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockedChatsUITests.swift; sourceTree = "<group>"; };
@@ -156,6 +158,7 @@
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
 				5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */,
+				340CB594D324926FCC2C18FE /* ProjectsSheetUITests.swift */,
 				ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */,
 			);
 			path = OMPChatiOSUITests;
@@ -369,6 +372,7 @@
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
 				0A86B37163AE346E5698374C /* LockedChatsUITests.swift in Sources */,
+				EC05558BD7AF4B090C6F9AED /* ProjectsSheetUITests.swift in Sources */,
 				07A7685C6105EF440E89EEA7 /* SettingsSectionsUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

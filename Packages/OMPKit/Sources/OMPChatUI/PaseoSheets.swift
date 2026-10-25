@@ -13,6 +13,8 @@ public struct PaseoProjectsSheet: View {
 
     @State private var showingNewProject = false
     @State private var newProjectName = ""
+    @State private var renamingProject: Project?
+    @State private var renameText = ""
 
     public init() {}
 
@@ -37,11 +39,37 @@ public struct PaseoProjectsSheet: View {
                                     .font(.system(size: 11).monospacedDigit())
                                     .foregroundStyle(Color.ompTextTertiary)
                             }
-                            Text("创建于 \(project.createdAt, format: .dateTime.month().day())")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color.ompTextSecondary)
+                            // The chats inside, so a project is not just a name
+                            // with a count; tap one to open it.
+                            let chats = model.conversations(in: project.id).filter { !$0.isArchived }
+                            if chats.isEmpty {
+                                Text("这个项目还没有会话")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Color.ompTextTertiary)
+                            } else {
+                                ForEach(chats.prefix(5)) { chat in
+                                    Text("· \(chat.title)")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color.ompTextSecondary)
+                                        .lineLimit(1)
+                                }
+                                if chats.count > 5 {
+                                    Text("还有 \(chats.count - 5) 条")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                }
+                            }
                         }
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button {
+                                renameText = project.name
+                                renamingProject = project
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+                        }
                     }
                     .onDelete { indexSet in
                         for index in indexSet {
@@ -58,6 +86,19 @@ public struct PaseoProjectsSheet: View {
                 #endif
             }
 
+            .alert("重命名项目", isPresented: Binding(
+                get: { renamingProject != nil },
+                set: { if !$0 { renamingProject = nil } }
+            )) {
+                TextField("项目名称", text: $renameText)
+                Button("保存") {
+                    if let project = renamingProject {
+                        model.renameProject(project.id, name: renameText)
+                    }
+                    renamingProject = nil
+                }
+                Button("取消", role: .cancel) { renamingProject = nil }
+            }
             .navigationTitle("项目与工作区")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
