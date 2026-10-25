@@ -108,6 +108,8 @@ public struct ChatDetailView: View {
     let onToggleTerminal: () -> Void
 
     @State private var showExporter = false
+    @State private var importingFile = false
+    @State private var importFailure: String?
     @State private var exportDocument: MarkdownDocument?
     @State private var exportFilename = "conversation.md"
     @State private var showOptions = false
@@ -182,6 +184,21 @@ public struct ChatDetailView: View {
             defaultFilename: exportFilename
         ) { _ in
             exportDocument = nil
+        }
+        .fileImporter(
+            isPresented: $importingFile,
+            allowedContentTypes: [.json, .plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first { importJSON(url) }
+        }
+        .alert("导入失败", isPresented: Binding(
+            get: { importFailure != nil },
+            set: { if !$0 { importFailure = nil } }
+        )) {
+            Button("好", role: .cancel) { importFailure = nil }
+        } message: {
+            Text(importFailure ?? "")
         }
         .alert("重命名对话", isPresented: $showRenameAlert) {
             TextField("对话标题", text: $renamingTitle)
@@ -289,6 +306,15 @@ public struct ChatDetailView: View {
         } label: {
             Label("导出为 JSON 数据 (.json)", systemImage: "curlybraces")
         }
+    }
+
+    // The import function existed but nothing called it, so the app could write
+    // a backup it had no way to read back. It sits here rather than inside the
+    // 导出 submenu: reading a backup in is not an export.
+    Button {
+        importingFile = true
+    } label: {
+        Label("导入 JSON 对话", systemImage: "square.and.arrow.down")
     }
 
     Button {
@@ -475,6 +501,19 @@ public struct ChatDetailView: View {
         case markdown = "md"
         case html = "html"
         case json = "json"
+    }
+
+    /// Reads a `.json` backup and adds it as a conversation.
+    private func importJSON(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            try model.importConversation(from: text)
+            importFailure = nil
+        } catch {
+            importFailure = "导入失败：\(error.localizedDescription)"
+        }
     }
 
     private func prepareExport(format: ExportFormat = .markdown) {
