@@ -194,7 +194,9 @@ public final class ChatAppModel {
             let folded = settings.foldLegacyConnection()
             let vaulted = PairedDeviceVault.hydrate(settings.pairedDevices, secrets: secrets)
             settings.pairedDevices = vaulted.devices
-            if folded || vaulted.needsRewrite { await saveSettings(settings) }
+            let host = HostCredentialVault.hydrate(settings, secrets: secrets)
+            settings = host.settings
+            if folded || vaulted.needsRewrite || host.needsRewrite { await saveSettings(settings) }
         } catch {
             conversations = []
             providers = []
@@ -1073,8 +1075,8 @@ public final class ChatAppModel {
     public func saveSettings(_ newValue: AppSettings) async {
         let previous = settings.pairedDevices
         settings = newValue
-        // Tokens stay in memory and in the vault; the document gets blanks.
-        var persisted = newValue
+        // Credentials stay in memory and in the vault; the document gets blanks.
+        var persisted = HostCredentialVault.persistable(newValue, secrets: secrets)
         persisted.pairedDevices = PairedDeviceVault.persistable(
             newValue.pairedDevices, previous: previous, secrets: secrets
         )
