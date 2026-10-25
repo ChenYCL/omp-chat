@@ -881,8 +881,25 @@ public struct MacShellSidebar: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
+            contextFooter
             usageAlert
             userBar
+        }
+    }
+
+    /// Context-window meter with the detail popover. `ContextBadge` existed
+    /// unwired, so the capacity readout the PRD calls delivered was reachable
+    /// from nowhere.
+    @ViewBuilder
+    private var contextFooter: some View {
+        if let conversation = model.selectedConversation,
+           let usage = model.contextUsage(conversation), usage.limit > 0 {
+            HStack(spacing: 6) {
+                ContextBadge(used: usage.used, limit: usage.limit)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
         }
     }
 
