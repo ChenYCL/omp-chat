@@ -46,6 +46,21 @@ final class ProjectsSheetUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["备份项目"].exists, "旧名字不该还在")
     }
 
+    func testMovingAChatIntoAProject() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        // An ungrouped chat sits in the recent list below 待处理.
+        let row = app.staticTexts["第二个会话标题"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+
+        row.press(forDuration: 1.0)
+        app.buttons["移动到项目"].firstMatch.tap()
+        app.buttons["备份项目"].firstMatch.tap()
+
+        // It now shows under the project.
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '项目'")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["· 第二个会话标题"].waitForExistence(timeout: 5), "会话应出现在项目下")
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {
@@ -65,7 +80,13 @@ final class ProjectsSheetUITests: XCTestCase {
             "updatedAt": "2026-10-26T10:00:00Z",
         ]
         let workspace: [String: Any] = [
-            "conversations": [conversation],
+            "conversations": [conversation, [
+                "alternativeReplies": [], "createdAt": "2026-10-26T09:58:00Z",
+                "hasUnread": false, "id": UUID().uuidString,
+                "isArchived": false, "isLocked": false, "isPinned": false, "isTemporary": false,
+                "messages": [], "providerID": providerID, "title": "第二个会话标题",
+                "updatedAt": "2026-10-26T09:58:00Z",
+            ]],
             "models": [],
             "projects": [[
                 "createdAt": "2026-10-26T09:00:00Z",

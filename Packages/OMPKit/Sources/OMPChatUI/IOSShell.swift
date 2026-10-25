@@ -872,6 +872,27 @@ struct ShellDrawer: View {
                 Button { model.toggleArchive(conv.id) } label: {
                     Label(conv.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
                 }
+                // The phone could see projects but never put a chat into one.
+                Menu {
+                    Button {
+                        model.moveConversation(conv.id, to: UUID?.none)
+                    } label: {
+                        Label("移出项目", systemImage: conv.projectID == nil ? "checkmark" : "folder.badge.minus")
+                    }
+                    ForEach(model.orderedProjects) { project in
+                        Button {
+                            model.moveConversation(conv.id, to: project.id)
+                        } label: {
+                            if conv.projectID == project.id {
+                                Label(project.name, systemImage: "checkmark")
+                            } else {
+                                Text(project.name)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("移动到项目", systemImage: "folder")
+                }
                 Divider()
                 // Moving rows is only meaningful in manual order; offering it
                 // under a date sort would change nothing on screen.
