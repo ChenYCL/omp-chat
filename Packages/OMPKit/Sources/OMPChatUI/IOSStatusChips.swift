@@ -18,6 +18,10 @@ struct IOSStatusChips: View {
 
     var body: some View {
         if hasAnyContent {
+            // A bare ScrollView is greedy vertically: inside the chat's
+            // bottom-aligned ZStack it stretched over the whole transcript and
+            // swallowed every tap on message content (tabs, buttons, links).
+            // The row is exactly one chip tall.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     if let diff = totalDiff {
@@ -69,6 +73,8 @@ struct IOSStatusChips: View {
                 }
                 .padding(.horizontal, 16)
             }
+            .frame(height: 22)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 

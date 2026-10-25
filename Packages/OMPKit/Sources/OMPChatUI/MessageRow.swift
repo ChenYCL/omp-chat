@@ -93,13 +93,19 @@ public struct MessageRow: View {
             withAnimation(Theme.Motion.fade) { hovering = enter }
         }
         #else
-        .onLongPressGesture(minimumDuration: 0.35) {
-            hoverTimer?.invalidate()
-            withAnimation(Theme.Motion.fade) { hovering = true }
-            hoverTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { _ in
-                withAnimation(Theme.Motion.fade) { hovering = false }
+        // `onLongPressGesture` on the whole row wins over the buttons inside it:
+        // every child button (action bar copy/reply, omp-ui tabs/buttons) became
+        // unhittable. A simultaneous gesture reveals the action bar on long
+        // press and still lets those buttons receive taps.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                hoverTimer?.invalidate()
+                withAnimation(Theme.Motion.fade) { hovering = true }
+                hoverTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { _ in
+                    withAnimation(Theme.Motion.fade) { hovering = false }
+                }
             }
-        }
+        )
         .onDisappear { hoverTimer?.invalidate() }
         #endif
     }
