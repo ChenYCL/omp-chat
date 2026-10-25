@@ -100,3 +100,19 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         return stripped
     }
 }
+
+/// Which chats want attention. One definition for both sidebars: the 待处理
+/// group lists these, and every other section hides them, so a chat cannot
+/// appear twice.
+public enum ConversationPriority {
+    public static func wantsAttention(_ conversation: Conversation, streamingID: UUID?) -> Bool {
+        guard !conversation.isArchived, !conversation.isLocked else { return false }
+        return conversation.hasUnread
+            || conversation.id == streamingID
+            || conversation.needsReply
+    }
+
+    public static func ids(in conversations: [Conversation], streamingID: UUID?) -> Set<UUID> {
+        Set(conversations.filter { wantsAttention($0, streamingID: streamingID) }.map(\.id))
+    }
+}

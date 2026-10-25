@@ -750,12 +750,8 @@ struct ShellDrawer: View {
     /// Unread replies and whichever conversation is still generating — the
     /// phone's counterpart to the desktop sidebar's 待处理 section.
     private var priorityConversations: [Conversation] {
-        model.sortedConversations.filter { conversation in
-            guard !conversation.isArchived, !conversation.isLocked else { return false }
-            return conversation.hasUnread
-                || conversation.id == model.streamingConversationID
-                || conversation.needsReply
-        }
+        let ids = model.priorityConversationIDs()
+        return model.sortedConversations.filter { ids.contains($0.id) }
     }
 
     private func conversationRow(_ conv: Conversation) -> some View {

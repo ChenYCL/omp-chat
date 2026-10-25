@@ -1280,6 +1280,13 @@ public final class ChatAppModel {
     }
 
 
+    /// Chats the sidebar's 待处理 group shows: unread, still generating, or
+    /// waiting on a reply. Every other section hides these, so a chat never
+    /// appears twice (the phone drawer uses the same set).
+    public func priorityConversationIDs() -> Set<UUID> {
+        ConversationPriority.ids(in: sortedConversations, streamingID: streamingConversationID)
+    }
+
     /// Structured mirror of the workspace for the LAN relay server.
     ///
     /// Assistant messages carry their thinking transcript and tool activity so

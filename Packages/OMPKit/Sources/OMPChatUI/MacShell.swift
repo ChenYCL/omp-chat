@@ -414,12 +414,8 @@ public struct MacShellSidebar: View {
     /// unread replies and whichever conversation is still generating. Hidden
     /// when there is nothing waiting, so it never takes space for nothing.
     private var priorityItems: [Conversation] {
-        model.sortedConversations.filter { conversation in
-            guard !conversation.isArchived, !conversation.isLocked else { return false }
-            return conversation.hasUnread
-                || conversation.id == model.streamingConversationID
-                || conversation.needsReply
-        }
+        let ids = model.priorityConversationIDs()
+        return model.sortedConversations.filter { ids.contains($0.id) }
     }
 
     private var prioritySection: some View {
@@ -443,7 +439,8 @@ public struct MacShellSidebar: View {
     }
 
     private var customSections: some View {
-        ForEach(model.orderedCustomSections) { custom in
+        let handled = model.priorityConversationIDs()
+        return ForEach(model.orderedCustomSections) { custom in
             let collapsed = collapsedCustomSections.contains(custom.id)
             Button {
                 if collapsed { collapsedCustomSections.remove(custom.id) } else { collapsedCustomSections.insert(custom.id) }
@@ -469,7 +466,7 @@ public struct MacShellSidebar: View {
             .buttonStyle(.plain)
             .contextMenu { customSectionMenu(custom) }
             if !collapsed {
-                ForEach(model.conversations(inCustomSection: custom.id).filter { !$0.isPinned }) { row($0) }
+                ForEach(model.conversations(inCustomSection: custom.id).filter { !$0.isPinned && !handled.contains($0.id) }) { row($0) }
             }
         }
     }
@@ -502,10 +499,11 @@ public struct MacShellSidebar: View {
     }
 
     private var projectSections: some View {
-        ForEach(model.orderedProjects) { project in
+        let handled = model.priorityConversationIDs()
+        return ForEach(model.orderedProjects) { project in
             projectHeader(project)
             if !collapsedProjects.contains(project.id) {
-                ForEach(model.conversations(in: project.id).filter { !$0.isPinned }) { row($0) }
+                ForEach(model.conversations(in: project.id).filter { !$0.isPinned && !handled.contains($0.id) }) { row($0) }
             }
         }
     }
@@ -529,7 +527,12 @@ public struct MacShellSidebar: View {
     }
 
     private var ungroupedSection: some View {
-        let items = model.conversations(in: nil).filter { !$0.isPinned && !$0.isArchived && !$0.isLocked }
+        // 待处理 already lists unread / streaming / awaiting-reply chats, so
+        // they are not repeated here (the phone drawer does the same).
+        let handled = model.priorityConversationIDs()
+        let items = model.conversations(in: nil).filter {
+            !$0.isPinned && !$0.isArchived && !$0.isLocked && !handled.contains($0.id)
+        }
         var groups: [DateBucket: [Conversation]] = [:]
         for c in items {
             let b = Self.bucket(for: c.updatedAt)
