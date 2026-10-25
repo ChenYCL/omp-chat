@@ -77,6 +77,20 @@ final class ProjectsSheetUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["新分区"].waitForExistence(timeout: 5), "新建的分区应出现")
     }
 
+    func testMovingAChatIntoACustomSection() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        let row = app.staticTexts["第二个会话标题"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+
+        row.press(forDuration: 1.0)
+        app.buttons["移动到项目"].firstMatch.tap()
+        // The section is listed in the same submenu as the projects.
+        app.buttons["工作流"].firstMatch.tap()
+
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '项目'")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["1 会话"].waitForExistence(timeout: 5), "分区计数应变成 1")
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {

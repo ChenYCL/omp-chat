@@ -880,14 +880,15 @@ struct ShellDrawer: View {
                         Label("移出项目", systemImage: conv.projectID == nil ? "checkmark" : "folder.badge.minus")
                     }
                     ForEach(model.orderedProjects) { project in
-                        Button {
-                            model.moveConversation(conv.id, to: project.id)
-                        } label: {
-                            if conv.projectID == project.id {
-                                Label(project.name, systemImage: "checkmark")
-                            } else {
-                                Text(project.name)
-                            }
+                        moveTarget(conv, id: project.id, name: project.name)
+                    }
+                    // Custom sections are the same underlying field, so they
+                    // belong in this list too; leaving them out meant a chat
+                    // could never be moved into one from the phone.
+                    if !model.orderedCustomSections.isEmpty {
+                        Divider()
+                        ForEach(model.orderedCustomSections) { section in
+                            moveTarget(conv, id: section.id, name: section.name)
                         }
                     }
                 } label: {
@@ -927,6 +928,21 @@ struct ShellDrawer: View {
             } message: { conv in
                 Text("「\(conv.title)」及其消息将被永久删除，无法撤销。")
             }
+    }
+
+    /// One row of the 移动到项目 submenu: a project or a custom section, ticked
+    /// when the chat is already in it.
+    @ViewBuilder
+    private func moveTarget(_ conv: Conversation, id: UUID, name: String) -> some View {
+        Button {
+            model.moveConversation(conv.id, to: id)
+        } label: {
+            if conv.projectID == id {
+                Label(name, systemImage: "checkmark")
+            } else {
+                Text(name)
+            }
+        }
     }
 
     private var filteredConversations: [Conversation] {
