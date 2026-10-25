@@ -526,8 +526,9 @@ struct ShellDrawer: View {
 
                 Button {
                     _ = model.newTemporaryConversation()
+                    // Clearing the route dismisses the drawer; closeDrawer()
+                    // belongs to IOSShell and is not in scope here.
                     route = nil
-                    closeDrawer()
                 } label: {
                     drawerItem(icon: "timer", title: "临时对话")
                 }.buttonStyle(.plain)
