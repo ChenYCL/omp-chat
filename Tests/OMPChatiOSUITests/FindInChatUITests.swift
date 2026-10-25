@@ -34,7 +34,18 @@ final class FindInChatUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5), "应出现查找栏")
         field.tap()
         field.typeText("mermaid")
-        XCTAssertTrue(app.staticTexts["2 处"].waitForExistence(timeout: 5), "两条消息包含 mermaid")
+        let count = app.staticTexts["chat.find.count"].firstMatch
+        XCTAssertTrue(count.waitForExistence(timeout: 5), "应显示命中数")
+        XCTAssertEqual(count.label, "2 处", "两条消息包含 mermaid")
+
+        // Walking hits changes the label to 1/2 and back, proving both buttons
+        // reach the cursor logic.
+        app.buttons["下一处"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["1/2"].waitForExistence(timeout: 3), "下一处应走到第 1 处")
+        app.buttons["下一处"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["2/2"].waitForExistence(timeout: 3), "再点一次到第 2 处")
+        app.buttons["上一处"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["1/2"].waitForExistence(timeout: 3), "上一处应回到第 1 处")
 
         app.buttons["关闭查找"].firstMatch.tap()
         XCTAssertFalse(field.exists, "关闭后查找栏应收起")

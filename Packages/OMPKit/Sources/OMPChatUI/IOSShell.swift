@@ -358,9 +358,10 @@ struct ChatScreen: View {
                 .font(.system(size: 13))
                 .accessibilityIdentifier("chat.find")
             if !findQuery.isEmpty {
-                Text(hits.isEmpty ? "无匹配" : "\(hits.count) 处")
+                Text(findLabel(hits))
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Color.ompTextTertiary)
+                    .accessibilityIdentifier("chat.find.count")
                 Button { moveFind(by: -1) } label: {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 11, weight: .bold))
@@ -400,6 +401,16 @@ struct ChatScreen: View {
         .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// "2 处" before the first jump, "1/2" once walking, so the two buttons have
+    /// something to show for their work.
+    private func findLabel(_ hits: [UUID]) -> String {
+        guard !hits.isEmpty else { return "无匹配" }
+        if let cursor = findCursor, let index = hits.firstIndex(of: cursor) {
+            return "\(index + 1)/\(hits.count)"
+        }
+        return "\(hits.count) 处"
     }
 
     private var findHits: [UUID] {
