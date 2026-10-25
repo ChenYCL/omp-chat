@@ -24,6 +24,11 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
     public var requestID: String?
     /// `exec.poll` only: bytes of the combined output the caller already has.
     public var offset: Int?
+    /// `exec.poll` only: long-poll. When nothing new is buffered, the host
+    /// holds the answer up to this many seconds (capped at 25) and replies as
+    /// soon as output arrives or the run ends. `nil`/0 answers at once, as
+    /// before, so old callers are unaffected.
+    public var wait: Double?
     public var maxBytes: Int?
     public var timeout: Double?
     /// `cli.control` only: the action (`start`/`stop`/`remove`/`logs`) goes in
@@ -42,7 +47,8 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         requestID: String? = nil,
         background: Bool? = nil,
         offset: Int? = nil,
-        prompt: String? = nil
+        prompt: String? = nil,
+        wait: Double? = nil
     ) {
         self.id = id
         self.op = op
@@ -55,6 +61,7 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         self.background = background
         self.offset = offset
         self.prompt = prompt
+        self.wait = wait
     }
 }
 

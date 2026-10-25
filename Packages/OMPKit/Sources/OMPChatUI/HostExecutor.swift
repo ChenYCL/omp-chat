@@ -470,11 +470,29 @@ public struct HostExecutor: Sendable {
     #endif
 
 
+    /// Longest `exec.poll` hold. Well under the hub's 130 s RPC timeout and the
+    /// phone's request timeout, so a held poll never looks like a dead host.
+    static let maxPollWait: Double = 25
+
     /// `exec.poll`: the appended slice since `offset`, cursor and state.
     private func poll(_ request: HostRPCRequest, id: String, offset: Int) async -> HostRPCResponse {
         running.evictFinished(olderThan: pollRetention)
         guard let run = running.lookupRun(id: id) else {
             return HostRPCResponse(id: request.id, ok: false, error: "not_found")
+        }
+        // Long-poll: hold an empty answer until bytes arrive, the run ends or
+        // the wait elapses, so a caller sees output when it is written rather
+        // than on its next poll tick.
+        let wait = min(max(request.wait ?? 0, 0), Self.maxPollWait)
+        if wait > 0 {
+            let deadline = Date().addingTimeInterval(wait)
+            // Wait on what the caller would see, not on raw bytes: the trailing
+            // cwd marker lands before close() and is withheld from running
+            // slices, so counting bytes released an empty, not-done answer.
+            while run.state == .running, run.snapshot(after: offset).text.isEmpty, !run.isExpired(),
+                  Date() < deadline, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(15))
+            }
         }
         let slice = run.snapshot(after: offset)
         if run.state == .running, run.isExpired() {
@@ -965,7 +983,33 @@ final class BackgroundRun: @unchecked Sendable {
 
     func snapshot(after offset: Int) -> Slice {
         lock.lock(); defer { lock.unlock() }
-        return ring.slice(after: offset, cap: cap)
+        let slice = ring.slice(after: offset, cap: cap)
+        guard phase == .running else { return slice }
+        return Self.withholdingMarker(slice, tag: "\n" + marker)
+    }
+
+    /// While the run is still open, the wrapper's trailing `\n<marker><cwd>`
+    /// can already be buffered before `close()` strips it. Cut the slice at
+    /// the tag (or at a trailing partial tag) so a poll never shows it; the
+    /// cursor stops there, and the next poll after close resumes cleanly.
+    static func withholdingMarker(_ slice: Slice, tag: String) -> Slice {
+        var slice = slice
+        let text = slice.text
+        var cut: String.Index?
+        if let found = text.range(of: tag) {
+            cut = found.lowerBound
+        } else {
+            for length in stride(from: min(tag.count, text.count), through: 1, by: -1) {
+                if text.hasSuffix(tag.prefix(length)) {
+                    cut = text.index(text.endIndex, offsetBy: -length)
+                    break
+                }
+            }
+        }
+        guard let cut else { return slice }
+        slice.nextOffset -= text[cut...].utf8.count
+        slice.text = String(text[..<cut])
+        return slice
     }
 }
 #else

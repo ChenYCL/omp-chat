@@ -410,6 +410,59 @@ final class HostExecutorTests: XCTestCase {
         XCTAssertEqual(try Self.pgrep(Self.pattern(for: sleep)), [])
     }
 
+    func testLongPollHoldsUntilOutputArrives() async throws {
+        let executor = executor(allowed: true)
+        _ = await executor.handle(HostRPCRequest(
+            id: "lp", op: "exec", command: "sleep 0.6; printf hi; sleep 2", cwd: root.path, background: true
+        ))
+        let started = Date()
+        let poll = await executor.handle(HostRPCRequest(
+            id: "lp-1", op: "exec.poll", requestID: "lp", offset: 0, wait: 5
+        ))
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertEqual(poll.text, "hi", "held poll must return the output it waited for")
+        XCTAssertEqual(poll.done, false)
+        XCTAssertGreaterThan(elapsed, 0.4, "must not answer before the output exists")
+        XCTAssertLessThan(elapsed, 1.5, "must answer when output arrives, not at the wait limit")
+        _ = await executor.handle(HostRPCRequest(id: "lp-k", op: "exec.cancel", requestID: "lp"))
+    }
+
+    func testLongPollReturnsEmptyAtTheWaitLimitAndOnFinish() async throws {
+        let executor = executor(allowed: true)
+        _ = await executor.handle(HostRPCRequest(
+            id: "quiet", op: "exec", command: "sleep 1.2", cwd: root.path, background: true
+        ))
+        var started = Date()
+        let empty = await executor.handle(HostRPCRequest(
+            id: "q-1", op: "exec.poll", requestID: "quiet", offset: 0, wait: 0.3
+        ))
+        XCTAssertEqual(empty.text, "")
+        XCTAssertEqual(empty.done, false)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.0)
+        started = Date()
+        let final = await executor.handle(HostRPCRequest(
+            id: "q-2", op: "exec.poll", requestID: "quiet", offset: empty.nextOffset ?? 0, wait: 10
+        ))
+        XCTAssertEqual(final.done, true, "a held poll must answer when the run ends; got text=\(String(reflecting: final.text)) next=\(String(describing: final.nextOffset))")
+        XCTAssertEqual(final.exitCode, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
+    func testRunningSliceNeverShowsTheCwdMarker() {
+        let tag = "\nOMPHOST_CWD_X"
+        func slice(_ text: String) -> BackgroundRun.Slice {
+            BackgroundRun.withholdingMarker(.init(text: text, nextOffset: 100, truncated: false), tag: tag)
+        }
+        let full = slice("done\nOMPHOST_CWD_X/tmp\n")
+        XCTAssertEqual(full.text, "done")
+        XCTAssertEqual(full.nextOffset, 100 - "\nOMPHOST_CWD_X/tmp\n".utf8.count, "游标停在标记前")
+        let partial = slice("done\nOMPH")
+        XCTAssertEqual(partial.text, "done", "半截标记也不能露出")
+        XCTAssertEqual(partial.nextOffset, 95)
+        XCTAssertEqual(slice("plain").text, "plain")
+        XCTAssertEqual(slice("plain").nextOffset, 100)
+    }
+
     func testPollUnknownIdIsNotFound() async {
         let executor = executor(allowed: true)
         let response = await executor.handle(HostRPCRequest(

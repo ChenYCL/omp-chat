@@ -364,6 +364,8 @@ struct RemoteFileViewer: View {
 // MARK: - Terminal Pane
 
 struct PaseoTerminalPane: View {
+    /// Seconds the host may hold an empty `exec.poll` (long-poll).
+    static let pollWait: Double = 20
     @Environment(RemoteSession.self) private var session
     let onOpenRemote: () -> Void
 
@@ -644,11 +646,14 @@ struct PaseoTerminalPane: View {
         var offset = 0
         var emptyPolls = 0
         while !Task.isCancelled {
+            let asked = Date()
             do {
+                // Long-poll: the host answers as soon as output arrives, so the
+                // phone shows it without waiting for a poll tick.
                 let poll = HostRPC.decodePoll(try await HostRPC.call(
                     sink, op: "exec.poll", id: "\(requestID)-p\(offset)",
                     cwd: cwd.isEmpty ? nil : cwd,
-                    requestID: requestID, offset: offset
+                    requestID: requestID, offset: offset, wait: Self.pollWait
                 ))
                 if poll.hostLacksPoll {
                     await fallbackBlockingExec(sink: sink, requestID: requestID, index: index)
@@ -679,7 +684,13 @@ struct PaseoTerminalPane: View {
                 finish(index, output: error.localizedDescription, exitCode: nil)
                 return
             }
-            try? await Task.sleep(nanoseconds: emptyPolls > 20 ? 1_000_000_000 : 300_000_000)
+            // A host that honours `wait` already held this answer, so ask again
+            // at once. An older host answers empty immediately; keep the old
+            // 300 ms cadence (1 s once idle) so it is not hammered.
+            let held = Date().timeIntervalSince(asked) >= Self.pollWait / 2
+            if emptyPolls > 0, !held {
+                try? await Task.sleep(nanoseconds: emptyPolls > 20 ? 1_000_000_000 : 300_000_000)
+            }
         }
     }
 

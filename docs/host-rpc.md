@@ -29,6 +29,7 @@ public struct HostRPCRequest {
     public var requestID: String?  // exec.cancel / exec.poll: the exec's id
     public var background: Bool?   // exec: answer "started" and keep running
     public var offset: Int?        // exec.poll: bytes the caller already has
+    public var wait: Double?       // exec.poll: long-poll seconds (≤ 25), nil = answer at once
 
 public struct HostFSEntry { public var name: String; public var isDirectory: Bool; public var size: Int?; public var modified: Date? }
 public struct HostInfo { public var hostName: String; public var user: String; public var home: String; public var cwd: String; public var gitBranch: String?; public var gitDirty: Int? }
@@ -65,6 +66,13 @@ public struct HostRPCResponse {
   `exec.cancel` 对后台运行同样有效，下一次 poll 看到 `exitCode: 130, done: true`。
   不带 `background` 的 `exec` 行为不变。iOS 上 `exec.poll` 与 `exec` 一样回答
   `unsupported`。
+- `exec.poll` 可带 `wait`（秒，上限 25）做长轮询：没有新输出时主机挂起这次回答，
+  有新输出、运行结束、命令超时或等满 `wait` 时立刻回答。不带 `wait`（或 0）立即回答，
+  旧客户端不受影响。等的是调用方能看到的输出：运行中的切片会截掉结尾的 cwd 标记
+  （包括写了一半的），所以标记字节不会提前放出一个空回答，也不会出现在终端里。
+  手机终端用 `wait: 20`，回答空且没被挂起（旧主机）时退回 300 ms / 1 s 轮询。
+  实测（已安装的 Mac 应用，LAN `/rpc`，`printf first; sleep 1; …`）：首行 300 ms 轮询
+  321–340 ms，长轮询 24–25 ms；整条命令 8 次 poll 降到 3 次。
 
 ## 传输
 

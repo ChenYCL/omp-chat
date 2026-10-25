@@ -93,7 +93,8 @@ enum HostRPC {
         requestID: String? = nil,
         background: Bool? = nil,
         offset: Int? = nil,
-        prompt: String? = nil
+        prompt: String? = nil,
+        wait: Double? = nil
     ) async throws -> HostRPCResponse {
         let request = HostRPCRequest(
             id: id ?? UUID().uuidString,
@@ -106,7 +107,8 @@ enum HostRPC {
             requestID: requestID,
             background: background,
             offset: offset,
-            prompt: prompt
+            prompt: prompt,
+            wait: wait
         )
         return try await sink.call(request)
     }
