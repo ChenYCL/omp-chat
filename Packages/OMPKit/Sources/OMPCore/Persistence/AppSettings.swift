@@ -66,6 +66,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Relay host side (macOS): allow a paired phone to read files and run
     /// shell commands. Off by default; `info` stays available either way.
     public var relayAllowShell: Bool
+    /// iOS: every Mac this phone has paired with, newest first.
+    public var pairedDevices: [PairedDevice]
 
     public init(
         version: Int = 1,
@@ -97,7 +99,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayRoomCode: String = "",
         remoteHubURL: String = "",
         remoteRoomCode: String = "",
-        relayAllowShell: Bool = false
+        relayAllowShell: Bool = false,
+        pairedDevices: [PairedDevice] = []
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -129,6 +132,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.remoteHubURL = remoteHubURL
         self.remoteRoomCode = remoteRoomCode
         self.relayAllowShell = relayAllowShell
+        self.pairedDevices = pairedDevices
     }
 
     public init(from decoder: Decoder) throws {
@@ -163,6 +167,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remoteHubURL = try container.decodeIfPresent(String.self, forKey: .remoteHubURL) ?? ""
         remoteRoomCode = try container.decodeIfPresent(String.self, forKey: .remoteRoomCode) ?? ""
         relayAllowShell = try container.decodeIfPresent(Bool.self, forKey: .relayAllowShell) ?? false
+        pairedDevices = try container.decodeIfPresent([PairedDevice].self, forKey: .pairedDevices) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -174,6 +179,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case remoteHost, remotePort, remoteToken
         case relayToken, relayPort, relayEnabled
         case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
-        case relayAllowShell
+        case relayAllowShell, pairedDevices
     }
 }

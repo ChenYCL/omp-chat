@@ -447,47 +447,39 @@ public struct MCPPluginsSheet: View {
 /// The only device the phone can actually reach is the paired Mac, so the
 /// sheet shows that one host — or says plainly that nothing is paired.
 public struct PaseoDevicesSheet: View {
+    @Environment(ChatAppModel.self) private var model
     @Environment(RemoteSession.self) private var session
     @Environment(\.dismiss) private var dismiss
 
     public init() {}
 
+    private var devices: [PairedDevice] { model.settings.pairedDevices }
+
     public var body: some View {
         NavigationStack {
             List {
-                if session.isConnected {
-                    Section("已配对") {
-                        HStack(spacing: 12) {
-                            Image(systemName: "desktopcomputer")
-                                .font(.system(size: 16))
-                                .foregroundStyle(Color.ompTextSecondary)
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(session.hostName.isEmpty ? "Mac" : session.hostName)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(Color.ompText)
-                                Text(session.mode.rawValue)
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(Color.ompTextTertiary)
-                            }
-                            Spacer()
-                            Text("在线")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.green)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                } else {
+                if devices.isEmpty {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("还没有配对的设备")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(Color.ompText)
-                            Text("到「远程」页配对一台 Mac 后，它会出现在这里。")
+                            Text("到「远程」页配对一台 Mac 后，它会出现在这里，之后可以一键切换。")
                                 .font(.system(size: 12.5))
                                 .foregroundStyle(Color.ompTextSecondary)
                         }
                         .padding(.vertical, 6)
+                    }
+                } else {
+                    Section {
+                        ForEach(devices) { device in
+                            row(device)
+                        }
+                        .onDelete(perform: forget)
+                    } header: {
+                        Text("我的 Mac")
+                    } footer: {
+                        Text("点一台即可切换并重新连接；左滑可忘记设备。令牌只保存在这部手机上。")
                     }
                 }
             }
@@ -504,6 +496,50 @@ public struct PaseoDevicesSheet: View {
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 460)
         #endif
+    }
+
+    private func row(_ device: PairedDevice) -> some View {
+        let active = session.isConnected && session.activeDeviceID == device.id
+        return Button {
+            guard !active else { dismiss(); return }
+            session.requestedDevice = device
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(device.name.isEmpty ? "Mac" : device.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.ompText)
+                    Text(device.detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if active {
+                    Text("已连接")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextTertiary)
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("device.\(device.id.uuidString)")
+    }
+
+    private func forget(at offsets: IndexSet) {
+        var settings = model.settings
+        settings.pairedDevices.remove(atOffsets: offsets)
+        Task { await model.saveSettings(settings) }
     }
 }
 #endif

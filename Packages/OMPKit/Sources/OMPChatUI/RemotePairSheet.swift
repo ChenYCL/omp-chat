@@ -59,7 +59,11 @@ public struct RemoteScreen: View {
             }
         }
         .background(Color.ompCanvas)
-        .onAppear(perform: loadSavedConnection)
+        .onAppear {
+            loadSavedConnection()
+            consumeRequestedDevice()
+        }
+        .onChange(of: remoteSession.requestedDevice) { _, _ in consumeRequestedDevice() }
         // No disconnect on disappear: the 主机 tab, the drawer and CLI 会话 all
         // drive the Mac through RemoteSession, so switching tabs must keep the
         // pairing alive. Only the explicit 断开 button tears it down.
@@ -396,7 +400,38 @@ public struct RemoteScreen: View {
         var settings = model.settings
         settings.remoteRoomCode = room
         settings.remoteHubURL = hub
+        remember(
+            PairedDevice(name: hostName, transport: .room, hubURL: hub, roomCode: room),
+            in: &settings
+        )
         Task { await model.saveSettings(settings) }
+    }
+
+    /// Adds (or refreshes) the Mac in the saved list and marks it active. One
+    /// settings mutation per pairing, so two saves never race on a stale copy.
+    private func remember(_ device: PairedDevice, in settings: inout AppSettings) {
+        settings.pairedDevices.upsert(device)
+        remoteSession.activeDeviceID = settings.pairedDevices
+            .first { $0.endpointKey == device.endpointKey }?.id
+    }
+
+    /// Reconnects to a Mac picked in the 可控设备 list.
+    private func consumeRequestedDevice() {
+        guard let device = remoteSession.requestedDevice else { return }
+        remoteSession.requestedDevice = nil
+        disconnect()
+        switch device.transport {
+        case .lan:
+            mode = .lan
+            hostField = device.host
+            portField = String(device.port)
+            tokenField = device.token
+        case .room:
+            mode = .room
+            roomField = device.roomCode
+            hubField = device.hubURL
+        }
+        connect()
     }
 
     /// Whichever transport is live (LAN or hub) for the remote screens.
@@ -421,10 +456,13 @@ public struct RemoteScreen: View {
 
     private func persistConnection(host: String, port: UInt16, token: String) {
         var settings = model.settings
-        guard settings.remoteHost != host || settings.remotePort != port || settings.remoteToken != token else { return }
         settings.remoteHost = host
         settings.remotePort = port
         settings.remoteToken = token
+        remember(
+            PairedDevice(name: hostName, transport: .lan, host: host, port: port, token: token),
+            in: &settings
+        )
         Task { await model.saveSettings(settings) }
     }
 

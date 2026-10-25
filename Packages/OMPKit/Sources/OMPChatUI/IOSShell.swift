@@ -82,6 +82,14 @@ public struct IOSShell: View {
             }
         }
         .animation(Theme.Motion.quick, value: drawerOpen)
+        // Picking a Mac in 可控设备 closes the sheet and lands on 远程, where
+        // the reconnect runs and its progress or error is visible.
+        .onChange(of: remoteSession.requestedDevice) { _, device in
+            guard device != nil else { return }
+            route = nil
+            closeDrawer()
+            tab = .remote
+        }
         .sheet(item: $route) { item in
             // Sheets do not inherit the TabView's environment: without
             // RemoteSession here, any route that reads it (设备, CLI 会话)

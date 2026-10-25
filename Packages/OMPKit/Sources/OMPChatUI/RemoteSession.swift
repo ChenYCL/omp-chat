@@ -24,6 +24,11 @@ public final class RemoteSession {
 
     /// When the last snapshot arrived, so diagnostics can report its age.
     public var lastSnapshotAt: Date?
+    /// Which saved Mac the live link belongs to.
+    public var activeDeviceID: UUID?
+    /// Set by the 可控设备 list; the 远程 tab consumes it by reconnecting to
+    /// that Mac, then clears it.
+    public var requestedDevice: PairedDevice?
     public enum Mode: String, Sendable {
         case none = "未连接"
         case lan = "局域网"
@@ -37,6 +42,8 @@ public final class RemoteSession {
         info = nil
         mode = .none
         lastSnapshotAt = nil
+        activeDeviceID = nil
+        requestedDevice = nil
     }
 
     /// Publishes a freshly paired transport. Called from the 远程 tab on connect.
@@ -65,6 +72,7 @@ public final class RemoteSession {
         info = nil
         mode = .none
         lastSnapshotAt = nil
+        activeDeviceID = nil
     }
 }
 
