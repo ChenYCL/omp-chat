@@ -134,40 +134,9 @@ public struct PaseoProjectsSheet: View {
 
 // MARK: - 2. Scheduled Tasks Sheet (计划任务)
 
-public struct PaseoScheduledTasksSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    public init() {}
-
-    public var body: some View {
-        NavigationStack {
-            VStack(spacing: 10) {
-                Image(systemName: "clock")
-                    .font(.system(size: 28))
-                    .foregroundStyle(Color.ompTextTertiary)
-                Text("定时任务暂不可用")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Mac 开了沙盒后读不到 crontab：`crontab -l` 被系统拒绝，任务文件只有 root 能读，沙盒例外也绕不过去。这里不再显示编造的任务。")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("计划任务")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 420, minHeight: 280)
-        #endif
-    }
-}
+// The scheduled-tasks page was removed: a sandboxed Mac app cannot read
+// the user's crontab (`crontab -l` is denied, and the spool file is root-only),
+// and the page was showing invented tasks. See commit 53d9581.
 
 // MARK: - 3. Usage Sheet (用量)
 
