@@ -450,6 +450,12 @@ public struct CodeBlockView: View {
         // Official desktop code block: no header bar — the copy affordance
         // floats over the top-right corner of the code area itself.
         VStack(alignment: .leading, spacing: 0) {
+            if let mermaid {
+                ZStack(alignment: .topTrailing) {
+                    MermaidView(document: mermaid)
+                    copyButton
+                }
+            } else {
             ZStack(alignment: .topTrailing) {
                 codeArea
                 HStack(spacing: 4) {
@@ -472,8 +478,9 @@ public struct CodeBlockView: View {
                 .padding(6)
             }
 
-            if isFoldable {
+            if isFoldable, mermaid == nil {
                 foldToggle
+            }
             }
         }
         .background(Color.ompFill)
@@ -584,6 +591,13 @@ public struct CodeBlockView: View {
     private var isRenderable: Bool {
         let lang = language?.lowercased() ?? ""
         return lang == "html" || lang == "svg" || lang == "xml" || lang == "web"
+    }
+
+    /// Mermaid is drawn natively, but only for the diagram types the parser
+    /// understands; anything else keeps showing its source.
+    private var mermaid: MermaidDocument? {
+        guard language?.lowercased() == "mermaid" else { return nil }
+        return MermaidDocument.parse(code)
     }
 
     private var isDiff: Bool {

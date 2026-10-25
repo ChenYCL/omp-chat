@@ -153,7 +153,7 @@ iPhone 不是只读镜像，而是能完成全部交互的远程控制台。所�
 - Worktree 分叉：`forkIntoWorktree` / `continueIntoWorktree`。
 - 侧边聊天分屏：`threadWorkspace.layout.splitView`。
 - 计划任务真实调度：当前是 UI 面板，缺 cron 执行器。
-- Mermaid 图表渲染：`codeBlock.mermaid`。
+- Mermaid 图表渲染：`codeBlock.mermaid`。已支持 flowchart/graph 与 sequenceDiagram 原生渲染；gantt/pie 等不支持的类型继续显示源码。
 
 ## 6. 明确不做
 

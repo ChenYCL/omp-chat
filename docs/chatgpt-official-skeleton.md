@@ -110,5 +110,5 @@ Account、General、Appearance、Keyboard shortcuts、Archived chats、Data cont
 | 富文本格式工具条 | `composer.formatToolbar.*` | 未做（输入框是纯文本） |
 | 用量额度剩余 | `composer.mode.rateLimit.*` | 只有上下文容量气泡 |
 | 侧面板多 tab（Browser / Files / Changes） | `thread.sidePanel.*` | 未做 |
-| Mermaid | `codeBlock.mermaid` | 未做 |
+| Mermaid | `codeBlock.mermaid` | 已做：原生渲染 flowchart/graph 与 sequenceDiagram（`MermaidDocument` 解析，`MermaidView` 用 Canvas 画箭头；循环边绕到框图外侧走虚线）。其余类型仍显示源码，不猜。 |
 | 定时任务真实调度 | `settings.automations.*` | 只有 UI 面板 |
