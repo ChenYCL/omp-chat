@@ -45,6 +45,16 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var accentColorHex: String
     /// Notify when a reply finishes while the app is in the background.
     public var completionNotifications: Bool
+    /// LAN remote relay client side (iOS): last paired Mac host.
+    public var remoteHost: String
+    public var remotePort: UInt16
+    public var remoteToken: String
+    /// LAN relay host side (macOS): pairing token persisted on first enable.
+    public var relayToken: String
+    /// LAN relay host side (macOS): HTTP listen port.
+    public var relayPort: UInt16
+    /// LAN relay host side (macOS): whether the relay server is enabled.
+    public var relayEnabled: Bool
 
     public init(
         version: Int = 1,
@@ -65,7 +75,13 @@ public struct AppSettings: Codable, Hashable, Sendable {
         customInstructions: String = "",
         enableMemories: Bool = false,
         accentColorHex: String = "",
-        completionNotifications: Bool = false
+        completionNotifications: Bool = false,
+        remoteHost: String = "",
+        remotePort: UInt16 = 8790,
+        remoteToken: String = "",
+        relayToken: String = "",
+        relayPort: UInt16 = 8790,
+        relayEnabled: Bool = false
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -86,6 +102,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.enableMemories = enableMemories
         self.accentColorHex = accentColorHex
         self.completionNotifications = completionNotifications
+        self.remoteHost = remoteHost
+        self.remotePort = remotePort
+        self.remoteToken = remoteToken
+        self.relayToken = relayToken
+        self.relayPort = relayPort
+        self.relayEnabled = relayEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +131,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
         enableMemories = try container.decodeIfPresent(Bool.self, forKey: .enableMemories) ?? false
         accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex) ?? ""
         completionNotifications = try container.decodeIfPresent(Bool.self, forKey: .completionNotifications) ?? false
+        remoteHost = try container.decodeIfPresent(String.self, forKey: .remoteHost) ?? ""
+        remotePort = try container.decodeIfPresent(UInt16.self, forKey: .remotePort) ?? 8790
+        remoteToken = try container.decodeIfPresent(String.self, forKey: .remoteToken) ?? ""
+        relayToken = try container.decodeIfPresent(String.self, forKey: .relayToken) ?? ""
+        relayPort = try container.decodeIfPresent(UInt16.self, forKey: .relayPort) ?? 8790
+        relayEnabled = try container.decodeIfPresent(Bool.self, forKey: .relayEnabled) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -117,5 +145,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage
         case conversationSort, customInstructions, enableMemories, accentColorHex
         case completionNotifications
+        case remoteHost, remotePort, remoteToken
+        case relayToken, relayPort, relayEnabled
     }
 }

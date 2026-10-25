@@ -20,6 +20,12 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>连接同一局域网内的 Mac，镜像并远程操作它的 OMPChat 会话。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_ompchat._tcp</string>
+    </array>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

@@ -5,12 +5,33 @@ import OMPDesign
 @main
 struct OMPChatiOSApp: App {
     @State private var model = ChatAppModel()
+    @State private var showRemote = false
 
     var body: some Scene {
         WindowGroup {
-            ChatRootView()
-                .environment(model)
-                .tint(customAccent)
+            ZStack(alignment: .bottomTrailing) {
+                ChatRootView()
+                    .environment(model)
+                    .tint(customAccent)
+
+                Button {
+                    showRemote = true
+                } label: {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Color.ompText)
+                        .frame(width: 44, height: 44)
+                        .background(Color.ompCard, in: Circle())
+                        .shadow(color: Color.black.opacity(0.12), radius: 8, y: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 20)
+                .padding(.bottom, 108)
+            }
+            .sheet(isPresented: $showRemote) {
+                RemotePairSheet()
+                    .environment(model)
+            }
         }
     }
 

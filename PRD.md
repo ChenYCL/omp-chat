@@ -72,6 +72,13 @@
 - 主机四态：文件（书签、源码查看器）、交互式终端（补全/历史/清屏）、脚本、配置 `8de31a5` `48927ee`
 - 项目 / 会话历史 / 计划任务 / 用量 四大面板、可控设备面板、子代理面板 `6acc44d` `394b365`
 
+### 2.7 局域网远程控制（吸收 collie/herdr 思路）
+
+- macOS 主机端：`OMPCore/Relay`（`RelayModels` / `RelayServer` / `RelayAdvertiser`）+ `RelayHostController`。`NWListener` 起 HTTP，`GET /pair` `/snapshot` `/state`(SSE) `POST /input` `/stop`，全部校验 `X-OMP-Token`；`update()` 递增 rev 并向 SSE 广播；Bonjour 广告挂同一 listener（`_ompchat._tcp.`）
+- 设置 → 远程控制：开关 / 端口 / 配对码复制 / 运行状态行；开关写入 `relayEnabled`，空 token 自动生成 UUID 持久化
+- iOS 端：`RemoteRelayClient`（`URLSession.bytes` 逐行解析 SSE，断线 1s→5s 退避重连）+ `RemotePairSheet`（配对表单 → 主机会话列表 → 只读远程会话屏，可发送与停止）；主界面右下角天线按钮进入
+- 协议文档 `docs/relay-protocol.md`；设计取舍：镜像结构化状态而非字符流/截屏，SSE 推 rev 后按需全量拉快照
+
 ## 3. 架构约束（不可破坏）
 
 - 会话解码一律 `decodeIfPresent`，新增字段必须有默认值，旧 `workspace.json` 必须能打开。
@@ -79,10 +86,12 @@
 - `OMPCHAT_STORE_DIR` 会被沙盒剥离，不能依赖环境变量定位存储。
 - 传输层按 SSE 事件边界（换行）即时 yield，禁止重新引入大块缓冲。
 - iOS 免费开发者账号设备上限 6 台，签名成功不等于能安装。
+- 沙盒 App 必须声明 `com.apple.security.network.server` 才能监听端口；iOS 访问局域网必须有 `NSLocalNetworkUsageDescription` + `NSBonjourServices`。
+- `RelayAdvertiser` 必须在 server 启动后懒取 listener，禁止在构造时缓存（会拿到 nil）。
 
 ## 4. 验证基线
 
-- `cd Packages/OMPKit && swift test`：27 个单测全绿。
+- `cd Packages/OMPKit && swift test --jobs 4`：OMPCoreTests + OMPChatUITests 全绿（当前 46 个）。
 - macOS 与 iOS Simulator 双端 `xcodebuild` 通过后，`ditto` 覆盖 `/Applications/OMPChat.app`。
 - 每个功能一个提交，推送 `origin/main`（仓库已配置 `http.proxy` 走本机 7897）。
 

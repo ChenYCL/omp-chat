@@ -12,6 +12,10 @@ struct OMPChatApp: App {
                 .environment(model)
                 .tint(customAccent)
                 .frame(minWidth: 900, minHeight: 600)
+                .task {
+                    await model.bootstrap()
+                    model.syncRelayController()
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

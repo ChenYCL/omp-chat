@@ -19,7 +19,7 @@ public final class ChatAppModel {
     public private(set) var errorMessage: String?
     public private(set) var statusMessage: String?
     public private(set) var refreshingProviderIDs: Set<UUID> = []
-    public private(set) var bootstrapped = false
+    @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
 
     public var selectedConversationID: UUID? {
         willSet {
@@ -171,8 +171,16 @@ public final class ChatAppModel {
     // MARK: Lifecycle
 
     public func bootstrap() async {
-        guard !bootstrapped else { return }
-        bootstrapped = true
+        if let running = bootstrapTask {
+            _ = await running.value
+            return
+        }
+        let task = Task { await bootstrapOnce() }
+        bootstrapTask = task
+        await task.value
+    }
+
+    private func bootstrapOnce() async {
         conversations = (try? await store.loadAll()) ?? []
         providers = (try? await store.loadProviders()) ?? []
         models = (try? await store.loadModelCatalog()) ?? []
@@ -1124,6 +1132,88 @@ public final class ChatAppModel {
         struct Dump: Codable { var conversations: [Conversation]; var projects: [Project] }
         let data = (try? encoder.encode(Dump(conversations: conversations, projects: projects))) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+    /// Local machine name; AppKit is macOS-only so this falls back elsewhere.
+    static var relayHostName: String {
+        #if os(macOS)
+        Host.current().localizedName ?? "Mac"
+        #else
+        "Mac"
+        #endif
+    }
+
+    // MARK: LAN relay
+
+    /// Host-side relay controller (macOS). Created lazily on first enable.
+    @ObservationIgnored public private(set) var relayController: RelayHostController?
+
+    public func syncRelayController() {
+        guard settings.relayEnabled else {
+            relayController?.stop()
+            relayController = nil
+            return
+        }
+        let token = settings.relayToken.isEmpty ? UUID().uuidString : settings.relayToken
+        if token != settings.relayToken {
+            settings.relayToken = token
+            Task { await saveSettings(settings) }
+        }
+        if let controller = relayController {
+            controller.updateToken(token)
+            controller.start(port: settings.relayPort)
+        } else {
+            let controller = RelayHostController(model: self, token: token)
+            relayController = controller
+            controller.start(port: settings.relayPort)
+        }
+    }
+
+
+    /// Structured mirror of the workspace for the LAN relay server.
+    public func relaySnapshot() -> RelaySnapshot {
+        let projectNameByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
+        let conversations = sortedConversations.map { conversation in
+            RelayConversation(
+                id: conversation.id.uuidString,
+                title: conversation.title,
+                updatedAt: conversation.updatedAt,
+                project: conversation.projectID.flatMap { projectNameByID[$0] },
+                isStreaming: conversation.id == streamingConversationID,
+                messages: conversation.messages.suffix(100).map { message in
+                    RelayMessage(
+                        id: message.id.uuidString,
+                        role: message.role == .user ? "user" : "assistant",
+                        text: message.concatenatedText,
+                        ts: message.createdAt,
+                        streaming: conversation.id == streamingConversationID && message.status == .streaming
+                    )
+                }
+            )
+        }
+        return RelaySnapshot(
+            rev: 0,
+            host: Self.relayHostName,
+            selectedID: selectedConversationID?.uuidString,
+            conversations: conversations
+        )
+    }
+
+    /// Executes one command coming from a paired remote controller.
+    public func handleRelayCommand(_ command: RelayCommand) async {
+        switch command {
+        case .input(let conversationID, let text):
+            if let rawID = conversationID, let uuid = UUID(uuidString: rawID),
+               conversations.contains(where: { $0.id == uuid }) {
+                selectedConversationID = uuid
+            } else {
+                _ = newConversation()
+            }
+            await sendNow(text: text, attachments: [])
+        case .stop(let conversationID):
+            if let uuid = UUID(uuidString: conversationID), uuid == streamingConversationID {
+                stop()
+            }
+        }
     }
 }
 

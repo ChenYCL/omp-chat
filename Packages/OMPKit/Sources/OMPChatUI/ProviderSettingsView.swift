@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, remoteControl, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -30,6 +30,7 @@ public struct ProviderSettingsView: View {
             case .shortcuts: "键盘快捷键"
             case .sorting: "会话排序"
             case .dataControls: "数据控制"
+            case .remoteControl: "远程控制"
             case .providers: "连接"
             case .about: "关于"
             }
@@ -46,6 +47,7 @@ public struct ProviderSettingsView: View {
             case .sorting: "arrow.up.arrow.down"
             case .dataControls: "externaldrive"
             case .providers: "point.3.connected.trianglepath.dotted"
+            case .remoteControl: "antenna.radiowaves.left.and.right"
             case .about: "info.circle"
             }
         }
@@ -86,6 +88,10 @@ public struct ProviderSettingsView: View {
             guard !loaded else { return }
             loaded = true
             draft = model.settings
+            #if os(macOS)
+            portDraft = String(draft.relayPort)
+            await model.syncRelayController()
+            #endif
         }
         .onChange(of: draft) { _, newValue in
             Task { await model.saveSettings(newValue) }
@@ -211,6 +217,15 @@ public struct ProviderSettingsView: View {
             settingsCard { sortingSection }
         case .dataControls:
             dataControlsContent
+        case .remoteControl:
+            #if os(macOS)
+            settingsCard { remoteControlSection }
+            #else
+            settingsCard {
+                Text("远程控制仅在 macOS 上可用。")
+                    .foregroundStyle(.secondary)
+            }
+            #endif
         case .providers:
             settingsCard { providersSection }
         case .about:
@@ -435,11 +450,109 @@ public struct ProviderSettingsView: View {
             Text(keys)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(Color.ompTextSecondary)
-                .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 5))
         }
         .padding(.vertical, 7)
+    }
+
+    @State private var portDraft = ""
+    private var remoteControlSection: some View {
+        Section {
+            Toggle("启用远程控制", isOn: Binding(
+                get: { draft.relayEnabled },
+                set: { enabled in
+                    draft.relayEnabled = enabled
+                    if enabled, draft.relayToken.isEmpty {
+                        draft.relayToken = UUID().uuidString
+                    }
+                    var updated = draft
+                    Task {
+                        await model.saveSettings(updated)
+                        await model.syncRelayController()
+                    }
+                }
+            ))
+            if draft.relayEnabled {
+                HStack {
+                    Text("端口")
+                    Spacer()
+                    TextField("8790", text: $portDraft)
+                        .frame(width: 90)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { commitRelayPort() }
+                    if portDraft != String(draft.relayPort) {
+                        Button("应用") { commitRelayPort() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+                HStack {
+                    Text("配对码")
+                    Spacer()
+                    Text(maskedToken)
+                        .font(.system(size: 11).monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(draft.relayToken, forType: .string)
+                    } label: {
+                        Label("复制", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(draft.relayToken.isEmpty)
+                    .help("复制完整配对码")
+                }
+                HStack {
+                    Text("状态")
+                    Spacer()
+                    relayStatusLine
+                }
+                Text("同一 Wi-Fi 下的 iPhone 打开 OMPChat，用配对码连接本机。请勿把配对码泄露给局域网外的人。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("远程控制")
+        } footer: {
+            Text("局域网内设备可浏览会话并发送消息；所有请求都携带配对码鉴权。")
+        }
+    }
+
+    private var maskedToken: String {
+        let token = draft.relayToken
+        guard token.count > 10 else { return token }
+        return "\(token.prefix(6))…\(token.suffix(4))"
+    }
+
+    @ViewBuilder
+    private var relayStatusLine: some View {
+        if let controller = model.relayController, controller.isRunning, let port = controller.port {
+            Label("运行中 · 端口 \(port)", systemImage: "checkmark.circle")
+                .foregroundStyle(.green)
+        } else if let error = model.relayController?.lastError {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        } else {
+            Text("已停止")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func commitRelayPort() {
+        let trimmed = portDraft.trimmingCharacters(in: .whitespaces)
+        guard let port = UInt16(trimmed), port > 0 else {
+            portDraft = String(draft.relayPort)
+            return
+        }
+        draft.relayPort = port
+        var updated = draft
+        Task {
+            await model.saveSettings(updated)
+            await model.syncRelayController()
+        }
     }
     #endif
 
