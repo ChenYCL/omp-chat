@@ -412,7 +412,16 @@ struct GenUIButton: View {
         let primary = node.style == "primary"
         if !title.isEmpty {
             Button {
-                if let send, !text.isEmpty { send(text) }
+                guard let send else { return }
+                // Composing IME text (e.g. pinyin not yet confirmed) is not in
+                // the field's binding. Ending editing commits it; the binding
+                // updates on the next run-loop turn, so read the values after.
+                GenUIButton.endTextEditing()
+                Task { @MainActor in
+                    await Task.yield()
+                    let filled = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !filled.isEmpty { send(filled) }
+                }
             } label: {
                 Text(title)
                     .font(.system(size: 13.5, weight: .semibold))
@@ -429,6 +438,17 @@ struct GenUIButton: View {
             .opacity(enabled ? 1 : 0.45)
             .help(text.isEmpty ? "" : "发送：\(text)")
         }
+    }
+
+    /// Resigns the focused text field so the input method commits its marked
+    /// text into the binding.
+    @MainActor
+    static func endTextEditing() {
+        #if os(macOS)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #else
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
     }
 }
 
