@@ -63,29 +63,35 @@ public struct DiagnosticsView: View {
 
             Text("实时事件")
                 .font(.system(size: 13, weight: .semibold))
-            if events.isEmpty {
-                Text("暂无事件。")
-                    .font(.caption)
-                    .foregroundStyle(Color.ompTextTertiary)
-            } else {
-                ForEach(events.reversed()) { event in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(event.level.rawValue)
-                            .font(.system(size: 10, weight: .medium).monospaced())
-                            .foregroundStyle(levelColor(event.level))
-                            .frame(width: 40, alignment: .leading)
-                        Text(event.category)
-                            .font(.system(size: 11).monospaced())
-                            .foregroundStyle(Color.ompTextTertiary)
-                            .frame(width: 72, alignment: .leading)
-                        Text(event.message)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.ompText)
-                            .lineLimit(2)
-                        Spacer(minLength: 0)
+            ScrollView {
+                if events.isEmpty {
+                    Text("暂无事件。")
+                        .font(.caption)
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(events.reversed()) { event in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(event.level.rawValue)
+                                    .font(.system(size: 10, weight: .medium).monospaced())
+                                    .foregroundStyle(levelColor(event.level))
+                                    .frame(width: 40, alignment: .leading)
+                                Text(event.category)
+                                    .font(.system(size: 11).monospaced())
+                                    .foregroundStyle(Color.ompTextTertiary)
+                                    .frame(width: 72, alignment: .leading)
+                                Text(event.message)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.ompText)
+                                    .lineLimit(2)
+                                Spacer(minLength: 0)
+                            }
+                        }
                     }
                 }
             }
+            .frame(maxHeight: 240)
         }
         .accessibilityIdentifier("diagnostics.view")
         .task {
