@@ -200,12 +200,14 @@ final class HostExecutorTests: XCTestCase {
 
     func testCancelKillsSleepAndReportsCancelled() async throws {
         let executor = executor(allowed: true)
+        let sleep = Self.uniqueSleep()
         let started = Date()
         let pending = Task { await executor.handle(HostRPCRequest(
-            id: "cancel-me", op: "exec", command: "echo before && sleep 30", cwd: root.path, timeout: 120
+            id: "cancel-me", op: "exec", command: "echo before && \(sleep)", cwd: root.path, timeout: 120
         )) }
         // Give zsh time to spawn so the process tree exists.
         try await Task.sleep(for: .milliseconds(600))
+        XCTAssertFalse(try Self.pgrep(Self.pattern(for: sleep)).isEmpty, "the sleep must be running before cancel")
 
         let ack = await executor.handle(HostRPCRequest(
             id: "c1", op: "exec.cancel", requestID: "cancel-me"
@@ -222,7 +224,7 @@ final class HostExecutorTests: XCTestCase {
 
         // The wrapper and its sleep child are really gone.
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(try Self.pgrep("sleep 30"), [])
+        XCTAssertEqual(try Self.pgrep(Self.pattern(for: sleep)), [])
     }
 
     func testCancelIsIdempotent() async throws {
@@ -391,11 +393,13 @@ final class HostExecutorTests: XCTestCase {
 
     func testCancelOnBackgroundRun() async throws {
         let executor = executor(allowed: true)
+        let sleep = Self.uniqueSleep()
         _ = await executor.handle(HostRPCRequest(
-            id: "bgkill", op: "exec", command: "printf before; sleep 30", cwd: root.path, background: true
+            id: "bgkill", op: "exec", command: "printf before; \(sleep)", cwd: root.path, background: true
         ))
         // Let the printf land before the cancel.
         try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(try Self.pgrep(Self.pattern(for: sleep)).isEmpty, "the sleep must be running before cancel")
         let ack = await executor.handle(HostRPCRequest(id: "k", op: "exec.cancel", requestID: "bgkill"))
         XCTAssertTrue(ack.ok)
         let final = try await pollUntilDone(executor, id: "bgkill")
@@ -403,7 +407,7 @@ final class HostExecutorTests: XCTestCase {
         XCTAssertEqual(final.exitCode, 130)
         XCTAssertTrue(final.text?.contains("before") ?? false)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(try Self.pgrep("sleep 30"), [])
+        XCTAssertEqual(try Self.pgrep(Self.pattern(for: sleep)), [])
     }
 
     func testPollUnknownIdIsNotFound() async {
@@ -484,6 +488,19 @@ final class HostExecutorTests: XCTestCase {
         }
         XCTFail("run \(id) never finished")
         return HostRPCResponse(id: id, ok: false, error: "timeout")
+    }
+
+    /// A `sleep 30.NNNN` command no other process on the machine is running.
+    /// A bare `pgrep -f "sleep 30"` also matched unrelated `sleep 300`s from
+    /// other shells, so the cancel tests failed whenever one was alive.
+    static func uniqueSleep() -> String {
+        "sleep 30.\(Int.random(in: 1000...9999))"
+    }
+
+    /// Exact `pgrep -f` pattern for a `uniqueSleep()` command: literal dot,
+    /// and no further digit after it.
+    static func pattern(for sleep: String) -> String {
+        sleep.replacingOccurrences(of: ".", with: "\\.") + "([^0-9]|$)"
     }
 
     /// `pgrep -f` as an array of pids, so tests can prove processes died.
