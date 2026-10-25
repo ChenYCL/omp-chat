@@ -15,6 +15,10 @@ public struct PaseoProjectsSheet: View {
     @State private var newProjectName = ""
     @State private var renamingProject: Project?
     @State private var renameText = ""
+    @State private var renamingSection: Project?
+    @State private var sectionRenameText = ""
+    @State private var showingNewSection = false
+    @State private var newSectionName = ""
 
     public init() {}
 
@@ -77,6 +81,52 @@ public struct PaseoProjectsSheet: View {
                         }
                     }
                 }
+                // Custom sections group chats the way the desktop sidebar does;
+                // the phone could not see or create them.
+                Section {
+                    if model.orderedCustomSections.isEmpty {
+                        Text("还没有自定义分区")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                    ForEach(model.orderedCustomSections) { section in
+                        HStack(spacing: 8) {
+                            Image(systemName: "square.stack.3d.up")
+                                .foregroundStyle(Color.accentColor)
+                            Text(section.name)
+                                .font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                            Text("\(model.conversations(inCustomSection: section.id).count) 会话")
+                                .font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(Color.ompTextTertiary)
+                        }
+                        .padding(.vertical, 2)
+                        .contextMenu {
+                            Button {
+                                sectionRenameText = section.name
+                                renamingSection = section
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                model.deleteCustomSection(section.id)
+                            } label: {
+                                Label("删除分区", systemImage: "trash")
+                            }
+                        }
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet {
+                            model.deleteCustomSection(model.orderedCustomSections[index].id)
+                        }
+                    }
+                } header: {
+                    Text("自定义分区")
+                } footer: {
+                    Text("分区挂在会话上，用来把不同类型的对话分开；桌面侧栏与这里同步。")
+                        .font(.caption2)
+                }
+
                 #if os(iOS)
                 if session.isConnected {
                     Section("已连接的主机") {
@@ -107,13 +157,42 @@ public struct PaseoProjectsSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("完成") { dismiss() }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingNewProject = true
-                    } label: {
+                // Two plain buttons rather than a Menu: a menu's items are not
+                // reliably addressable from the toolbar, and this is one tap
+                // either way.
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { showingNewSection = true } label: {
+                        Image(systemName: "square.stack.3d.up")
+                    }
+                    .accessibilityLabel("新建自定义分区")
+                    Button { showingNewProject = true } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("新建项目")
                 }
+            }
+            .alert("新建自定义分区", isPresented: $showingNewSection) {
+                TextField("分区名称", text: $newSectionName)
+                Button("取消", role: .cancel) { newSectionName = "" }
+                Button("创建") {
+                    if !newSectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        _ = model.createCustomSection(name: newSectionName)
+                        newSectionName = ""
+                    }
+                }
+            }
+            .alert("重命名分区", isPresented: Binding(
+                get: { renamingSection != nil },
+                set: { if !$0 { renamingSection = nil } }
+            )) {
+                TextField("分区名称", text: $sectionRenameText)
+                Button("保存") {
+                    if let section = renamingSection {
+                        model.renameCustomSection(section.id, name: sectionRenameText)
+                    }
+                    renamingSection = nil
+                }
+                Button("取消", role: .cancel) { renamingSection = nil }
             }
             .alert("新建项目", isPresented: $showingNewProject) {
                 TextField("项目名称", text: $newProjectName)

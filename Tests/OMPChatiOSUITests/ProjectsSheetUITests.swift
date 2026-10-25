@@ -61,6 +61,22 @@ final class ProjectsSheetUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["· 第二个会话标题"].waitForExistence(timeout: 5), "会话应出现在项目下")
     }
 
+    func testCustomSectionIsVisibleAndCreatable() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '项目'")).firstMatch.tap()
+
+        XCTAssertTrue(app.staticTexts["自定义分区"].waitForExistence(timeout: 5), "应有自定义分区区块")
+        XCTAssertTrue(app.staticTexts["工作流"].waitForExistence(timeout: 5), "应列出已有分区")
+
+        // Create one more from the + menu.
+        app.buttons["新建自定义分区"].firstMatch.tap()
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.typeText("新分区")
+        app.alerts.buttons["创建"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["新分区"].waitForExistence(timeout: 5), "新建的分区应出现")
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {
@@ -94,6 +110,12 @@ final class ProjectsSheetUITests: XCTestCase {
                 "isCustomSection": false,
                 "name": "备份项目",
                 "order": 0,
+            ], [
+                "createdAt": "2026-10-26T09:00:00Z",
+                "id": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF",
+                "isCustomSection": true,
+                "name": "工作流",
+                "order": 1,
             ]],
             "providers": [[
                 "baseURL": "http://127.0.0.1:9", "chatPath": "/v1/chat/completions",
