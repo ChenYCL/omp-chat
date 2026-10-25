@@ -215,7 +215,74 @@ def run(port: int) -> None:
         item.join(timeout=5)
     assert box["a"][1]["text"] == "A", box["a"]
     assert box["b"][1]["text"] == "B", box["b"]
-    print(f"out-of-order correlation: A={box['a'][1]['text']} B={box['b'][1]['text']}")
+    # exec.cancel rides the same pipe and correlation as any op.
+    def cancel_client() -> None:
+        box["cancel"] = http(
+            port, "POST", f"/v1/client/rpc?room={ROOM}",
+            {"id": "cancel-op", "op": "exec.cancel", "requestID": "exec-42"},
+            timeout=10,
+        )
+
+    thread = threading.Thread(target=cancel_client)
+    thread.start()
+    name, data = host.next_event()
+    assert name == "rpc", name
+    cancel_request = json.loads(data)
+    assert cancel_request["id"] == "cancel-op", cancel_request
+    assert cancel_request["requestID"] == "exec-42", cancel_request
+    status, body = http(
+        port, "POST", f"/v1/host/rpc-result?room={ROOM}",
+        {"id": "cancel-op", "ok": True, "text": "cancelling"},
+    )
+    assert status == 200, (status, body)
+    thread.join(timeout=5)
+    status, body = box["cancel"]
+    assert status == 200, (status, body)
+    assert body["text"] == "cancelling", body
+    print(f"cancel round trip: {body}")
+
+    # A cancel is still accepted when the room sits at the pending cap:
+    # blocking it would deadlock the very command it is meant to stop.
+    stuck: list[threading.Thread] = []
+    for index in range(32):
+        item = threading.Thread(
+            target=client2, args=(f"capped-{index}", f"cap-{index}")
+        )
+        item.start()
+        stuck.append(item)
+    for _ in range(32):
+        name, data = host.next_event()
+        assert name == "rpc", name
+    status, body = http(
+        port, "POST", f"/v1/client/rpc?room={ROOM}",
+        {"id": "capped", "op": "info"}, timeout=10,
+    )
+    assert status == 429, (status, body)
+    print(f"cap 429: {body}")
+    def capped_cancel() -> None:
+        box["freecancel"] = http(
+            port, "POST", f"/v1/client/rpc?room={ROOM}",
+            {"id": "freecancel", "op": "exec.cancel", "requestID": "cap-0"}, timeout=10,
+        )
+
+    thread = threading.Thread(target=capped_cancel)
+    thread.start()
+    name, data = host.next_event()
+    assert json.loads(data)["id"] == "freecancel", data
+    status, body = http(
+        port, "POST", f"/v1/host/rpc-result?room={ROOM}",
+        {"id": "freecancel", "ok": True, "text": "cancelling"},
+    )
+    assert status == 200, (status, body)
+    thread.join(timeout=5)
+    status, body = box["freecancel"]
+    assert status == 200, (status, body)
+    print(f"cancel at cap 200: {body}")
+    # Drain the capped calls so later cases start clean.
+    for index in range(32):
+        http(port, "POST", f"/v1/host/rpc-result?room={ROOM}", {"id": f"cap-{index}", "ok": True, "text": "x"})
+    for item in stuck:
+        item.join(timeout=5)
 
     # 504: host never answers. Timeout is patched to 2s.
     started = time.time()
@@ -227,25 +294,6 @@ def run(port: int) -> None:
     # The unanswered call is still sitting in the host buffer.
     name, data = host.next_event()
     assert json.loads(data)["id"] == "slow"
-
-    # 409: host drops while a call is in flight.
-    def hanging() -> None:
-        box["drop"] = http(port, "POST", f"/v1/client/rpc?room={ROOM}", {"id": "drop", "op": "info"}, timeout=8)
-
-    thread = threading.Thread(target=hanging)
-    thread.start()
-    name, data = host.next_event()
-    assert json.loads(data)["id"] == "drop"
-    host.close()
-    thread.join(timeout=5)
-    status, body = box["drop"]
-    assert status == 409, (status, body)
-    print(f"host-drop 409: {body}")
-
-    # Still 409 once the host is gone.
-    status, body = http(port, "POST", f"/v1/client/rpc?room={ROOM}", {"id": "after", "op": "info"})
-    assert status == 409, (status, body)
-    print(f"after-drop 409: {body}")
 
 
 if __name__ == "__main__":

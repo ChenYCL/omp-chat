@@ -27,7 +27,8 @@ MAX_COMMAND_LOG = 200
 PING_INTERVAL = 15.0
 RPC_TIMEOUT_SECONDS = 130.0
 MAX_PENDING_RPC = 32
-KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "exec"}
+KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "exec", "exec.cancel"}
+CAP_EXEMPT_RPC_OPS = {"exec.cancel"}
 
 
 def new_room_code() -> str:
@@ -371,7 +372,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 await writer.drain()
                 writer.close()
                 return
-            if len(room.pending_rpc) >= MAX_PENDING_RPC:
+            if op not in CAP_EXEMPT_RPC_OPS and len(room.pending_rpc) >= MAX_PENDING_RPC:
                 writer.write(response("429 Too Many Requests", {"error": "too many pending rpc"}))
                 await writer.drain()
                 writer.close()

@@ -399,6 +399,12 @@ struct RemoteConsoleBubble: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
+                    if !message.thinking.isNilOrEmpty {
+                        RemoteThinkingRow(text: message.thinking ?? "")
+                    }
+                    if let activities = message.activity, !activities.isEmpty {
+                        RemoteOperationGroup(activities: activities)
+                    }
                     HStack(alignment: .lastTextBaseline, spacing: 2) {
                         Text(message.text)
                             .font(.system(size: 16))
@@ -424,6 +430,187 @@ struct RemoteConsoleBubble: View {
             withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
                 caretOn = false
             }
+        }
+    }
+}
+
+private extension Optional where Wrapped == String {
+    var isNilOrEmpty: Bool { self?.isEmpty ?? true }
+}
+
+/// Collapsible "思考过程" row above an assistant reply, mirroring the
+/// desktop `MessageRow.thinkingSection` at phone scale.
+struct RemoteThinkingRow: View {
+    let text: String
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(Theme.Motion.quick) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("思考过程")
+                        .font(.system(size: 11.5, weight: .medium))
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color.ompTextSecondary)
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("remote.console.thinking")
+            if expanded {
+                Text(text)
+                    .font(.system(size: 12.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// Collapsed "<N> 个操作" strip: one 26pt header with a total diff chip,
+/// expanding into 13pt activity rows. Tap a row to unfold its capped
+/// arguments + output detail. Official diff colours, OMPDesign tokens.
+struct RemoteOperationGroup: View {
+    let activities: [RelayActivity]
+    @State private var expanded = false
+    @State private var detailedID: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(Theme.Motion.quick) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    statusIcon
+                    Text("\(activities.count) 个操作")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let summary = diffSummary {
+                        DiffChip(added: summary.added, removed: summary.removed)
+                    }
+                }
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("remote.console.operations")
+            if expanded {
+                ForEach(activities) { activity in
+                    RemoteActivityRow(
+                        activity: activity,
+                        showsDetail: detailedID == activity.id,
+                        onToggleDetail: {
+                            withAnimation(Theme.Motion.quick) {
+                                detailedID = detailedID == activity.id ? nil : activity.id
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if activities.contains(where: { $0.status == "running" }) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(Color.ompDynamic(light: 0xAB1616, dark: 0xFDB9AB))
+        } else if activities.contains(where: { $0.status == "error" }) {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.ompFlat(rgb: 0xDE4A43))
+        } else {
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2))
+        }
+    }
+
+    private var diffSummary: (added: Int, removed: Int)? {
+        let added = activities.reduce(0) { $0 + ($1.added ?? 0) }
+        let removed = activities.reduce(0) { $0 + ($1.removed ?? 0) }
+        return (added == 0 && removed == 0) ? nil : (added, removed)
+    }
+}
+
+/// One 26pt activity row: status icon + summary + per-row diff chip, tapping
+/// expands the capped detail panel (arguments + output, mono 12.5pt).
+struct RemoteActivityRow: View {
+    let activity: RelayActivity
+    let showsDetail: Bool
+    let onToggleDetail: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: onToggleDetail) {
+                HStack(spacing: 6) {
+                    RemoteToolStatusIcon(status: activity.status)
+                    Text(activity.summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if activity.added != nil || activity.removed != nil {
+                        DiffChip(added: activity.added ?? 0, removed: activity.removed ?? 0)
+                    }
+                    Image(systemName: showsDetail ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("remote.console.activity.\(activity.id)")
+            if showsDetail, let detail = activity.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(activity.status == "error" ? Color.ompFlat(rgb: 0xDE4A43) : Color.ompTextSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
+            }
+        }
+    }
+}
+
+/// Remote twin of `ToolStatusIcon` driven by the wire status string.
+struct RemoteToolStatusIcon: View {
+    let status: String
+
+    var body: some View {
+        switch status {
+        case "running":
+            ProgressView()
+                .controlSize(.mini)
+                .tint(Color.ompDynamic(light: 0xAB1616, dark: 0xFDB9AB))
+        case "error":
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.ompFlat(rgb: 0xDE4A43))
+        default:
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2))
         }
     }
 }

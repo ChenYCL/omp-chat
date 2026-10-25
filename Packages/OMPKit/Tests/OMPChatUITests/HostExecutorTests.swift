@@ -196,4 +196,85 @@ final class HostExecutorTests: XCTestCase {
         XCTAssertEqual(plain, "untouched")
         XCTAssertNil(none)
     }
+    // MARK: - exec.cancel
+
+    func testCancelKillsSleepAndReportsCancelled() async throws {
+        let executor = executor(allowed: true)
+        let started = Date()
+        let pending = Task { await executor.handle(HostRPCRequest(
+            id: "cancel-me", op: "exec", command: "echo before && sleep 30", cwd: root.path, timeout: 120
+        )) }
+        // Give zsh time to spawn so the process tree exists.
+        try await Task.sleep(for: .milliseconds(600))
+
+        let ack = await executor.handle(HostRPCRequest(
+            id: "c1", op: "exec.cancel", requestID: "cancel-me"
+        ))
+        XCTAssertTrue(ack.ok, ack.error ?? "")
+        let response = await pending.value
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "cancelled")
+        XCTAssertEqual(response.exitCode, 130)
+        XCTAssertEqual(response.stdout?.trimmingCharacters(in: .whitespacesAndNewlines), "before")
+        XCTAssertLessThan(elapsed, 5, "cancel must not wait for the 30s sleep")
+
+        // The wrapper and its sleep child are really gone.
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(try Self.pgrep("sleep 30"), [])
+    }
+
+    func testCancelIsIdempotent() async throws {
+        let executor = executor(allowed: true)
+        let pending = Task { await executor.handle(HostRPCRequest(
+            id: "twice", op: "exec", command: "sleep 30", cwd: root.path, timeout: 120
+        )) }
+        try await Task.sleep(for: .milliseconds(600))
+
+        let first = await executor.handle(HostRPCRequest(id: "k1", op: "exec.cancel", requestID: "twice"))
+        XCTAssertTrue(first.ok)
+        // Wait for the exec to unwind, so the retry exercises the
+        // already-finished case, not the still-dying one.
+        let response = await pending.value
+        XCTAssertEqual(response.error, "cancelled")
+        XCTAssertEqual(response.exitCode, 130)
+        let second = await executor.handle(HostRPCRequest(id: "k2", op: "exec.cancel", requestID: "twice"))
+        XCTAssertTrue(second.ok)
+        XCTAssertEqual(second.text, "not_running")
+
+        // Unknown ids are not_running too, before and after any exec.
+        let ghost = await executor.handle(HostRPCRequest(id: "k3", op: "exec.cancel", requestID: "ghost"))
+        XCTAssertTrue(ghost.ok)
+        XCTAssertEqual(ghost.text, "not_running")
+    }
+
+    func testCancelRequiresShellGate() async {
+        let executor = executor(allowed: false)
+        let blocked = await executor.handle(HostRPCRequest(id: "g", op: "exec.cancel", requestID: "x"))
+        XCTAssertFalse(blocked.ok)
+        XCTAssertEqual(blocked.error, "shell_disabled")
+    }
+
+    func testCancelWithoutRequestIDIsBadRequest() async {
+        let executor = executor(allowed: true)
+        let response = await executor.handle(HostRPCRequest(id: "b", op: "exec.cancel"))
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "bad_request")
+    }
+
+    /// `pgrep -f` as an array of pids, so tests can prove processes died.
+    static func pgrep(_ pattern: String) throws -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-f", pattern]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(decoding: data, as: UTF8.self)
+        return text.split(separator: "\n").map(String.init)
+    }
 }

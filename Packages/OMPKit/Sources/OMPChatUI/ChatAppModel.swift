@@ -1199,24 +1199,95 @@ public final class ChatAppModel {
 
 
     /// Structured mirror of the workspace for the LAN relay server.
+    ///
+    /// Assistant messages carry their thinking transcript and tool activity so
+    /// the phone can render moshi-style operation cards. Snapshot size matters
+    /// because the hub re-sends the whole document on every rev: full detail
+    /// (arguments + output) only rides on the last 5 assistant messages; every
+    /// other message keeps summary rows only.
     public func relaySnapshot() -> RelaySnapshot {
+        func relayActivity(
+            for message: ChatMessage, includeDetail: Bool
+        ) -> (thinking: String?, activity: [RelayActivity]?) {
+            var thinking = message.thinkingText
+            var activities: [RelayActivity] = []
+            var pending: [String: ToolCall] = [:]
+            for part in message.parts {
+                switch part {
+                case .toolCall(let call):
+                    pending[call.id] = call
+                    activities.append(
+                        RelayActivity(
+                            id: call.id,
+                            name: call.name,
+                            summary: ActivityLog.summary(for: call, result: nil),
+                            status: "running"
+                        )
+                    )
+                case .toolResult(let result):
+                    let diff = ActivityLog.toolDiff(result)
+                    let call = pending.removeValue(forKey: result.callID) ?? ToolCall(
+                        id: result.callID, name: result.name, argumentsJSON: ""
+                    )
+                    let summary = ActivityLog.summary(for: call, result: result)
+                    let detail = includeDetail
+                        ? [call.argumentsJSON, result.outputText]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: "\n")
+                        : nil
+                    if let index = activities.lastIndex(where: { $0.id == result.callID }) {
+                        activities[index].status = result.isError ? "error" : "ok"
+                        activities[index].summary = summary
+                        activities[index].added = diff?.added
+                        activities[index].removed = diff?.removed
+                        activities[index].detail = detail
+                    } else {
+                        activities.append(
+                            RelayActivity(
+                                id: result.callID, name: result.name, summary: summary,
+                                status: result.isError ? "error" : "ok",
+                                added: diff?.added, removed: diff?.removed, detail: detail
+                            )
+                        )
+                    }
+                default:
+                    break
+                }
+            }
+            return RelayMessage.normalized(thinking: thinking, activity: activities)
+        }
+
         let projectNameByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
         let conversations = sortedConversations.map { conversation in
-            RelayConversation(
+            // Last five assistant messages carry expandable detail; older ones
+            // ship summaries only to keep the wire payload bounded.
+            let visible = conversation.messages.suffix(100)
+            let assistantIndexes = visible.enumerated().compactMap { index, message in
+                message.role == .assistant && !message.parts.isEmpty ? index : nil
+            }
+            let detailIndexes = Set(assistantIndexes.suffix(5))
+            let messages = visible.enumerated().map { index, message -> RelayMessage in
+                let isAssistant = message.role != .user
+                let (thinking, activity) = isAssistant
+                    ? relayActivity(for: message, includeDetail: detailIndexes.contains(index))
+                    : (nil, nil)
+                return RelayMessage(
+                    id: message.id.uuidString,
+                    role: message.role == .user ? "user" : "assistant",
+                    text: message.concatenatedText,
+                    ts: message.createdAt,
+                    streaming: conversation.id == streamingConversationID && message.status == .streaming,
+                    thinking: thinking,
+                    activity: activity
+                )
+            }
+            return RelayConversation(
                 id: conversation.id.uuidString,
                 title: conversation.title,
                 updatedAt: conversation.updatedAt,
                 project: conversation.projectID.flatMap { projectNameByID[$0] },
                 isStreaming: conversation.id == streamingConversationID,
-                messages: conversation.messages.suffix(100).map { message in
-                    RelayMessage(
-                        id: message.id.uuidString,
-                        role: message.role == .user ? "user" : "assistant",
-                        text: message.concatenatedText,
-                        ts: message.createdAt,
-                        streaming: conversation.id == streamingConversationID && message.status == .streaming
-                    )
-                }
+                messages: messages
             )
         }
         return RelaySnapshot(

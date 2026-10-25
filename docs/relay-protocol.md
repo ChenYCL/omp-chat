@@ -36,7 +36,41 @@
 ```
 
 - `messages` 每会话只带最近 100 条；日期用 ISO8601。
-- `role` 只有小写 `user` / `assistant`；`streaming=true` 表示该消息仍在增量生成。
+
+## 活动与思考（v1 增量字段，向后兼容）
+
+2026-10 起快照里的 assistant 消息新增两个**可选**字段，老客户端/Python hub 不识别即忽略，快照里没有这两个字段时行为与 v1 完全一致：
+
+```json
+{
+  "id": "UUID字符串",
+  "role": "assistant",
+  "text": "正文",
+  "ts": "...",
+  "streaming": false,
+  "thinking": "模型思考文本（≤ 8192 UTF-8 字节，空则整个字段不出现）",
+  "activity": [
+    {
+      "id": "ToolCall.id",
+      "name": "edit_file",
+      "summary": "已编辑 AppDelegate.swift",
+      "status": "running|ok|error",
+      "added": 12,
+      "removed": 3,
+      "detail": "参数 + 输出原文（≤ 4096 UTF-8 字节，仅最近 5 条 assistant 消息携带；summary-only 行整个字段不出现）"
+    }
+  ]
+}
+```
+
+语义：
+
+- `activity` 每条消息最多 **50** 条（超出从尾部丢弃，保留最早的调用）；空数组与 `thinking` 为空字符串时**整个字段不编码**。
+- `summary` 与桌面端 ActivityRow 同一套解析：已读 `<file>` / 已搜索 `<query>` / 已运行 `<cmd>` / 已编辑 `<file>`，未知工具回退原始名。
+- `status`: 工具调用尚未返回 = `running`；返回且未标错 = `ok`；`isError` = `error`。手机端据此渲染橙色 spinner / 绿勾 / 红叉。
+- `added` / `removed`: 对工具输出按行统计 `+`/`-` 前缀（忽略 `+++`/`---`），即桌面端 diff chip 同款数字；无 diff 时两字段都不出现。
+- `detail` 是 `ToolCall.argumentsJSON` 与 `ToolResult.outputText` 用换行拼接的原文（都非空才拼接），UTF-8 字节级截断、不切开多字节字符。快照由 hub 整体重发，为控制流量**只有每会话最后 5 条 assistant 消息带 detail**，其余只有 summary 行。
+- Swift 侧：`RelayMessage.thinking`（上限 `RelayMessage.maxThinkingBytes = 8192`）与 `RelayMessage.activity: [RelayActivity]?`（上限 `RelayActivity.maxPerMessage = 50`、`RelayActivity.maxDetailBytes = 4096`），全部 `decodeIfPresent` 解码，缺失即 `nil`。填充在 `ChatAppModel.relaySnapshot()`，渲染在 `RemoteConsoleScreen`（思考行 + 「N 个操作」折叠组，26pt 行高 / 13pt 文本 / 官方 diff 色）。
 
 ## 实时通知（SSE）
 

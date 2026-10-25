@@ -108,6 +108,38 @@ final class RelayHostRPCTests: XCTestCase {
         XCTAssertEqual(decoded.error, "shell_disabled")
     }
 
+    func testCancelRequestRoundTripsRequestID() throws {
+        let request = HostRPCRequest(id: "c1", op: "exec.cancel", requestID: "exec-1")
+        let data = try encoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["op"] as? String, "exec.cancel")
+        XCTAssertEqual(object["requestID"] as? String, "exec-1")
+        XCTAssertNil(object["command"])
+        let decoded = try decoder().decode(HostRPCRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+    }
+
+    func testOldRequestWithoutRequestIDKeyDecodes() throws {
+        // A client that predates exec.cancel sends no requestID; the field
+        // must decode as nil instead of failing.
+        let raw = #"{"id":"old","op":"exec","command":"pwd"}"#
+        let decoded = try decoder().decode(HostRPCRequest.self, from: Data(raw.utf8))
+        XCTAssertEqual(decoded.id, "old")
+        XCTAssertEqual(decoded.op, "exec")
+        XCTAssertNil(decoded.requestID)
+    }
+
+    func testCancelledResponseRoundTrips() throws {
+        let response = HostRPCResponse(
+            id: "exec-1", ok: false, error: "cancelled",
+            stdout: "partial", stderr: "", exitCode: 130, cwd: "/tmp"
+        )
+        let decoded = try decoder().decode(HostRPCResponse.self, from: encoder().encode(response))
+        XCTAssertEqual(decoded, response)
+        XCTAssertFalse(decoded.ok)
+        XCTAssertEqual(decoded.exitCode, 130)
+    }
+
     // MARK: - LAN /rpc
 
     private func rpcRequest(_ body: HostRPCRequest, token: String? = "valid") -> URLRequest {
@@ -170,5 +202,19 @@ final class RelayHostRPCTests: XCTestCase {
         let decoded = try decoder().decode(HostRPCResponse.self, from: data)
         XCTAssertFalse(decoded.ok)
         XCTAssertEqual(decoded.error, "bad_request")
+    }
+
+    func testRPCCancelRoundTripOverLAN() async throws {
+        server.onRPC = { request in
+            HostRPCResponse(id: request.requestID ?? request.id, ok: false, error: "cancelled", exitCode: 130)
+        }
+        let (data, response) = try await URLSession.shared.data(
+            for: rpcRequest(HostRPCRequest(id: "cancel-op", op: "exec.cancel", requestID: "exec-9"))
+        )
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let decoded = try decoder().decode(HostRPCResponse.self, from: data)
+        XCTAssertEqual(decoded.id, "exec-9")
+        XCTAssertEqual(decoded.error, "cancelled")
+        XCTAssertEqual(decoded.exitCode, 130)
     }
 }

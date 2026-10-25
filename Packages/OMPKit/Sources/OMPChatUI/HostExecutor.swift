@@ -16,12 +16,18 @@ public struct RemoteOperationRecord: Identifiable, Sendable, Equatable {
     }
 }
 
-/// Executes host RPC on the Mac: `info`, `fs.list`, `fs.read`, and `exec`.
+/// Executes host RPC on the Mac: `info`, `fs.list`, `fs.read`, `exec`, and
+/// `exec.cancel`.
 ///
 /// `info` always runs. Everything else answers `shell_disabled` unless
 /// [`shellAllowed`] (backed by `AppSettings.relayAllowShell`) is true.
 /// `exec` runs `/bin/zsh -c` and reports the resulting working directory, so
 /// a `cd` survives into the next call when the client sends `cwd` back.
+/// While an `exec` runs, the executor keeps it in a registry keyed by request
+/// id; `exec.cancel` with that id stops the process tree — SIGINT to the
+/// descendants first (the wrapper shell itself ignores it), then SIGINT to
+/// the wrapper, then SIGKILL after 2 s — and the exec answers
+/// `ok: false, error: "cancelled"` with its partial output and exit code 130.
 public struct HostExecutor: Sendable {
     /// Hard cap on a single stdout or stderr capture.
     public static let outputCap = 256 * 1024
@@ -39,14 +45,19 @@ public struct HostExecutor: Sendable {
     public var homeDirectory: String
     /// Append-only ring of the last operations, for the Settings disclosure.
     private let log: RemoteOperationLog
+    /// In-flight `exec` processes by request id, so `exec.cancel` can stop
+    /// them. Only meaningful on macOS; iOS never populates it.
+    private let running: RunningExecRegistry
     public init(
         shellAllowed: Bool,
         homeDirectory: String? = nil,
-        log: RemoteOperationLog? = nil
+        log: RemoteOperationLog? = nil,
+        running: RunningExecRegistry? = nil
     ) {
         self.shellAllowed = shellAllowed
         self.homeDirectory = homeDirectory ?? Self.realHomeDirectory()
         self.log = log ?? RemoteOperationLog()
+        self.running = running ?? RunningExecRegistry()
     }
 
     /// Account home from `getpwuid`, falling back to `NSHomeDirectory()` only
@@ -67,7 +78,7 @@ public struct HostExecutor: Sendable {
 
     public func handle(_ request: HostRPCRequest) async -> HostRPCResponse {
         let op = request.op
-        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec" else {
+        guard op == "info" || op == "fs.list" || op == "fs.read" || op == "exec" || op == "exec.cancel" else {
             return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
         }
         if op != "info", !shellAllowed {
@@ -79,6 +90,7 @@ public struct HostExecutor: Sendable {
         case "info": return info(request)
         case "fs.list": return list(request)
         case "fs.read": return read(request)
+        case "exec.cancel": return await cancel(request)
         default: return await exec(request)
         }
     }
@@ -196,19 +208,42 @@ public struct HostExecutor: Sendable {
         async let stdoutData = Self.collect(outPipe.fileHandleForReading, cap: cap)
         async let stderrData = Self.collect(errPipe.fileHandleForReading, cap: cap)
 
+        running.insert(
+            RunningExec(process: process, outPipe: outPipe, errPipe: errPipe),
+            id: request.id
+        )
+        defer { running.remove(id: request.id) }
+
         let finished = await Self.wait(process, timeout: timeout)
+        let cancelled = running.wasCancelled(id: request.id)
         if !finished {
-            process.terminate()
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            Self.stopTree(of: process, escalated: false)
+            if await !Self.finished(process, within: 2) {
+                Self.stopTree(of: process, escalated: true)
+            }
         }
         let stdout = await stdoutData
         let stderr = await stderrData
 
+        // A cancel kills the tree, so the process ends "normally" as far as
+        // `wait` is concerned; report the cancelled outcome — partial output
+        // and exit 130 — whichever way the death arrived.
+        if cancelled {
+            return HostRPCResponse(
+                id: request.id, ok: false, error: "cancelled",
+                truncated: (stdout.truncated || stderr.truncated) ? true : nil,
+                stdout: stdout.text, stderr: stderr.text,
+                exitCode: 130, cwd: cwd
+            )
+        }
+
         if !finished {
             return HostRPCResponse(
-                id: request.id, ok: false, error: "timeout",
+                id: request.id, ok: false,
+                error: "timeout",
                 truncated: (stdout.truncated || stderr.truncated) ? true : nil,
-                stdout: stdout.text, stderr: stderr.text, cwd: cwd
+                stdout: stdout.text, stderr: stderr.text,
+                cwd: cwd
             )
         }
 
@@ -229,6 +264,26 @@ public struct HostExecutor: Sendable {
         HostRPCResponse(id: request.id, ok: false, error: "unsupported")
     }
     #endif
+
+    /// `exec.cancel`: stop the in-flight exec whose request id is
+    /// `requestID`. Unknown or already-finished ids answer `ok: true,
+    /// text: "not_running"`, so retries are harmless.
+    private func cancel(_ request: HostRPCRequest) async -> HostRPCResponse {
+        #if os(macOS)
+        guard let target = request.requestID, !target.isEmpty else {
+            return HostRPCResponse(id: request.id, ok: false, error: "bad_request")
+        }
+        guard let run = running.lookup(id: target) else {
+            return HostRPCResponse(id: request.id, ok: true, text: "not_running")
+        }
+        run.markCancelled()
+        Self.stopTree(of: run.process, escalated: false)
+        return HostRPCResponse(id: request.id, ok: true, text: "cancelling")
+        #else
+        _ = request
+        return HostRPCResponse(id: request.id, ok: false, error: "unsupported")
+        #endif
+    }
 
     // MARK: Helpers
 
@@ -375,6 +430,131 @@ public struct HostExecutor: Sendable {
         }
         return detail.isEmpty ? request.op : "\(request.op) \(detail)"
     }
+}
+
+#if os(macOS)
+/// One in-flight `exec`: the process plus what cancel needs to reach it.
+final class RunningExec: @unchecked Sendable {
+    let process: Process
+    let outPipe: Pipe
+    let errPipe: Pipe
+    private let lock = NSLock()
+    private var cancelled = false
+
+    init(process: Process, outPipe: Pipe, errPipe: Pipe) {
+        self.process = process
+        self.outPipe = outPipe
+        self.errPipe = errPipe
+    }
+
+    /// Records that a cancel was requested, so the exec answers
+    /// `cancelled` instead of `timeout` when it unwinds.
+    func markCancelled() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
+/// Thread-safe map of request id to running exec, shared by `exec` and
+/// `exec.cancel`.
+public final class RunningExecRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: RunningExec] = [:]
+
+    public init() {}
+
+    func insert(_ run: RunningExec, id: String) {
+        lock.lock()
+        items[id] = run
+        lock.unlock()
+    }
+
+    func lookup(id: String) -> RunningExec? {
+        lock.lock()
+        defer { lock.unlock() }
+        return items[id]
+    }
+
+    func remove(id: String) {
+        lock.lock()
+        items.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    func wasCancelled(id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return items[id]?.isCancelled ?? false
+    }
+}
+#else
+/// iOS never runs `exec`, so there is nothing to register; the type exists so
+/// `HostExecutor` keeps one initialiser on both platforms.
+public final class RunningExecRegistry: @unchecked Sendable {
+    public init() {}
+}
+#endif
+
+// MARK: - Cancel plumbing
+
+extension HostExecutor {
+    #if os(macOS)
+    /// Signals `process` and every descendant. SIGINT goes to the
+    /// descendants first: the wrapper zsh ignores SIGINT aimed at itself,
+    /// but dies when its children do (verified: the tree exits 130 with
+    /// partial output intact). `escalated` switches to SIGKILL.
+    static func stopTree(of process: Process, escalated: Bool) {
+        let signal = escalated ? SIGKILL : SIGINT
+        for pid in Self.descendants(of: process.processIdentifier) {
+            kill(pid, signal)
+        }
+        if process.isRunning {
+            if escalated {
+                kill(process.processIdentifier, signal)
+            } else {
+                process.terminate()
+            }
+        }
+    }
+
+    /// Resolves once `process` is gone or `timeout` elapses. A grace-period
+    /// poller, unlike the termination-handler based `wait`.
+    static func finished(_ process: Process, within timeout: Double) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while process.isRunning, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return !process.isRunning
+    }
+
+    /// Every live descendant of `pid`, deepest paths included. One
+    /// `sysctl` snapshot; no subprocesses.
+    static func descendants(of pid: pid_t) -> [pid_t] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        var buffer = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return [] }
+        let count = size / MemoryLayout<kinfo_proc>.stride
+        let entries = buffer[..<count]
+        var result: [pid_t] = []
+        var frontier = [pid]
+        while let current = frontier.popLast() {
+            for entry in entries where entry.kp_eproc.e_ppid == current {
+                result.append(entry.kp_proc.p_pid)
+                frontier.append(entry.kp_proc.p_pid)
+            }
+        }
+        return result
+    }
+    #endif
 }
 
 #if os(macOS)

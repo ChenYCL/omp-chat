@@ -18,29 +18,126 @@ enum RelayDate {
     }
 }
 
+/// Truncates `value` to at most `maxBytes` UTF-8 bytes without splitting a
+/// character: back off continuation bytes, then the lead byte of a cut sequence.
+fileprivate func relayCappedUTF8(_ value: String, maxBytes: Int) -> String {
+    guard value.utf8.count > maxBytes else { return value }
+    var bytes = Array(value.utf8.prefix(maxBytes))
+    while let last = bytes.last, last & 0xC0 == 0x80 { bytes.removeLast() }
+    if let last = bytes.last, last & 0xC0 == 0xC0 { bytes.removeLast() }
+    return String(decoding: bytes, as: UTF8.self)
+}
+
+/// One tool operation mirrored inside a [`RelayMessage`], so the phone can
+/// render moshi-style collapsible operation cards instead of plain text.
+///
+/// `summary` reuses the desktop 已读/已搜索/已运行/已编辑 parsing. `detail`
+/// (full arguments + output) only rides on the most recent assistant replies
+/// so the snapshot payload stays bounded over the hub and LAN.
+public struct RelayActivity: Codable, Sendable, Equatable, Identifiable {
+    /// Hard cap for `detail` (UTF-8 bytes).
+    public static let maxDetailBytes = 4096
+    /// Hard cap for activities per message.
+    public static let maxPerMessage = 50
+
+    /// Stable identifier; mirrors the originating `ToolCall.id` on the host.
+    public var id: String
+    /// Raw tool name (e.g. `edit_file`).
+    public var name: String
+    /// One-line description, identical parsing semantics to the desktop `ActivityLog`.
+    public var summary: String
+    /// `running` while awaiting the result, then `ok` or `error`.
+    public var status: String
+    /// Diffstat added lines from the tool output, `nil` when there is none.
+    public var added: Int?
+    /// Diffstat removed lines from the tool output, `nil` when there is none.
+    public var removed: Int?
+    /// Arguments + output, capped at `maxDetailBytes`; omitted for summary-only rows.
+    public var detail: String?
+
+    public init(
+        id: String, name: String, summary: String, status: String,
+        added: Int? = nil, removed: Int? = nil, detail: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.summary = summary
+        self.status = status
+        self.added = added
+        self.removed = removed
+        self.detail = Self.capped(detail)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, summary, status, added, removed, detail
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "ok"
+        added = try container.decodeIfPresent(Int.self, forKey: .added)
+        removed = try container.decodeIfPresent(Int.self, forKey: .removed)
+        detail = Self.capped(try container.decodeIfPresent(String.self, forKey: .detail))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(added, forKey: .added)
+        try container.encodeIfPresent(removed, forKey: .removed)
+        try container.encodeIfPresent(detail, forKey: .detail)
+    }
+
+    /// Enforces the wire cap; empty input collapses to `nil` so it is omitted.
+    static func capped(_ detail: String?) -> String? {
+        guard var value = detail, !value.isEmpty else { return nil }
+        value = relayCappedUTF8(value, maxBytes: Self.maxDetailBytes)
+        return value.isEmpty ? nil : value
+    }
+}
+
 /// Wire representation of one chat message mirrored to a remote controller.
 public struct RelayMessage: Codable, Sendable, Equatable {
+    /// Hard cap for the mirrored thinking text (UTF-8 bytes).
+    public static let maxThinkingBytes = 8 * 1024
+
     /// Stable identifier; mirrors the originating `ChatMessage.id` on the host.
     public var id: String
     /// Lowercase `"user"` or `"assistant"`.
     public var role: String
-    /// Message body text (thinking content never included).
+    /// Message body text (thinking rides in `thinking`).
     public var text: String
     /// Message timestamp, encoded ISO8601.
     public var ts: Date
     /// True while this message is still being incrementally generated.
     public var streaming: Bool
+    /// Model thinking transcript, capped at `maxThinkingBytes`; `nil` when empty.
+    /// Optional and omitted on the wire when empty, so older clients keep working.
+    public var thinking: String?
+    /// Tool operations for collapsible activity cards, capped at
+    /// `RelayActivity.maxPerMessage`; `nil` when the message has none.
+    public var activity: [RelayActivity]?
 
-    public init(id: String, role: String, text: String, ts: Date, streaming: Bool) {
+    public init(
+        id: String, role: String, text: String, ts: Date, streaming: Bool,
+        thinking: String? = nil, activity: [RelayActivity]? = nil
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.ts = ts
         self.streaming = streaming
+        (self.thinking, self.activity) = Self.normalized(thinking: thinking, activity: activity)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, ts, streaming
+        case id, role, text, ts, streaming, thinking, activity
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +152,10 @@ public struct RelayMessage: Codable, Sendable, Equatable {
             ts = Date()
         }
         streaming = try container.decodeIfPresent(Bool.self, forKey: .streaming) ?? false
+        (self.thinking, self.activity) = Self.normalized(
+            thinking: try container.decodeIfPresent(String.self, forKey: .thinking),
+            activity: try container.decodeIfPresent([RelayActivity].self, forKey: .activity)
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -64,6 +165,29 @@ public struct RelayMessage: Codable, Sendable, Equatable {
         try container.encode(text, forKey: .text)
         try container.encode(RelayDate.string(from: ts), forKey: .ts)
         try container.encode(streaming, forKey: .streaming)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(activity, forKey: .activity)
+    }
+
+    /// Applies the wire caps in one place; used by both initializers and the
+    /// host snapshot builder in OMPChatUI.
+    public static func normalized(
+        thinking: String?, activity: [RelayActivity]?
+    ) -> (String?, [RelayActivity]?) {
+        let cappedThinking: String?
+        if var value = thinking, !value.isEmpty {
+            value = relayCappedUTF8(value, maxBytes: maxThinkingBytes)
+            cappedThinking = value.isEmpty ? nil : value
+        } else {
+            cappedThinking = nil
+        }
+        let cappedActivity: [RelayActivity]?
+        if let items = activity, !items.isEmpty {
+            cappedActivity = Array(items.prefix(RelayActivity.maxPerMessage))
+        } else {
+            cappedActivity = nil
+        }
+        return (cappedThinking, cappedActivity)
     }
 }
 

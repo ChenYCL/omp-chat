@@ -59,25 +59,30 @@ public final class RemoteSession {
 }
 
 enum HostRPC {
-    /// Sends `request`, tagging it with a fresh id. Throws only when nothing
-    /// came back at all; an `ok: false` body is returned as-is.
+    /// Sends `request`. `id` overrides the fresh request id (the terminal
+    /// pane pins it so Ctrl-C can cancel that exact exec); the default keeps
+    /// the old behavior. Throws only when nothing came back at all; an
+    /// `ok: false` body is returned as-is.
     static func call(
         _ sink: any RelayRPCSink,
         op: String,
+        id: String? = nil,
         path: String? = nil,
         command: String? = nil,
         cwd: String? = nil,
         maxBytes: Int? = nil,
-        timeout: Double? = nil
+        timeout: Double? = nil,
+        requestID: String? = nil
     ) async throws -> HostRPCResponse {
         let request = HostRPCRequest(
-            id: UUID().uuidString,
+            id: id ?? UUID().uuidString,
             op: op,
             path: path,
             command: command,
             cwd: cwd,
             maxBytes: maxBytes,
-            timeout: timeout
+            timeout: timeout,
+            requestID: requestID
         )
         return try await sink.call(request)
     }

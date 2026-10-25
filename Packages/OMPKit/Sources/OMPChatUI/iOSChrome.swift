@@ -384,8 +384,10 @@ struct PaseoTerminalPane: View {
     @State private var historyIndex: Int?
     @State private var refusal: String?
     @State private var failure: String?
-    /// The command currently on the wire; cancelling it is what Ctrl-C does.
+    /// The command currently on the wire. `inflightID` is the `exec` request
+    /// id on the host, so Ctrl-C can send `exec.cancel` for it.
     @State private var inflight: Task<Void, Never>?
+    @State private var inflightID: String?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -564,30 +566,40 @@ struct PaseoTerminalPane: View {
         let index = entries.count
         entries.append(Entry(command: command, output: "", exitCode: nil, running: true))
         let working = cwd
+        let requestID = UUID().uuidString
+        inflightID = requestID
         inflight = Task {
             defer { inflight = nil }
             do {
                 let response = try await HostRPC.call(
-                    sink, op: "exec", command: command, cwd: working.isEmpty ? nil : working, timeout: 30
+                    sink, op: "exec", id: requestID, command: command,
+                    cwd: working.isEmpty ? nil : working, timeout: 30
                 )
                 guard !Task.isCancelled else { return }
                 guard response.ok else {
-                    if response.error == "shell_disabled" { refusal = HostRPC.message(for: response) }
-                    finish(index, output: HostRPC.message(for: response), exitCode: nil)
+                    if response.error == "shell_disabled" {
+                        refusal = HostRPC.message(for: response)
+                        finish(index, output: HostRPC.message(for: response), exitCode: nil)
+                    } else if response.error == "cancelled" {
+                        // The host killed the tree; keep whatever it printed.
+                        let partial = Self.rendered(response)
+                        finish(index, output: partial.isEmpty ? "^C 已取消" : "^C 已取消\n" + partial, exitCode: 130)
+                    } else {
+                        finish(index, output: HostRPC.message(for: response), exitCode: nil)
+                    }
                     return
                 }
                 finish(index, output: Self.rendered(response), exitCode: response.exitCode)
                 if let next = response.cwd, !next.isEmpty { cwd = next }
                 await refreshPrompt()
             } catch is CancellationError {
-                finish(index, output: "^C", exitCode: nil)
+                finish(index, output: "^C 已取消", exitCode: 130)
             } catch {
                 guard !Task.isCancelled else { return }
                 finish(index, output: error.localizedDescription, exitCode: nil)
             }
         }
     }
-
     private func finish(_ index: Int, output: String, exitCode: Int?) {
         guard entries.indices.contains(index) else { return }
         entries[index].output = output
@@ -595,14 +607,27 @@ struct PaseoTerminalPane: View {
         entries[index].running = false
     }
 
-    /// Ctrl-C: drop the request. The host keeps running until its own timeout,
-    /// which is the best a stateless RPC can do.
+    /// Ctrl-C: send `exec.cancel` so the host kills the real process, and
+    /// drop the local wait. The exec answers `error: "cancelled"` with its
+    /// partial output and exit code 130; if that answer still arrives before
+    /// the task unwinds it wins, otherwise the pane shows ^C 130.
     private func interrupt() {
         guard let inflight else { return }
+        if let requestID = inflightID, let sink = session.sink {
+            let working = cwd
+            Task {
+                _ = try? await HostRPC.call(
+                    sink, op: "exec.cancel", id: UUID().uuidString,
+                    command: nil, cwd: working.isEmpty ? nil : working,
+                    requestID: requestID
+                )
+            }
+        }
         inflight.cancel()
         self.inflight = nil
+        inflightID = nil
         if let index = entries.indices.last, entries[index].running {
-            finish(index, output: "^C", exitCode: nil)
+            finish(index, output: "^C", exitCode: 130)
         }
     }
 

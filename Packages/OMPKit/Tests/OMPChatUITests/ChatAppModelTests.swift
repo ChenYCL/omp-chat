@@ -97,6 +97,77 @@ final class ChatAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedConversation?.messages.count, 4)
     }
 
+    /// relaySnapshot must surface tool traffic as RelayActivity rows with the
+    /// same summaries/diff stats the desktop ActivityLog derives, cap detail
+    /// to the last 5 assistant messages, and skip user messages entirely.
+    func testRelaySnapshotBuildsThinkingAndActivity() async throws {
+        let store = InMemoryConversationStore()
+        let model = try await makeModel(store: store, chunks: [
+            "data: {\"choices\":[{\"delta\":{\"content\":\"完成\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        var conversation = Conversation(title: "relay")
+        let thinking = ChatMessage(role: .assistant, parts: [.thinking("先查再改")])
+        let runningCall = ChatMessage(
+            role: .assistant,
+            parts: [.toolCall(ToolCall(id: "call_2", name: "Bash", argumentsJSON: #"{"command":"swift build"}"#))]
+        )
+        let finished = ChatMessage(
+            role: .assistant,
+            parts: [
+                .thinking("先读文件"),
+                .toolCall(ToolCall(id: "call_1", name: "Read", argumentsJSON: #"{"file_path":"/tmp/AppDelegate.swift"}"#)),
+                .toolCall(ToolCall(id: "call_3", name: "edit_file", argumentsJSON: #"{"file_path":"/tmp/AppDelegate.swift"}"#)),
+                .toolResult(ToolResult(callID: "call_1", name: "Read", outputText: "import Foundation")),
+                .toolResult(ToolResult(callID: "call_3", name: "edit_file", outputText: "+let x = 1\n-let x = 0", isError: true)),
+            ]
+        )
+        conversation.messages = [
+            ChatMessage(role: .user, parts: [.text("改一下")]),
+            thinking, runningCall, finished,
+        ]
+        conversation.updatedAt = Date()
+        try await store.save(conversation)
+        // A fresh model bootstraps from the store, which already holds the
+        // seeded conversation (the first makeModel bootstrap only added its
+        // default conversation to that same store).
+        let relayModel = try await makeModel(store: store, chunks: [])
+
+        let snapshot = relayModel.relaySnapshot()
+        let relayed = try XCTUnwrap(snapshot.conversations.first { $0.id == conversation.id.uuidString })
+        XCTAssertEqual(relayed.messages.count, 4)
+
+        let user = relayed.messages[0]
+        XCTAssertEqual(user.role, "user")
+        XCTAssertNil(user.thinking)
+        XCTAssertNil(user.activity)
+
+        let thinkingOnly = relayed.messages[1]
+        XCTAssertEqual(thinkingOnly.thinking, "先查再改")
+        XCTAssertNil(thinkingOnly.activity)
+
+        let runningMessage = relayed.messages[2]
+        XCTAssertEqual(runningMessage.activity?.count, 1)
+        XCTAssertEqual(runningMessage.activity?.first?.summary, "已运行 swift build")
+        XCTAssertEqual(runningMessage.activity?.first?.status, "running")
+        XCTAssertNil(runningMessage.activity?.first?.detail, "older assistant rows are summary-only")
+
+        let full = relayed.messages[3]
+        XCTAssertEqual(full.thinking, "先读文件")
+        let activities = try XCTUnwrap(full.activity)
+        XCTAssertEqual(activities.count, 2)
+        XCTAssertEqual(activities[0].id, "call_1")
+        XCTAssertEqual(activities[0].summary, "已读 AppDelegate.swift")
+        XCTAssertEqual(activities[0].status, "ok")
+        XCTAssertNil(activities[0].added)
+        let edit = activities[1]
+        XCTAssertEqual(edit.summary, "已编辑 AppDelegate.swift")
+        XCTAssertEqual(edit.status, "error")
+        XCTAssertEqual(edit.added, 1)
+        XCTAssertEqual(edit.removed, 1)
+        XCTAssertEqual(edit.detail, #"{"file_path":"/tmp/AppDelegate.swift"}"# + "\n" + "+let x = 1\n-let x = 0")
+    }
+
     func waitUntilIdle(_ model: ChatAppModel) async throws {
         for _ in 0..<300 {
             if !model.isStreaming { return }

@@ -20,13 +20,13 @@
 ```swift
 public struct HostRPCRequest {
     public var id: String
-    public var op: String          // "info" | "fs.list" | "fs.read" | "exec"
+    public var op: String          // "info" | "fs.list" | "fs.read" | "exec" | "exec.cancel"
     public var path: String?
     public var command: String?
     public var cwd: String?
     public var maxBytes: Int?
     public var timeout: Double?
-}
+    public var requestID: String?  // exec.cancel: the id of the exec to cancel
 
 public struct HostFSEntry { public var name: String; public var isDirectory: Bool; public var size: Int?; public var modified: Date? }
 public struct HostInfo { public var hostName: String; public var user: String; public var home: String; public var cwd: String; public var gitBranch: String?; public var gitDirty: Int? }
@@ -38,18 +38,20 @@ public struct HostRPCResponse {
 }
 ```
 
-`error` 取值：`shell_disabled` | `not_found` | `timeout` | `bad_request` | `unsupported`，或自由文本。
+`error` 取值：`shell_disabled` | `not_found` | `timeout` | `cancelled` | `bad_request` | `unsupported`，或自由文本。
 
 ## 语义
-
 - `info` 始终允许。`path` / `cwd` 省略时用 home；返回该目录的 git 分支与 dirty 计数。
 - `fs.list` / `fs.read` / `exec` **仅当**主机设置 `AppSettings.relayAllowShell == true`（默认 false）
   才执行，否则 `ok: false, error: "shell_disabled"`。这是远程 shell 的唯一开关，默认关闭。
 - `exec` 跑 `/bin/zsh -lc <command>`，工作目录 `cwd`（默认 home）。超时默认 30s，上限 120s。
   stdout / stderr 各自截断到 256 KB，截断时 `truncated: true`。
-- `cd` 没有会话：执行器解析命令结束后的 cwd 并放进响应，客户端下一次调用再传回来。
-- `fs.read` 默认上限 256 KB，UTF-8 lossy。
-- 主机对每一次 `exec` / `fs.*` 打一行日志（`NSLog` 或 `os.Logger`）：op + 截断后的 command/path。不打印 token、房间码、密钥。
+- `exec.cancel` 受同一个 `relayAllowShell` 开关限制，body 里 `requestID` 是在跑的
+  `exec` 的 `id`。主机 SIGINT 掉该进程树（先子进程后包装 shell，2 秒后仍未退出再
+  SIGKILL），被取消的 `exec` 以 `ok: false, error: "cancelled"` 返回，携带已产出的
+  stdout / stderr 与 `exitCode: 130`。`requestID` 不存在或已结束：`ok: true,
+  text: "not_running"`（幂等，重发无害）。iOS 上的执行器不跑命令，回答
+  `ok: false, error: "unsupported"`。
 
 ## 传输
 
@@ -72,8 +74,11 @@ body 是 `HostRPCRequest` JSON，响应是 `HostRPCResponse` JSON。
    Hub 按 `id` 找到 future 并完成它，客户端拿到 `200` + 该 JSON。
 3. 无主机在线，或主机在等待期间断开：`409`。挂起的 future 在断开时全部取消。
 4. 130 秒没有结果：`504`。
-5. `op` 不在 `info | fs.list | fs.read | exec`：`400`（Hub 拒绝未知操作，不转发给主机）。
-6. 每个房间同时挂起的 RPC 上限 32，超出 `429`。
+5. `op` 不在 `info | fs.list | fs.read | exec | exec.cancel`：`400`（Hub 拒绝未知操作，不转发给主机）。
+6. 每个房间同时挂起的 RPC 上限 32，超出 `429`。`exec.cancel` **不受这个上限约束**：
+   房间满载时它照样转发，否则取消会被自己人堵死。
+7. 手机终端的 Ctrl-C 先发 `exec.cancel`（带在跑命令的 `id`），再取消本地等待；
+   收到 `cancelled` 后徽章显示 `130 已取消`，已打印的部分输出保留。
 
 ## Swift 客户端
 

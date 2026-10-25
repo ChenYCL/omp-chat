@@ -1,17 +1,22 @@
 import Foundation
 
-/// One host-RPC request. `op` is `"info" | "fs.list" | "fs.read" | "exec"`.
+/// One host-RPC request. `op` is `"info" | "fs.list" | "fs.read" | "exec" |
+/// "exec.cancel"`.
 ///
 /// Dates travel as ISO8601 via [`RelayDate`]. `info` is always allowed;
 /// `fs.list`, `fs.read`, and `exec` run only when the host setting
 /// `AppSettings.relayAllowShell` is true, otherwise the host answers
-/// `ok: false, error: "shell_disabled"`.
+/// `ok: false, error: "shell_disabled"`. `exec.cancel` follows the same gate
+/// and carries `requestID`: the `id` of the in-flight `exec` to stop.
 public struct HostRPCRequest: Codable, Sendable, Equatable {
     public var id: String
     public var op: String
     public var path: String?
     public var command: String?
     public var cwd: String?
+    /// `exec.cancel` only: the `id` of the running `exec` to cancel. Old
+    /// documents without the key decode as `nil`.
+    public var requestID: String?
     public var maxBytes: Int?
     public var timeout: Double?
 
@@ -22,7 +27,8 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         command: String? = nil,
         cwd: String? = nil,
         maxBytes: Int? = nil,
-        timeout: Double? = nil
+        timeout: Double? = nil,
+        requestID: String? = nil
     ) {
         self.id = id
         self.op = op
@@ -31,6 +37,7 @@ public struct HostRPCRequest: Codable, Sendable, Equatable {
         self.cwd = cwd
         self.maxBytes = maxBytes
         self.timeout = timeout
+        self.requestID = requestID
     }
 }
 
