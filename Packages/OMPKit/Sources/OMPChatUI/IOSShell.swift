@@ -632,6 +632,8 @@ struct ShellDrawer: View {
     let onSelectConversation: (UUID) -> Void
 
     @State private var search = ""
+    /// Deleting a chat asks first, like the desktop's row menu.
+    @State private var pendingDelete: Conversation?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -854,9 +856,23 @@ struct ShellDrawer: View {
                     }
                 }
                 Divider()
-                Button(role: .destructive) { model.deleteConversation(conv.id) } label: {
+                Button(role: .destructive) { pendingDelete = conv } label: {
                     Label("删除", systemImage: "trash")
                 }
+            }
+            .confirmationDialog(
+                "删除这个对话？",
+                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: pendingDelete
+            ) { conv in
+                Button("删除", role: .destructive) {
+                    model.deleteConversation(conv.id)
+                    pendingDelete = nil
+                }
+                Button("取消", role: .cancel) { pendingDelete = nil }
+            } message: { conv in
+                Text("「\(conv.title)」及其消息将被永久删除，无法撤销。")
             }
     }
 

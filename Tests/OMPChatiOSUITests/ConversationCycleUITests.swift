@@ -80,6 +80,24 @@ final class ConversationCycleUITests: XCTestCase {
         XCTAssertTrue(second.waitForExistence(timeout: 5))
     }
 
+    func testDeletingFromTheDrawerAsksFirst() {
+        app.buttons["shell.drawer"].firstMatch.tap()
+        let row = app.staticTexts["第一个会话标题"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.press(forDuration: 1.0)
+        app.buttons["删除"].firstMatch.tap()
+
+        // A confirmation sheet comes first; nothing is deleted until its 删除
+        // is tapped. (The sheet carries the destructive button only — iOS draws
+        // its cancel outside the sheet's button list — so confirm instead of
+        // cancelling here.)
+        let sheet = app.sheets["删除这个对话？"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "应先弹出确认")
+        XCTAssertTrue(row.exists, "确认前会话还在")
+        sheet.buttons["删除"].firstMatch.tap()
+        XCTAssertFalse(row.waitForExistence(timeout: 3), "确认后会话被删除")
+    }
+
     // MARK: - Helpers
 
     private func seed() throws {
