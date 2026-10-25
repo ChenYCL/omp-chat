@@ -839,6 +839,10 @@ struct PaseoScriptsPane: View {
         let command: String
         var running: Bool = false
         var lastExit: Int?
+        /// Section the row is listed under.
+        var group: String = "可运行"
+        /// Mutating actions ask before running.
+        var confirm: Bool = false
     }
 
     @State private var scripts: [Script] = []
@@ -847,6 +851,7 @@ struct PaseoScriptsPane: View {
     @State private var refusal: String?
     @State private var failure: String?
     @State private var log = ""
+    @State private var pendingID: String?
 
     var body: some View {
         Group {
@@ -897,9 +902,11 @@ struct PaseoScriptsPane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    Section("可运行") {
-                        ForEach($scripts) { $script in
-                            scriptRow($script)
+                    ForEach(groups, id: \.self) { group in
+                        Section(group) {
+                            ForEach($scripts) { $script in
+                                if script.group == group { scriptRow($script) }
+                            }
                         }
                     }
                     if !log.isEmpty {
@@ -914,6 +921,20 @@ struct PaseoScriptsPane: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .confirmationDialog(
+                    "运行这个操作？",
+                    isPresented: Binding(get: { pendingID != nil }, set: { if !$0 { pendingID = nil } }),
+                    titleVisibility: .visible
+                ) {
+                    Button("运行") {
+                        if let id = pendingID, let index = scripts.firstIndex(where: { $0.id == id }) {
+                            run($scripts[index])
+                        }
+                        pendingID = nil
+                    }
+                } message: {
+                    Text(scripts.first { $0.id == pendingID }?.command ?? "")
+                }
             }
         }
         .background(Color.ompCanvas)
@@ -937,7 +958,7 @@ struct PaseoScriptsPane: View {
                     .foregroundStyle(code == 0 ? Color.ompTextTertiary : .red)
             }
             Button {
-                run(script)
+                request(script)
             } label: {
                 Group {
                     if script.wrappedValue.running {
@@ -958,12 +979,39 @@ struct PaseoScriptsPane: View {
         .padding(.vertical, 2)
     }
 
+    /// Section titles in display order: git first (it is about the repo the
+    /// phone is looking at), then project scripts.
+    private var groups: [String] {
+        var seen: [String] = []
+        for script in scripts where !seen.contains(script.group) { seen.append(script.group) }
+        return seen
+    }
+
+    private func request(_ script: Binding<Script>) {
+        if script.wrappedValue.confirm { pendingID = script.wrappedValue.id } else { run(script) }
+    }
+
+    /// Only offered when the host reports a git branch for this directory, so
+    /// the buttons never appear outside a repository. All read-only except
+    /// the fast-forward-only pull, which asks first.
+    private static func gitActions(branch: String?) -> [Script] {
+        guard let branch, !branch.isEmpty else { return [] }
+        return [
+            Script(id: "git:status", name: "状态", command: "git status -sb", group: "Git · \(branch)"),
+            Script(id: "git:diff", name: "改动统计", command: "git diff --stat", group: "Git · \(branch)"),
+            Script(id: "git:log", name: "最近提交", command: "git log --oneline -10", group: "Git · \(branch)"),
+            Script(id: "git:pull", name: "拉取（仅快进）", command: "git pull --ff-only", group: "Git · \(branch)", confirm: true),
+        ]
+    }
+
     private func load() async {
         guard let sink = session.sink else { return }
         loaded = false
         defer { loaded = true }
         do {
-            let info = try await HostRPC.call(sink, op: "info")
+            // Follow the directory the terminal last `cd`-ed into, so git and
+            // script buttons act on the project the user is actually in.
+            let info = try await HostRPC.call(sink, op: "info", cwd: session.info?.cwd)
             guard info.ok, let host = info.info else {
                 if info.error == "shell_disabled" { refusal = HostRPC.message(for: info) }
                 else { failure = HostRPC.message(for: info) }
@@ -979,7 +1027,7 @@ struct PaseoScriptsPane: View {
                 refusal = HostRPC.message(for: packageResponse.error == "shell_disabled" ? packageResponse : makefileResponse)
                 return
             }
-            var found: [Script] = []
+            var found: [Script] = Self.gitActions(branch: host.gitBranch)
             if packageResponse.ok, let text = packageResponse.text {
                 found += Self.packageScripts(text)
             }
