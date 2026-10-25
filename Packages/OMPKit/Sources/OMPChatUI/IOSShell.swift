@@ -170,6 +170,8 @@ struct ChatScreen: View {
 
     @State private var showingSubagents = false
     @State private var showingHistory = false
+    @State private var importingBackup = false
+    @State private var importFailure: String?
     @State private var renaming = false
     @State private var renameText = ""
     /// In-chat search on the phone. The desktop's ⌘F posted a notification that
@@ -225,6 +227,24 @@ struct ChatScreen: View {
                 if let id = model.selectedConversationID { model.renameConversation(id, title: renameText) }
             }
             Button("取消", role: .cancel) {}
+        }
+        .fileImporter(isPresented: $importingBackup, allowedContentTypes: [.json, .plainText]) { result in
+            guard case .success(let url) = result else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                try model.importConversation(from: String(contentsOf: url, encoding: .utf8))
+            } catch {
+                importFailure = "导入失败：\(error.localizedDescription)"
+            }
+        }
+        .alert("导入失败", isPresented: Binding(
+            get: { importFailure != nil },
+            set: { if !$0 { importFailure = nil } }
+        )) {
+            Button("好", role: .cancel) { importFailure = nil }
+        } message: {
+            Text(importFailure ?? "")
         }
         .sheet(isPresented: $showingHistory) {
             PaseoSessionHistorySheet { id in
@@ -289,6 +309,10 @@ struct ChatScreen: View {
                     ) {
                         Label("导出 JSON 备份", systemImage: "curlybraces")
                     }
+                }
+                // Reading a backup back in; the phone could only write them.
+                Button { importingBackup = true } label: {
+                    Label("导入 JSON 对话", systemImage: "square.and.arrow.down")
                 }
             } label: {
                 Image(systemName: "ellipsis")

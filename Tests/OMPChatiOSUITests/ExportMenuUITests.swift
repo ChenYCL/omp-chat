@@ -29,6 +29,7 @@ final class ExportMenuUITests: XCTestCase {
         XCTAssertTrue(app.buttons["导出 JSON 备份"].firstMatch.waitForExistence(timeout: 5), "应能导出 JSON")
         XCTAssertTrue(app.buttons["导出 Markdown"].firstMatch.exists, "应能导出 Markdown")
         XCTAssertTrue(app.buttons["分享会话"].firstMatch.exists, "应能分享 HTML")
+        XCTAssertTrue(app.buttons["导入 JSON 对话"].firstMatch.exists, "应能导入备份")
     }
 
     // MARK: - Helpers
