@@ -160,6 +160,8 @@ struct ChatScreen: View {
 
     @State private var showingSubagents = false
     @State private var showingHistory = false
+    @State private var renaming = false
+    @State private var renameText = ""
 
     init(
         onOpenDrawer: @escaping () -> Void = {},
@@ -197,6 +199,13 @@ struct ChatScreen: View {
                 PaseoComposerBar()
             }
             .background(IOSShellMetrics.tabBarBackground)
+        }
+        .alert("重命名对话", isPresented: $renaming) {
+            TextField("标题", text: $renameText)
+            Button("保存") {
+                if let id = model.selectedConversationID { model.renameConversation(id, title: renameText) }
+            }
+            Button("取消", role: .cancel) {}
         }
         .sheet(isPresented: $showingHistory) {
             PaseoSessionHistorySheet { id in
@@ -271,6 +280,24 @@ struct ChatScreen: View {
                 _ = model.newTemporaryConversation()
             } label: {
                 Label("临时对话", systemImage: "eye.slash")
+            }
+            if let conversation = model.selectedConversation {
+                Divider()
+                Button {
+                    renameText = conversation.title
+                    renaming = true
+                } label: {
+                    Label("重命名", systemImage: "pencil")
+                }
+                Button { model.togglePin(conversation.id) } label: {
+                    Label(conversation.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
+                }
+                Button { model.toggleArchive(conversation.id) } label: {
+                    Label(conversation.isArchived ? "取消归档" : "归档", systemImage: "archivebox")
+                }
+                Button { model.duplicateConversation(conversation.id) } label: {
+                    Label("复制为新分支", systemImage: "arrow.triangle.branch")
+                }
             }
             Button {
                 model.showSettings = true
