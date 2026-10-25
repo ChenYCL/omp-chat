@@ -361,6 +361,16 @@ struct ChatScreen: View {
                 Text(hits.isEmpty ? "无匹配" : "\(hits.count) 处")
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Color.ompTextTertiary)
+                Button { moveFind(by: -1) } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(hits.count < 2 ? Color.ompTextTertiary : Color.ompTextSecondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(hits.count < 2)
+                .accessibilityLabel("上一处")
                 Button { moveFind(by: 1) } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .bold))
