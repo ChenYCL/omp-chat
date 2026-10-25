@@ -109,6 +109,6 @@ Account、General、Appearance、Keyboard shortcuts、Archived chats、Data cont
 | Fork / Continue in / Copy 三组顶栏菜单 | `threadHeader.*` | 有分叉与复制 Markdown，缺 worktree 三档 |
 | 富文本格式工具条 | `composer.formatToolbar.*` | 未做（输入框是纯文本） |
 | 用量额度剩余 | `composer.mode.rateLimit.*` | 只有上下文容量气泡 |
-| 侧面板多 tab（Browser / Files / Changes） | `thread.sidePanel.*` | 未做 |
+| 侧面板多 tab（Browser / Files / Changes） | `thread.sidePanel.*` | 已做终端/文件/改动三个 tab（⌘J 或顶栏按钮）：终端真的跑 zsh，文件列当前目录，改动读 `git status --porcelain`，并可选择别的文件夹。没做 Browser 页。 |
 | Mermaid | `codeBlock.mermaid` | 已做：原生渲染 flowchart/graph 与 sequenceDiagram（`MermaidDocument` 解析，`MermaidView` 用 Canvas 画箭头；循环边绕到框图外侧走虚线）。其余类型仍显示源码，不猜。 |
 | 定时任务真实调度 | `settings.automations.*` | 只有 UI 面板 |

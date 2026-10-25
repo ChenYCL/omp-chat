@@ -76,11 +76,10 @@ public struct ChatRootView: View {
                 onToggleTerminal: { showTerminal.toggle() }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // A terminal that really runs commands on this Mac. It has existed
-            // unwired; the thread header's ⌘J button now opens it.
+            // Terminal / files / changes on the local working tree.
             if showTerminal {
                 Divider()
-                TerminalView()
+                SidePanel()
                     .frame(width: 460)
                     .transition(.move(edge: .trailing))
             }
@@ -338,7 +337,7 @@ public struct ChatDetailView: View {
             Spacer()
 
             headerIconButton("square.and.arrow.up", "分享对话") { shareConversation() }
-            headerIconButton("terminal", "终端 (⌘J)") { onToggleTerminal() }
+            headerIconButton("sidebar.right", "侧面板 (⌘J)") { onToggleTerminal() }
             headerIconButton("sidebar.left", "切换侧栏 (⌘B)") { onToggleSidebar() }
             headerIconButton("xmark", "关闭窗口") {
                 NSApp.keyWindow?.close()

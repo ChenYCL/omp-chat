@@ -62,7 +62,7 @@ struct OMPChatApp: App {
                 }
                 .keyboardShortcut("k", modifiers: .command)
 
-                Button("终端") {
+                Button("侧面板") {
                     NotificationCenter.default.post(name: .ompToggleTerminal, object: nil)
                 }
                 .keyboardShortcut("j", modifiers: .command)
