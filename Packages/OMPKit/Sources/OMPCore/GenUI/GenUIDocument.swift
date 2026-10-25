@@ -248,6 +248,18 @@ extension GenUIDocument {
         return values
     }
 
+    /// What a `{{id}}` placeholder receives for each field. A toggle with two
+    /// `options` (`["否","是"]`) maps false/true to those words so the sent
+    /// message reads naturally; every other field passes its value through.
+    public func templateValues(_ values: [String: String]) -> [String: String] {
+        var result = values
+        for node in nodes where node.type == "toggle" {
+            guard let options = node.options, options.count == 2, let raw = values[node.id] else { continue }
+            result[node.id] = raw == "true" ? options[1] : options[0]
+        }
+        return result
+    }
+
     /// Replaces `{{id}}` with `values[id]`. Unknown ids are left as written so
     /// a typo in the model's template stays visible instead of vanishing.
     public static func fill(_ template: String, values: [String: String]) -> String {

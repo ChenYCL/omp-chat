@@ -119,4 +119,17 @@ final class GenUIDocumentTests: XCTestCase {
         XCTAssertEqual(GenUIDocument.formatNumber(0.30000000004, step: 0.1), "0.3")
         XCTAssertEqual(GenUIDocument.formatNumber(2.5, step: 0.5), "2.5")
     }
+
+    func testToggleOptionsWordTheTemplateValue() {
+        let doc = GenUIDocument.parse("""
+        {"type":"toggle","id":"urgent","options":["否","是"]}
+        {"type":"toggle","id":"plain"}
+        {"type":"input","id":"reason","value":"true"}
+        """)
+        let values = doc.templateValues(["urgent": "true", "plain": "true", "reason": "true"])
+        XCTAssertEqual(values["urgent"], "是")
+        XCTAssertEqual(values["plain"], "true", "没写 options 的开关保持原值")
+        XCTAssertEqual(values["reason"], "true", "非开关字段不受影响")
+        XCTAssertEqual(doc.templateValues(["urgent": "false"])["urgent"], "否")
+    }
 }

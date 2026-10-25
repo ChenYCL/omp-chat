@@ -39,7 +39,7 @@
 | divider | | |
 | button | label send style(`primary`) | 点击后把 `send` 作为下一条用户消息发出；相邻按钮排成一行；`{{id}}` 填入同一块里表单字段的当前值 |
 | input | id label placeholder value | 单行输入，回车（完成）收起键盘 |
-| toggle | id label value | 值为 `true` / `false` |
+| toggle | id label value options | 值为 `true` / `false`；写两个 `options`（如 `["否","是"]`）时，`{{id}}` 填入对应文字 |
 | slider | id label min max step value | 初值夹到 `min…max`；步长为整数时不带小数 |
 | select | id label options value | 分段选择；`value` 不在 `options` 里时取第一项 |
 

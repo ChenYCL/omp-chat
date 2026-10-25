@@ -113,7 +113,6 @@ final class IOSShellUITests: XCTestCase {
         let field = composerField
         XCTAssertTrue(field.waitForExistence(timeout: 10), "输入条必须存在")
 
-        let before = app.staticTexts.count
         field.tap()
         field.typeText("回归冒烟：请回复 OK")
         attachScreenshot(named: "06-composer-typed")
@@ -125,18 +124,12 @@ final class IOSShellUITests: XCTestCase {
             app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'send' OR label CONTAINS[c] '发送'")).firstMatch.tap()
         }
 
-        let grew = expectation(description: "transcript grows")
-        let deadline = Date().addingTimeInterval(25)
-        DispatchQueue.global().async {
-            while Date() < deadline {
-                if self.app.staticTexts.count > before {
-                    grew.fulfill()
-                    return
-                }
-                usleep(400_000)
-            }
-        }
-        wait(for: [grew], timeout: 30)
+        // Look for the sent text itself. Counting all static texts broke on long
+        // transcripts: scrolling to the bottom unloads lazy rows above, so the
+        // total can stay flat even though the message was posted.
+        let bubble = app.staticTexts["回归冒烟：请回复 OK"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 15), "发送后用户消息应出现在会话里")
+        XCTAssertEqual((composerField.value as? String).map { $0.contains("回归冒烟") }, false, "发送后输入框应清空")
         attachScreenshot(named: "07-after-send")
     }
 

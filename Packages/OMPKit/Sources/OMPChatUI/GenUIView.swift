@@ -31,7 +31,7 @@ final class GenUIForm {
 
     /// Current values of every form field in `document`.
     func values(in document: GenUIDocument) -> [String: String] {
-        document.formDefaults.merging(edited) { _, new in new }
+        document.templateValues(document.formDefaults.merging(edited) { _, new in new })
     }
 }
 
