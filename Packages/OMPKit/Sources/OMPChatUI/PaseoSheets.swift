@@ -307,6 +307,99 @@ public struct PaseoSessionHistorySheet: View {
     }
 }
 
+/// Archived chats: hidden from Recents and search, reachable only here, and
+/// restorable. The desktop has an 已归档 section; this is the phone's way in.
+public struct PaseoArchivedSheet: View {
+    @Environment(ChatAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let onSelect: (UUID) -> Void
+
+    @State private var query = ""
+
+    public init(onSelect: @escaping (UUID) -> Void) {
+        self.onSelect = onSelect
+    }
+
+    private var items: [Conversation] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return model.archivedConversations }
+        return model.archivedConversations.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.lastMessagePreview.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    public var body: some View {
+        NavigationStack {
+            Group {
+                if model.archivedConversations.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "archivebox")
+                            .font(.system(size: 26))
+                            .foregroundStyle(Color.ompTextTertiary)
+                        Text("没有已归档的会话")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.ompTextSecondary)
+                        Text("在会话菜单里选「归档」，它会移到这。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.ompTextTertiary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(items) { conv in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(conv.title)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(Color.ompText)
+                                    .lineLimit(1)
+                                Text(conv.lastMessagePreview)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.ompTextSecondary)
+                                    .lineLimit(1)
+                            }
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onSelect(conv.id)
+                                dismiss()
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    model.deleteConversation(conv.id)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                                Button {
+                                    model.toggleArchive(conv.id)
+                                } label: {
+                                    Label("取消归档", systemImage: "tray.and.arrow.up")
+                                }
+                                .tint(.green)
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .background(Color.ompCanvas)
+            .searchable(text: $query, prompt: "搜索已归档会话")
+            .navigationTitle("已归档")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 480, minHeight: 380)
+        #endif
+    }
+}
+
 // MARK: - 5. MCP Plugins Sheet (插件与工具)
 
 public struct MCPPluginsSheet: View {
