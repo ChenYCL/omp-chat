@@ -21,6 +21,7 @@ struct SidePanel: View {
     @State private var changes: [Change] = []
     @State private var state: LoadState = .idle
     @State private var openFile: OpenFile?
+    @State private var diff: Diff?
     @State private var picking = false
 
     private struct Entry: Identifiable {
@@ -274,22 +275,140 @@ struct SidePanel: View {
                             .padding(12)
                     }
                     ForEach(changes) { change in
-                        HStack(spacing: 8) {
-                            Text(change.code)
-                                .font(.system(size: 10, weight: .semibold).monospaced())
-                                .foregroundStyle(color(for: change.code))
-                            Text(change.path)
-                                .font(.system(size: 12).monospaced())
-                                .foregroundStyle(Color.ompText)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
+                        Button {
+                            showDiff(change)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(change.code)
+                                    .font(.system(size: 10, weight: .semibold).monospaced())
+                                    .foregroundStyle(color(for: change.code))
+                                Text(change.path)
+                                    .font(.system(size: 12).monospaced())
+                                    .foregroundStyle(diff?.path == change.path ? Color.ompText : Color.ompTextSecondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.horizontal, 12)
-                        .frame(height: 24)
+                        .buttonStyle(.plain)
+                    }
+                    if let diff {
+                        diffView(diff)
                     }
                 }
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    /// Unified diff of one changed path, or the file's text when git has no
+    /// diff for it (a new, untracked file).
+    private struct Diff {
+        var path: String
+        var lines: [Line]
+        struct Line: Identifiable {
+            var text: String
+            var kind: Kind
+            var id: String { text + "\(kind)" }
+        }
+        enum Kind { case context, added, removed, note }
+    }
+
+    private func showDiff(_ change: Change) {
+        if diff?.path == change.path { diff = nil; return }
+        let dir = directory
+        let path = change.path
+        let untracked = change.code.contains("?")
+        let body = Task.detached(priority: .userInitiated) {
+            SidePanel.readDiff(directory: dir, path: path, untracked: untracked)
+        }
+        diff = Diff(path: path, lines: [.init(text: "读取中…", kind: .note)])
+        Task {
+            let lines = await body.value
+            diff = Diff(path: path, lines: lines)
+        }
+    }
+
+    private static func readDiff(directory: String, path: String, untracked: Bool) -> [Diff.Line] {
+        let full = directory == "/" ? "/\(path)" : "\(directory)/\(path)"
+        if untracked {
+            guard let text = try? String(contentsOf: URL(fileURLWithPath: full), encoding: .utf8) else {
+                return [.init(text: "无法读取这个文件", kind: .note)]
+            }
+            return text.split(separator: "\n", omittingEmptySubsequences: false).prefix(200).map {
+                .init(text: String($0), kind: .added)
+            }
+        }
+        let candidates = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
+        guard let git = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            return [.init(text: "没有可用的 git", kind: .note)]
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: git)
+        process.arguments = ["diff", "--no-color", "--", path]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [.init(text: "git 启动失败", kind: .note)] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(decoding: data, as: UTF8.self)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return [.init(text: "git 没有这个文件的可显示差异（可能只是权限或重命名）", kind: .note)]
+        }
+        var lines: [Diff.Line] = []
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(400) {
+            let line = String(raw)
+            if line.hasPrefix("+++") || line.hasPrefix("---") {
+                lines.append(.init(text: line, kind: .note))
+            } else if line.hasPrefix("+") {
+                lines.append(.init(text: line, kind: .added))
+            } else if line.hasPrefix("-") {
+                lines.append(.init(text: line, kind: .removed))
+            } else if line.hasPrefix("@@") || line.hasPrefix("diff ") || line.hasPrefix("index ") {
+                lines.append(.init(text: line, kind: .note))
+            } else {
+                lines.append(.init(text: line, kind: .context))
+            }
+        }
+        return lines
+    }
+
+    private func diffView(_ diff: Diff) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(diff.lines) { line in
+                Text(line.text.isEmpty ? " " : line.text)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(foreground(line.kind))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(background(line.kind))
+            }
+        }
+        .padding(.vertical, 6)
+        .textSelection(.enabled)
+    }
+
+    private func foreground(_ kind: Diff.Kind) -> Color {
+        switch kind {
+        case .added: return Color.ompFlat(rgb: 0x2F9E5E)
+        case .removed: return Color.ompFlat(rgb: 0xDE4A43)
+        case .note: return Color.ompTextTertiary
+        case .context: return Color.ompTextSecondary
+        }
+    }
+
+    private func background(_ kind: Diff.Kind) -> Color {
+        switch kind {
+        case .added: return Color.ompFlat(rgb: 0x2F9E5E).opacity(0.10)
+        case .removed: return Color.ompFlat(rgb: 0xDE4A43).opacity(0.10)
+        default: return .clear
         }
     }
 
