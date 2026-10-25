@@ -16,3 +16,21 @@
 - p2-data-controls ✅ 「数据控制」：会话/消息/媒体计数、存储目录体积、NSSavePanel 导出全部 JSON
 
 验证：swift test 27/27 绿；macOS + iOS BUILD SUCCEEDED；覆盖安装运行中。
+
+## 2026-10-25 · 局域网远程控制（提交 e844147，已 push）
+
+吸收 collie/herdr「桌面状态镜像到手机原生操作」思路，但镜像结构化会话状态而非字符流/
+截屏：Mac 起 LAN HTTP + SSE，iPhone 原生浏览与发言。
+
+- OMPCore/Relay：RelayModels / RelayServer（NWListener 手写 HTTP，五路由全 token 校验，命令串行）
+  / RelayAdvertiser（Bonjour，挂 server 同一 listener——macOS 禁止同端口双 listener）
+- RelayHostController + ChatAppModel.relaySnapshot()/handleRelayCommand()，快照节流 0.5s（流式 1s）
+- 设置 → 远程控制：开关 / 端口 / 配对码复制 / 状态行
+- iOS RemoteRelayClient + RemotePairSheet：配对 → 主机会话列表 → 只读会话屏（可发送与停止）
+- 双端权限补齐：macOS network.server；iOS NSLocalNetworkUsageDescription + NSBonjourServices
+
+排障实录：①RelayAdvertiser 构造时取 listener 得到 nil → 改懒取；②沙盒缺 network.server 无法监听；
+③`URLSession.AsyncBytes.lines` 吞掉 SSE 空行分隔符，客户端永远拿不到事件 → 客户端与测试统一改
+字节流喂 SSEParser；④bootstrap 双 .task 竞态导致读默认设置 → 共享 Task 等待。
+验证：46/46 单测绿、双端 BUILD SUCCEEDED、实机 /pair 200、无 token 401、SSE hello+rev、
+POST /input → Mac 真实经 ccLoad 生成「收到」并回读。
