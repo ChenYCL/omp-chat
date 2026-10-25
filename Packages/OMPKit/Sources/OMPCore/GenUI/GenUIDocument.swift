@@ -37,12 +37,20 @@ public struct GenUINode: Decodable, Sendable, Equatable, Identifiable {
     public var options: [String]?
     /// progress: 0...1.
     public var progress: Double?
-    /// button: text sent as the next user message when tapped.
+    /// button: text sent as the next user message when tapped. `{{id}}`
+    /// placeholders are filled with the current value of that field.
     public var send: String?
+    /// input: hint shown while empty.
+    public var placeholder: String?
+    /// slider: range and step.
+    public var min: Double?
+    public var max: Double?
+    public var step: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, type, parent, tab, title, subtitle, text, label, value, delta, tone, style,
-             icon, badge, kind, labels, series, columns, rows, items, options, progress, send
+             icon, badge, kind, labels, series, columns, rows, items, options, progress, send,
+             placeholder, min, max, step
     }
 
     public init(id: String, type: String, parent: String? = nil) {
@@ -91,6 +99,14 @@ public struct GenUINode: Decodable, Sendable, Equatable, Identifiable {
         let fraction = try? c.decodeIfPresent(GenUIScalar.self, forKey: .progress)
         progress = fraction?.number
         send = string(.send)
+        placeholder = string(.placeholder)
+        func number(_ key: CodingKeys) -> Double? {
+            let scalar = try? c.decodeIfPresent(GenUIScalar.self, forKey: key)
+            return scalar?.number
+        }
+        min = number(.min)
+        max = number(.max)
+        step = number(.step)
     }
 }
 
@@ -189,5 +205,78 @@ public struct GenUIDocument: Sendable, Equatable {
 
     public func children(of id: String) -> [GenUINode] {
         nodes.filter { $0.parent == id && $0.id != id }
+    }
+}
+
+// MARK: - Form state
+
+/// Local, per-message state for `input` / `toggle` / `slider` / `select`
+/// nodes (the DIL `useState` equivalent). Values live only on the device that
+/// renders the block; a `button` reads them through `{{id}}` placeholders and
+/// sends the filled text as the next user turn.
+extension GenUIDocument {
+    public static let formTypes: Set<String> = ["input", "toggle", "slider", "select"]
+
+    /// Starting value of a form node: its own `value`, else a type default.
+    /// Slider defaults are clamped into `min...max`; a select falls back to its
+    /// first option when `value` is not one of them.
+    public static func defaultValue(for node: GenUINode) -> String {
+        switch node.type {
+        case "toggle":
+            let raw = node.value?.lowercased() ?? ""
+            return ["true", "1", "yes", "on", "开"].contains(raw) ? "true" : "false"
+        case "slider":
+            let low = node.min ?? 0
+            let high = Swift.max(node.max ?? 100, low)
+            let start = node.value.flatMap { Double($0) } ?? low
+            return formatNumber(Swift.min(Swift.max(start, low), high), step: node.step)
+        case "select":
+            let options = node.options ?? []
+            if let value = node.value, options.contains(value) { return value }
+            return options.first ?? ""
+        default:
+            return node.value ?? ""
+        }
+    }
+
+    /// Defaults for every form node that has an id, keyed by id.
+    public var formDefaults: [String: String] {
+        var values: [String: String] = [:]
+        for node in nodes where Self.formTypes.contains(node.type) && !node.id.hasPrefix("line-") {
+            values[node.id] = Self.defaultValue(for: node)
+        }
+        return values
+    }
+
+    /// Replaces `{{id}}` with `values[id]`. Unknown ids are left as written so
+    /// a typo in the model's template stays visible instead of vanishing.
+    public static func fill(_ template: String, values: [String: String]) -> String {
+        var result = ""
+        var rest = template[...]
+        while let open = rest.range(of: "{{") {
+            result += rest[..<open.lowerBound]
+            let afterOpen = rest[open.upperBound...]
+            guard let close = afterOpen.range(of: "}}") else {
+                result += rest[open.lowerBound...]
+                return result
+            }
+            let key = afterOpen[..<close.lowerBound].trimmingCharacters(in: .whitespaces)
+            if let value = values[key] {
+                result += value
+            } else {
+                result += rest[open.lowerBound..<close.upperBound]
+            }
+            rest = afterOpen[close.upperBound...]
+        }
+        result += rest
+        return result
+    }
+
+    /// Whole numbers print without a fraction when the step is whole.
+    public static func formatNumber(_ value: Double, step: Double?) -> String {
+        let step = step ?? 1
+        if step == step.rounded(), value == value.rounded() { return String(Int(value)) }
+        let decimals = Swift.max(1, Swift.min(4, Int((-log10(step)).rounded(.up))))
+        return String(format: "%.\(decimals)f", value)
     }
 }

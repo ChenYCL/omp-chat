@@ -37,9 +37,17 @@
 | badge | text tone | |
 | stack | style(`horizontal`) | 横向或纵向排列子节点 |
 | divider | | |
-| button | label send style(`primary`) | 点击后把 `send` 作为下一条用户消息发出；相邻按钮排成一行 |
+| button | label send style(`primary`) | 点击后把 `send` 作为下一条用户消息发出；相邻按钮排成一行；`{{id}}` 填入同一块里表单字段的当前值 |
+| input | id label placeholder value | 单行输入，回车（完成）收起键盘 |
+| toggle | id label value | 值为 `true` / `false` |
+| slider | id label min max step value | 初值夹到 `min…max`；步长为整数时不带小数 |
+| select | id label options value | 分段选择；`value` 不在 `options` 里时取第一项 |
 
 `tone`：`positive` / `negative` / `warning` / `neutral`。没写时，`delta` 以 `+` 开头视为正向、`-` 开头视为负向。
+
+## 表单状态
+
+`input` / `toggle` / `slider` / `select` 的值只保存在渲染这条消息的设备上（每个代码块各自一份），不会回传给模型，也不落盘。点按钮时，`send` 里的 `{{id}}` 被替换成当前值，整句作为下一条用户消息发出；写错的 `{{未知id}}` 原样保留，方便发现模板错误。模型之后再流式改写某字段的默认值，用户没动过的字段会跟着更新，动过的保持用户的值。
 
 ## 行为
 

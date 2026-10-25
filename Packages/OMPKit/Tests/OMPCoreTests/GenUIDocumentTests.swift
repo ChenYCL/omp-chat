@@ -81,4 +81,42 @@ final class GenUIDocumentTests: XCTestCase {
         XCTAssertFalse(GenUIDocument.isGenUILanguage("json"))
         XCTAssertFalse(GenUIDocument.isGenUILanguage(nil))
     }
+
+    // MARK: Form state
+
+    func testFormDefaultsPerType() {
+        let doc = GenUIDocument.parse("""
+        {"type":"input","id":"name","label":"名字","placeholder":"输入"}
+        {"type":"input","id":"city","value":"上海"}
+        {"type":"toggle","id":"urgent","value":true}
+        {"type":"slider","id":"days","min":1,"max":14,"value":30}
+        {"type":"slider","id":"ratio","min":0,"max":1,"step":0.1,"value":"0.3"}
+        {"type":"select","id":"level","options":["低","中","高"],"value":"不存在"}
+        {"type":"text","id":"t","text":"不是表单"}
+        """)
+        XCTAssertEqual(doc.formDefaults, [
+            "name": "", "city": "上海", "urgent": "true",
+            "days": "14", "ratio": "0.3", "level": "低",
+        ], "滑块越界要夹到范围内，选择项不在列表里时取第一项，非表单节点不计入")
+        XCTAssertEqual(doc.nodes[0].placeholder, "输入")
+        XCTAssertEqual(doc.nodes[3].min, 1)
+        XCTAssertEqual(doc.nodes[3].max, 14)
+    }
+
+    func testFillSubstitutesKnownFieldsAndKeepsUnknownOnes() {
+        let values = ["name": "张三", "days": "3"]
+        XCTAssertEqual(
+            GenUIDocument.fill("给 {{name}} 请 {{ days }} 天假，抄送 {{boss}}", values: values),
+            "给 张三 请 3 天假，抄送 {{boss}}",
+            "未知占位符原样保留，方便看出模板写错"
+        )
+        XCTAssertEqual(GenUIDocument.fill("没有占位符", values: values), "没有占位符")
+        XCTAssertEqual(GenUIDocument.fill("半个 {{name", values: values), "半个 {{name", "未闭合的占位符原样保留")
+    }
+
+    func testNumberFormattingFollowsStep() {
+        XCTAssertEqual(GenUIDocument.formatNumber(3, step: nil), "3")
+        XCTAssertEqual(GenUIDocument.formatNumber(0.30000000004, step: 0.1), "0.3")
+        XCTAssertEqual(GenUIDocument.formatNumber(2.5, step: 0.5), "2.5")
+    }
 }

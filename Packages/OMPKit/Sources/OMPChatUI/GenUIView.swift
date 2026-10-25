@@ -9,6 +9,30 @@ extension EnvironmentValues {
     @Entry var genUISend: (@MainActor @Sendable (String) -> Void)? = nil
     /// True inside a `dark` card, so descendants use the inverse palette.
     @Entry var genUIInverted: Bool = false
+    /// Form state of the enclosing omp-ui block.
+    @Entry var genUIForm: GenUIForm? = nil
+}
+
+/// Values the user has edited in one omp-ui block. Unedited fields read their
+/// document default, so a value the model streams in later still shows up
+/// until the user touches that field.
+@MainActor
+@Observable
+final class GenUIForm {
+    var edited: [String: String] = [:]
+
+    func value(_ node: GenUINode) -> String {
+        edited[node.id] ?? GenUIDocument.defaultValue(for: node)
+    }
+
+    func binding(_ node: GenUINode) -> Binding<String> {
+        Binding(get: { self.value(node) }, set: { self.edited[node.id] = $0 })
+    }
+
+    /// Current values of every form field in `document`.
+    func values(in document: GenUIDocument) -> [String: String] {
+        document.formDefaults.merging(edited) { _, new in new }
+    }
 }
 
 /// Native renderer for ```omp-ui blocks. Re-parsed on every streamed token;
@@ -17,6 +41,7 @@ public struct GenUIView: View {
     private let source: String
     private let document: GenUIDocument
     @State private var showSource = false
+    @State private var form = GenUIForm()
 
     public init(source: String) {
         self.source = source
@@ -31,6 +56,7 @@ public struct GenUIView: View {
                 ShimmerText(text: "正在生成界面", font: .system(size: 13, weight: .medium))
             } else {
                 GenUIChildren(nodes: document.roots, document: document, depth: 0)
+                    .environment(\.genUIForm, form)
             }
             footer
         }
@@ -122,7 +148,7 @@ struct GenUIChildren: View {
                     }
                 case .buttons:
                     HStack(spacing: 8) {
-                        ForEach(group.nodes) { GenUIButton(node: $0) }
+                        ForEach(group.nodes) { GenUIButton(node: $0, document: document) }
                     }
                 case .single:
                     GenUINodeView(node: group.nodes[0], document: document, depth: depth)
@@ -173,7 +199,9 @@ struct GenUINodeView: View {
         case "metric":
             GenUIMetric(node: node)
         case "button":
-            GenUIButton(node: node)
+            GenUIButton(node: node, document: document)
+        case "input", "toggle", "slider", "select":
+            GenUIField(node: node, palette: palette)
         case "chart":
             GenUIChart(node: node)
         case "table":
@@ -365,16 +393,26 @@ struct GenUIProgress: View {
 
 struct GenUIButton: View {
     let node: GenUINode
+    let document: GenUIDocument
     @Environment(\.genUISend) private var send
     @Environment(\.genUIInverted) private var inverted
+    @Environment(\.genUIForm) private var form
+
+    /// The `send` template with `{{id}}` filled from the block's fields.
+    private var message: String {
+        let template = node.send ?? ""
+        guard let form else { return template }
+        return GenUIDocument.fill(template, values: form.values(in: document))
+    }
 
     var body: some View {
         let title = node.label ?? node.text ?? node.send ?? ""
-        let enabled = send != nil && !(node.send ?? "").isEmpty
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let enabled = send != nil && !text.isEmpty
         let primary = node.style == "primary"
         if !title.isEmpty {
             Button {
-                if let text = node.send, let send { send(text) }
+                if let send, !text.isEmpty { send(text) }
             } label: {
                 Text(title)
                     .font(.system(size: 13.5, weight: .semibold))
@@ -389,7 +427,111 @@ struct GenUIButton: View {
             .buttonStyle(.plain)
             .disabled(!enabled)
             .opacity(enabled ? 1 : 0.45)
-            .help(node.send.map { "发送：\($0)" } ?? "")
+            .help(text.isEmpty ? "" : "发送：\(text)")
+        }
+    }
+}
+
+/// `input` / `toggle` / `slider` / `select`: edits the block's local form
+/// state. Nothing is sent until a button that references the field is tapped.
+struct GenUIField: View {
+    let node: GenUINode
+    let palette: GenUIPalette
+    @Environment(\.genUIForm) private var form
+
+    var body: some View {
+        if let form {
+            control(form)
+        }
+    }
+
+    private var title: String? { node.label ?? node.title }
+    /// On the control itself (not its label stack) so UI tests can drive it.
+    private var identifier: String { "genui.\(node.id)" }
+
+    @ViewBuilder
+    private func control(_ form: GenUIForm) -> some View {
+        switch node.type {
+        case "toggle":
+            Toggle(isOn: Binding(
+                get: { form.value(node) == "true" },
+                set: { form.binding(node).wrappedValue = $0 ? "true" : "false" }
+            )) {
+                Text(title ?? node.id).font(.system(size: 14)).foregroundStyle(palette.primary)
+            }
+            .accessibilityIdentifier(identifier)
+        case "slider":
+            let low = node.min ?? 0
+            let high = Swift.max(node.max ?? 100, low + (node.step ?? 1))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(title ?? node.id).font(.system(size: 13)).foregroundStyle(palette.primary)
+                    Spacer(minLength: 8)
+                    Text(form.value(node))
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundStyle(palette.secondary)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(form.value(node)) ?? low },
+                        set: { form.binding(node).wrappedValue = GenUIDocument.formatNumber($0, step: node.step) }
+                    ),
+                    in: low...high,
+                    step: node.step ?? 1
+                )
+                .accessibilityIdentifier(identifier)
+            }
+        case "select":
+            VStack(alignment: .leading, spacing: 6) {
+                if let title {
+                    Text(title).font(.system(size: 13)).foregroundStyle(palette.primary)
+                }
+                // SwiftUI buttons rather than a segmented Picker: inside the
+                // transcript the UIKit segmented control never took a tap
+                // (measured in UI tests), while the same buttons used by
+                // `tabs` do.
+                let current = form.value(node)
+                HStack(spacing: 2) {
+                    ForEach(node.options ?? [], id: \.self) { option in
+                        let selected = option == current
+                        Button { form.binding(node).wrappedValue = option } label: {
+                            Text(option)
+                                .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                                .foregroundStyle(selected ? palette.primary : palette.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background {
+                                    if selected {
+                                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                            .fill(palette.inverted ? palette.fill : Color.ompCard)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("\(identifier).\(option)")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
+                .padding(3)
+                .background(palette.fill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+        default:
+            VStack(alignment: .leading, spacing: 6) {
+                if let title {
+                    Text(title).font(.system(size: 13)).foregroundStyle(palette.primary)
+                }
+                // Single line so Return (完成) ends editing: with the keyboard
+                // open, taps on the select below were not delivered.
+                TextField(node.placeholder ?? "", text: form.binding(node))
+                    .submitLabel(.done)
+                    .accessibilityIdentifier(identifier)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(palette.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
     }
 }

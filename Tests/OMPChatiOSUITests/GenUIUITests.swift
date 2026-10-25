@@ -17,6 +17,10 @@ final class GenUIUITests: XCTestCase {
     {"type":"text","parent":"t","tab":"总览","text":"总览说明一行。"}
     {"type":"list","parent":"t","tab":"明细","items":["甲项","乙项","丙项"]}
     {"type":"button","label":"生成周报","send":"生成周报","style":"primary"}
+    {"type":"input","id":"reason","label":"原因","placeholder":"写一句"}
+    {"type":"slider","id":"days","label":"天数","min":1,"max":5,"value":2}
+    {"type":"select","id":"level","options":["低","高"]}
+    {"type":"button","label":"提交请假","send":"请假 {{days}} 天，原因：{{reason}}，级别：{{level}}"}
     ```
     """
 
@@ -83,6 +87,34 @@ final class GenUIUITests: XCTestCase {
         XCTAssertTrue(
             transcript.contains("生成周报"),
             "用户消息应出现在会话里，实际标签：\(transcript.prefix(12))"
+        )
+    }
+
+    func testFormFieldsFillTheButtonTemplate() {
+        openSeededChat()
+        let reason = app.descendants(matching: .any)["genui.reason"].firstMatch
+        XCTAssertTrue(reason.waitForExistence(timeout: 5), "应渲染输入框")
+        reason.tap()
+        reason.typeText("家里有事\n")
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 1), "回车（完成）应收起键盘")
+
+        let days = app.sliders["genui.days"].firstMatch
+        XCTAssertTrue(days.exists, "应渲染滑块")
+        XCTAssertEqual(days.value as? String, "2", "滑块初值取模型给的 value")
+        days.adjust(toNormalizedSliderPosition: 1)
+        XCTAssertTrue(app.staticTexts["5"].waitForExistence(timeout: 2), "拖到最右，读数应为 5")
+
+        let high = app.buttons["genui.level.高"].firstMatch
+        XCTAssertTrue(high.exists, "应渲染选择项")
+        XCTAssertTrue(app.buttons["genui.level.低"].isSelected, "选择项默认取第一项")
+        high.tap()
+        XCTAssertTrue(high.isSelected, "点「高」后应选中高")
+
+        app.buttons["提交请假"].firstMatch.tap()
+        let expected = "请假 5 天，原因：家里有事，级别：高"
+        XCTAssertTrue(
+            app.staticTexts[expected].waitForExistence(timeout: 5),
+            "按钮应把表单当前值填进模板后作为用户消息发出：\(expected)"
         )
     }
 

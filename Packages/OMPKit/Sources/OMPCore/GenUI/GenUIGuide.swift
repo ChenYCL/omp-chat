@@ -15,7 +15,11 @@ public enum GenUIGuide {
     {"type":"tabs","id":"t","options":["总览","详情"],"style":"segmented?"}
     {"type":"list","items":["",""]}  {"type":"progress","label":"","progress":0.6,"tone":""}
     {"type":"badge","text":"","tone":""}  {"type":"divider"}  {"type":"stack","id":"s","style":"horizontal?"}
-    {"type":"button","label":"","send":"点击后作为用户消息发送的文本","style":"primary?"}
+    {"type":"button","label":"","send":"点击后作为用户消息发送的文本，可用 {{字段id}} 引用表单值","style":"primary?"}
+    表单（值只存在用户本机，点按钮时填进 send 模板）：
+    {"type":"input","id":"reason","label":"","placeholder":"","value":"默认值?"}  {"type":"toggle","id":"urgent","label":"","value":false}
+    {"type":"slider","id":"days","label":"","min":1,"max":14,"step":1,"value":3}  {"type":"select","id":"level","options":["低","高"],"value":"低"}
+    表单字段必须写 id；提交按钮示例 {"type":"button","label":"提交","send":"请假 {{days}} 天，原因：{{reason}}","style":"primary"}
     数据必须来自对话里的真实信息；若是示意数据，要在文字里写明。
     """
 }
