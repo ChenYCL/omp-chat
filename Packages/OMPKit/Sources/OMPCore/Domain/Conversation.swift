@@ -82,6 +82,14 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     }
 
 
+    /// True when the conversation is waiting on an answer: the newest message
+    /// is the user's, or the reply failed. Drives the sidebar's 待处理 group.
+    public var needsReply: Bool {
+        guard let last = messages.last, !isTemporary else { return false }
+        if last.role == .user { return true }
+        return last.role == .assistant && last.status == .failed
+    }
+
     public var lastMessagePreview: String {
         guard let last = messages.last else { return "开始新的对话" }
         let text = last.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)

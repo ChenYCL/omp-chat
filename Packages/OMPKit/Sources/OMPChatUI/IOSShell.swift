@@ -655,7 +655,9 @@ struct ShellDrawer: View {
     private var priorityConversations: [Conversation] {
         model.sortedConversations.filter { conversation in
             guard !conversation.isArchived, !conversation.isLocked else { return false }
-            return conversation.hasUnread || conversation.id == model.streamingConversationID
+            return conversation.hasUnread
+                || conversation.id == model.streamingConversationID
+                || conversation.needsReply
         }
     }
 

@@ -101,7 +101,7 @@ Account、General、Appearance、Keyboard shortcuts、Archived chats、Data cont
 | 能力 | 官方键位 | OMPChat |
 |---|---|---|
 | 侧栏多 Tab 竖排轨 | `sidebarElectron.rail.*` | 已删图标轨，改官方单栏侧栏 |
-| 活动视图（未读/进行中/待回复） | `priorityThreads.*` | 部分：侧栏顶部「待处理」分区列出未读和正在生成的会话，无内容时隐藏；暂无「待回复」判定。 |
+| 活动视图（未读/进行中/待回复） | `priorityThreads.*` | 已做：侧栏与手机抽屉顶部「待处理」分区列出未读、正在生成、以及待回复（最后一条是用户发言或回复失败）的会话，无内容时隐藏，且不在下方列表重复。 |
 | 组织方式 By project / By connection | `groupByMenu.*`、`flatProjectSidebar.filter` | 有项目分组，无连接分组与 All/Chat/Work 过滤 |
 | 行级置顶/已读/归档/重命名/删除 | `pinThread`、`markRead`… | 已交付 |
 | 分区批量归档 | `customSections.*`、`archiveProjectThreads.*` | 已交付 |
