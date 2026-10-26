@@ -433,8 +433,7 @@ struct SidePanel: View {
                 .init(text: String($0), kind: .added)
             }
         }
-        let candidates = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
-        guard let git = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+        guard let git = GitBinary.resolve() else {
             return [.init(text: "没有可用的 git", kind: .note)]
         }
         let process = Process()
@@ -551,15 +550,12 @@ struct SidePanel: View {
     }
 
     private static func gitStatus(_ directory: String) -> GitResult {
-        // `/usr/bin/git` goes through xcrun on this Mac; Homebrew's git works
-        // from a sandboxed app. Try both before giving up.
-        let candidates = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
-        guard let git = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            return .gitMissing
-        }
+        guard let git = GitBinary.resolve() else { return .gitMissing }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: git)
-        process.arguments = ["status", "--porcelain"]
+        // -z: paths with spaces or Chinese characters are quoted/escaped in
+        // plain porcelain output, and those strings cannot be diffed.
+        process.arguments = GitStatus.arguments
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
         let out = Pipe()
         process.standardOutput = out
@@ -568,16 +564,8 @@ struct SidePanel: View {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         if process.terminationStatus != 0 { return .notARepo }
-        let text = String(decoding: data, as: UTF8.self)
-        var items: [Change] = []
-        for raw in text.split(separator: "\n") {
-            let line = String(raw)
-            guard line.count > 3 else { continue }
-            let code = String(line.prefix(2)).trimmingCharacters(in: .whitespaces)
-            let path = String(line.dropFirst(3))
-            items.append(Change(code: code.isEmpty ? "?" : code, path: path))
-        }
-        return .success(items)
+        let entries = GitStatus.parse(String(decoding: data, as: UTF8.self))
+        return .success(entries.map { Change(code: $0.code, path: $0.path) })
     }
 }
 

@@ -18,6 +18,7 @@
 		618F843E0DEE2728DDA2C57D /* DevicesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */; };
 		6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 71C378D712852DA4990BE826 /* OMPDesign */; };
 		6A0A4F0477F5895F0D5B3037 /* OMPChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A28AFEA8439E281774F3A040 /* OMPChatApp.swift */; };
+		6DEB5194B5793434D086D42D /* GoalAndUnreadUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8EA379B331F272B4059F698 /* GoalAndUnreadUITests.swift */; };
 		8CD1E4FF8E40450ACBF400D9 /* OMPChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0D24C4132E82A847FFEFC53A /* OMPChatUI */; };
 		90CA8714BE45F88765ABAF5B /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3C954699D33223A1C904DD /* SmokeTests.swift */; };
 		979E72E7690ACF24609BEDC1 /* OMPChatiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA8411713D101C32A976711 /* OMPChatiOSApp.swift */; };
@@ -64,6 +65,7 @@
 		C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D76CE3C86BE12307212872C4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMenuUITests.swift; sourceTree = "<group>"; };
+		E8EA379B331F272B4059F698 /* GoalAndUnreadUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalAndUnreadUITests.swift; sourceTree = "<group>"; };
 		ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSectionsUITests.swift; sourceTree = "<group>"; };
 		FF0E7E503D25CD720139B116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -156,6 +158,7 @@
 				D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */,
 				55FAD4932F3B0A6E2D126D4E /* FindInChatUITests.swift */,
 				6C3C409EEEF6CCBF9F0CAC7E /* GenUIUITests.swift */,
+				E8EA379B331F272B4059F698 /* GoalAndUnreadUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
 				5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */,
 				340CB594D324926FCC2C18FE /* ProjectsSheetUITests.swift */,
@@ -370,6 +373,7 @@
 				984DCC911C4A5A81AA890EC4 /* ExportMenuUITests.swift in Sources */,
 				CA365FC444C45754602D0920 /* FindInChatUITests.swift in Sources */,
 				17F428511C507C29B2F2873E /* GenUIUITests.swift in Sources */,
+				6DEB5194B5793434D086D42D /* GoalAndUnreadUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
 				0A86B37163AE346E5698374C /* LockedChatsUITests.swift in Sources */,
 				EC05558BD7AF4B090C6F9AED /* ProjectsSheetUITests.swift in Sources */,

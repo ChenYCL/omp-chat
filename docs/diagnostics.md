@@ -78,3 +78,34 @@ python3 tools/ompshot/ompshot.py snap -w 36510 -o y.png          # 指定窗口�
 - 打开中的菜单（`NSMenu`）不在应用的窗口列表里，截不到；弹层（popover）和表单（sheet）是单独的窗口，可以按编号截。
 - 只在 macOS 上提供；iOS 应用上这两条路由返回 `503`。模拟器本来就能在后台截：`xcrun simctl io booted screenshot x.png`。
 - 对照系统按窗口截图（`screencapture -l <编号>`），内容和布局一致，只有约 0.05% 的像素在文字、图标边缘的抗锯齿上略有差别。
+
+## 后台驱动（/debug/action、/debug/state）
+
+黑盒测试不靠模拟点击：动作走的是菜单本身调用的模型方法，应用留在后台。两条路由同样要求 `X-OMP-Token`；动作名或参数不认识返回 `400`，宿主没装钩子返回 `503`，动作本身失败返回 `200` 加 `{"ok":false,"error":"…"}`。省略 `conversationID` 的动作作用于当前选中的对话。
+
+```bash
+python3 tools/ompshot/ompshot.py state
+python3 tools/ompshot/ompshot.py act setGoal --goal 发布前补齐文档
+python3 -I tools/ompshot/scenario_codex.py      # 跑完整场景，0 失败才退出 0
+```
+
+| 动作 | 字段 | 对应的界面操作 |
+| --- | --- | --- |
+| `select` | `conversationID` | 侧栏点一行 |
+| `newChat` | — | 新聊天 |
+| `sidePanel` | `open`（布尔），可选 `tab` = terminal / files / changes / browser | ⌘J、侧面板标签 |
+| `openSettings` / `closeSettings` | — | 应用菜单 设置…（⌘,）；按窗口是否可见判断 |
+| `setDraft` | `text` | 在输入框里输入 |
+| `format` | `style` = bold / italic / underline / heading1–3 / paragraph / bulletedList / numberedList / link | B / I / U 与 Aa 菜单 |
+| `setGoal` | `goal`（空白即清除），可选 `conversationID` | 设定目标 |
+| `sidebar` | `grouping` = project / connection 和/或 `filter` = all / chat / work，至少一个 | 整理侧栏 |
+| `markAllRead` | — | 待处理 → 全部标为已读 |
+| `setUnread` | `conversationID`、`unread`（布尔） | 行菜单 标为未读 / 已读 |
+| `continueIn` | `mode` = local / folder / worktree；folder 需要 `path`（必须是已存在的目录） | 顶栏 继续于 |
+| `fork` | `mode` = local / sameWorktree / worktree | 顶栏 分叉对话（分叉后选中副本） |
+| `openLink` | `url`（`ompchat://thread/<UUID>`） | 系统打开应用链接 |
+| `delete` | `conversationID` | 行菜单 删除 |
+
+`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread`）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`sidePanelOpen`、`sidePanelTab`、`settingsOpen`、`windowTitles`（只含可见窗口）。
+
+`scenario_codex.py` 只在自己新建的对话和临时 git 仓库里操作，结束时删掉它们，并把选中项、侧栏设置、侧面板状态和原有的未读标记都还原。

@@ -1146,6 +1146,8 @@ struct PaseoComposerBar: View {
                     .foregroundStyle(Color.ompText)
                     .frame(width: IOSShellMetrics.composerMinHeight, height: IOSShellMetrics.composerMinHeight)
             }
+            .accessibilityIdentifier("composer.plus")
+            .accessibilityLabel("更多操作")
 
             TextField("发送消息", text: $model.draft, axis: .vertical)
                 .textFieldStyle(.plain)

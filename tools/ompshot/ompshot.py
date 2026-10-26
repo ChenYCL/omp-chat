@@ -12,8 +12,12 @@ app, and needs no Screen Recording permission.
     ompshot.py act newChat             run one automation action
     ompshot.py act sidePanel --open true --tab browser
     ompshot.py act select --conversationID <uuid>
+    ompshot.py act setGoal --goal 发布前补齐文档
+    ompshot.py act continueIn --mode folder --path /path/to/repo
 
-Actions: select, newChat, sidePanel, openSettings, closeSettings.
+Actions: select, newChat, sidePanel, openSettings, closeSettings, setDraft,
+format, setGoal, sidebar, markAllRead, setUnread, continueIn, fork, openLink,
+delete. Field names and values are listed in docs/diagnostics.md.
 `act` prints the reply JSON and exits non-zero when the app answers ok:false.
 
 Needs 设置 → 远程控制 enabled in OMPChat. The token comes from --token, then
@@ -156,7 +160,7 @@ def main():
     state = sub.add_parser("state", help="应用状态 JSON（选中会话、侧面板、窗口标题）")
     state.set_defaults(run=cmd_state)
     act = sub.add_parser("act", help="执行一个自动化动作")
-    act.add_argument("action", help="动作名：select / newChat / sidePanel / openSettings / closeSettings")
+    act.add_argument("action", help="动作名，完整列表见 docs/diagnostics.md「后台驱动」")
     act.add_argument("key_value", nargs=argparse.REMAINDER, help="动作参数，成对出现：--conversationID <uuid> --open true --tab browser")
     act.set_defaults(run=cmd_act)
     args = parser.parse_args()

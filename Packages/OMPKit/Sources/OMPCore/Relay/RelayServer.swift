@@ -56,6 +56,24 @@ public enum SidePanelTab: String, Codable, Sendable, CaseIterable {
     case browser
 }
 
+/// Inline and block styles the composer's B/I/U pills, Aa menu and 格式 menu
+/// apply. Raw values are the `/debug/action` wire names.
+public enum DebugFormatStyle: String, Sendable, CaseIterable {
+    case bold, italic, underline
+    case heading1, heading2, heading3
+    case paragraph, bulletedList, numberedList, link
+}
+
+/// What 继续于 does to a thread's working directory.
+public enum DebugContinueTarget: Sendable, Equatable {
+    /// Unbind (本地).
+    case local
+    /// Bind to an existing folder (选择文件夹…).
+    case folder(String)
+    /// Create a `git worktree` and bind to it (新建 Worktree).
+    case worktree
+}
+
 /// One automation action for the token-gated `POST /debug/action` route. This
 /// is the black-box test channel: the integrator drives the app without
 /// bringing it to the front, exactly the actions the UI's own menus offer.
@@ -63,7 +81,7 @@ public enum SidePanelTab: String, Codable, Sendable, CaseIterable {
 /// The request body is decoded as `{"action": "<name>", ...}` where the
 /// remaining keys are the case payload fields, so a new case only needs a
 /// decoding branch in [`DebugAction.decode(from:)`] and, on the host, a
-/// handler.
+/// handler. Optional `conversationID` fields mean "the selected conversation".
 public enum DebugAction: Sendable, Equatable {
     /// Select a conversation by UUID string.
     case select(conversationID: String)
@@ -75,6 +93,26 @@ public enum DebugAction: Sendable, Equatable {
     case openSettings
     /// Close the Settings scene.
     case closeSettings
+    /// Replace the composer draft.
+    case setDraft(text: String)
+    /// Apply one composer formatting style to the draft.
+    case format(DebugFormatStyle)
+    /// Set a thread goal; an empty string clears it.
+    case setGoal(conversationID: String?, goal: String)
+    /// 整理侧栏: grouping and/or filter; at least one is present.
+    case sidebar(grouping: SidebarGrouping?, filter: SidebarFilter?)
+    /// 待处理 → 全部标为已读.
+    case markAllRead
+    /// Row menu 标为未读 / 标为已读.
+    case setUnread(conversationID: String, unread: Bool)
+    /// Header 继续于.
+    case continueIn(conversationID: String?, target: DebugContinueTarget)
+    /// Header 分叉对话.
+    case fork(conversationID: String?, mode: ForkMode)
+    /// Open an `ompchat://` link as if the system had delivered it.
+    case openLink(url: String)
+    /// Delete a conversation (scenario cleanup).
+    case delete(conversationID: String)
 
     /// The wire name of the action.
     public var name: String {
@@ -84,17 +122,35 @@ public enum DebugAction: Sendable, Equatable {
         case .sidePanel: "sidePanel"
         case .openSettings: "openSettings"
         case .closeSettings: "closeSettings"
+        case .setDraft: "setDraft"
+        case .format: "format"
+        case .setGoal: "setGoal"
+        case .sidebar: "sidebar"
+        case .markAllRead: "markAllRead"
+        case .setUnread: "setUnread"
+        case .continueIn: "continueIn"
+        case .fork: "fork"
+        case .openLink: "openLink"
+        case .delete: "delete"
         }
     }
 
     /// Decodes `{"action": ..., ...payload}`; any shape the parser does not
     /// fully understand — unknown action name, missing or mistyped fields,
-    /// wrong JSON type at the top level — returns `nil`, which the route
-    /// answers with `400`.
+    /// unknown enum values, wrong JSON type at the top level — returns `nil`,
+    /// which the route answers with `400`.
     public static func decode(from data: Data) -> DebugAction? {
         guard let object = try? JSONSerialization.jsonObject(with: data),
               let fields = object as? [String: Any],
               let name = fields["action"] as? String else { return nil }
+
+        /// Absent → `.some(nil)`; present but not a string → `nil` (reject).
+        func optionalString(_ key: String) -> String?? {
+            guard let raw = fields[key] else { return .some(nil) }
+            guard let string = raw as? String else { return nil }
+            return .some(string)
+        }
+
         switch name {
         case "select":
             guard let id = fields["conversationID"] as? String else { return nil }
@@ -116,6 +172,64 @@ public enum DebugAction: Sendable, Equatable {
             return .openSettings
         case "closeSettings":
             return .closeSettings
+        case "setDraft":
+            guard let text = fields["text"] as? String else { return nil }
+            return .setDraft(text: text)
+        case "format":
+            guard let raw = fields["style"] as? String, let style = DebugFormatStyle(rawValue: raw) else {
+                return nil
+            }
+            return .format(style)
+        case "setGoal":
+            guard let id = optionalString("conversationID"), let goal = fields["goal"] as? String else {
+                return nil
+            }
+            return .setGoal(conversationID: id, goal: goal)
+        case "sidebar":
+            guard let rawGrouping = optionalString("grouping"), let rawFilter = optionalString("filter") else {
+                return nil
+            }
+            let grouping = rawGrouping.flatMap(SidebarGrouping.init(rawValue:))
+            let filter = rawFilter.flatMap(SidebarFilter.init(rawValue:))
+            // An unknown value must not be dropped silently, and an action
+            // that changes nothing is a caller error.
+            guard (rawGrouping == nil) == (grouping == nil),
+                  (rawFilter == nil) == (filter == nil),
+                  grouping != nil || filter != nil else { return nil }
+            return .sidebar(grouping: grouping, filter: filter)
+        case "markAllRead":
+            return .markAllRead
+        case "setUnread":
+            guard let id = fields["conversationID"] as? String, let unread = fields["unread"] as? Bool else {
+                return nil
+            }
+            return .setUnread(conversationID: id, unread: unread)
+        case "continueIn":
+            guard let id = optionalString("conversationID"), let mode = fields["mode"] as? String else {
+                return nil
+            }
+            switch mode {
+            case "local":
+                return .continueIn(conversationID: id, target: .local)
+            case "worktree":
+                return .continueIn(conversationID: id, target: .worktree)
+            case "folder":
+                guard let path = fields["path"] as? String,
+                      !path.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+                return .continueIn(conversationID: id, target: .folder(path))
+            default:
+                return nil
+            }
+        case "fork":
+            guard let id = optionalString("conversationID"),
+                  let raw = fields["mode"] as? String, let mode = ForkMode(rawValue: raw) else { return nil }
+            return .fork(conversationID: id, mode: mode)
+        case "openLink":
+            guard let url = fields["url"] as? String else { return nil }
+            return .openLink(url: url)
+        case "delete":
+            guard let id = fields["conversationID"] as? String else { return nil }
+            return .delete(conversationID: id)
         default:
             return nil
         }

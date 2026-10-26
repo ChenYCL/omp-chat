@@ -407,6 +407,8 @@ public struct ComposerBar: View {
                 Text(projectName)
                     .font(.system(size: 11))
             }
+            .help(model.selectedConversation?.workingDirectory.map(GitInfo.tildified) ?? projectName)
+            .accessibilityIdentifier("composer.workspace")
             HStack(spacing: 4) {
                 Image(systemName: "laptopcomputer")
                     .font(.system(size: 10))
@@ -543,15 +545,16 @@ public struct ComposerBar: View {
 
 
     private var projectName: String {
-        if let id = model.selectedConversation?.projectID,
-           let project = model.projects.first(where: { $0.id == id }) {
-            return project.name
-        }
-        return "默认工作区"
+        let conversation = model.selectedConversation
+        let project = conversation?.projectID.flatMap { id in model.projects.first { $0.id == id }?.name }
+        return ThreadWorkspace.name(workingDirectory: conversation?.workingDirectory, projectName: project)
     }
 
+    /// The bound folder's branch; the app's own directory only for unbound
+    /// threads.
     private var currentBranch: String? {
-        GitInfo.branch(at: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+        let directory = model.selectedConversation?.workingDirectory ?? FileManager.default.currentDirectoryPath
+        return GitInfo.branch(at: URL(fileURLWithPath: directory))
     }
 
     /// ↑/↓ walk the prompt history, newest first.

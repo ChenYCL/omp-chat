@@ -667,11 +667,9 @@ struct ChatEmptyStateView: View {
     }
 
     private var currentProjectName: String {
-        if let id = model.selectedConversation?.projectID,
-           let project = model.projects.first(where: { $0.id == id }) {
-            return project.name
-        }
-        return "默认工作区"
+        let conversation = model.selectedConversation
+        let project = conversation?.projectID.flatMap { id in model.projects.first { $0.id == id }?.name }
+        return ThreadWorkspace.name(workingDirectory: conversation?.workingDirectory, projectName: project)
     }
 }
 
