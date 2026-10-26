@@ -259,7 +259,9 @@ public struct MacShellSidebar: View {
                     Image(systemName: "rectangle.lefthalf.filled")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.ompText)
-                    Text("Code")
+                    // The app's own name; this said "Code", which is the app
+                    // this layout was modelled on, not this one.
+                    Text("OMP Chat")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.ompText)
                 }
