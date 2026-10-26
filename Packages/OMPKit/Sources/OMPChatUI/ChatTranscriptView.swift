@@ -171,9 +171,13 @@ public struct ChatTranscriptView: View {
             return "empty-\(model.selectedConversationID?.uuidString ?? "-")"
         }
         // Bucket the growing text so streaming scrolls a few times a second
-        // instead of once per token.
+        // instead of once per token. Part count and waiting approvals are in
+        // too: a tool result or an approval card adds no text, and the card's
+        // buttons used to stay hidden under the composer.
         let textCount = last.parts.reduce(0) { $0 + $1.plainText.count }
-        return "\(conversation.id)-\(conversation.messages.count)-\(last.id)-\(textCount / 40)-\(last.status.rawValue)"
+        let waiting = model.pendingApprovals.filter { $0.conversationID == conversation.id }.map(\.id.uuidString)
+        return "\(conversation.id)-\(conversation.messages.count)-\(last.id)-\(textCount / 40)-\(last.parts.count)"
+            + "-\(last.status.rawValue)-\(waiting.joined(separator: ","))"
     }
 
     // MARK: Empty state

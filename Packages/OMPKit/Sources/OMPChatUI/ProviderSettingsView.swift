@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, usage, remoteControl, diagnostics, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, usage, plugins, mcp, remoteControl, computerUse, diagnostics, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -32,7 +32,10 @@ public struct ProviderSettingsView: View {
             case .git: "Git"
             case .dataControls: "数据控制"
             case .usage: "用量"
+            case .plugins: "插件与技能"
+            case .mcp: "MCP 服务器"
             case .remoteControl: "远程控制"
+            case .computerUse: "电脑控制"
             case .diagnostics: "诊断"
             case .providers: "连接"
             case .about: "关于"
@@ -51,9 +54,12 @@ public struct ProviderSettingsView: View {
             case .git: "arrow.triangle.branch"
             case .dataControls: "externaldrive"
             case .usage: "chart.bar"
+            case .plugins: "puzzlepiece.extension"
+            case .mcp: "server.rack"
             case .providers: "point.3.connected.trianglepath.dotted"
             case .diagnostics: "stethoscope"
             case .remoteControl: "antenna.radiowaves.left.and.right"
+            case .computerUse: "cursorarrow.click.2"
             case .about: "info.circle"
             }
         }
@@ -240,12 +246,29 @@ public struct ProviderSettingsView: View {
             dataControlsContent
         case .usage:
             UsageSettingsPane(onSelectConversation: { dismiss() })
+        case .plugins:
+            #if os(macOS)
+            PluginsSettingsPane()
+            #endif
+        case .mcp:
+            #if os(macOS)
+            MCPSettingsPane(servers: $draft.mcpServers)
+            #endif
         case .remoteControl:
             #if os(macOS)
             settingsCard { remoteControlSection }
             #else
             settingsCard {
                 Text("远程控制仅在 macOS 上可用。")
+                    .foregroundStyle(.secondary)
+            }
+            #endif
+        case .computerUse:
+            #if os(macOS)
+            ComputerUsePane(mcpServers: $draft.mcpServers)
+            #else
+            settingsCard {
+                Text("电脑控制仅在 macOS 上可用。")
                     .foregroundStyle(.secondary)
             }
             #endif

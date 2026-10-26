@@ -1153,3 +1153,289 @@ private struct StreamRing {
         return (Data(clean.utf8), cwd)
     }
 }
+
+// MARK: - Command runner
+
+/// Keeps the first and last bytes of a stream that may run past `cap`,
+/// dropping the middle: the start says what ran, the end says how it ended.
+struct OutputHeadTail: Sendable {
+    let cap: Int
+    private var head = Data()
+    private var tail = Data()
+    private(set) var droppedBytes = 0
+
+    init(cap: Int) {
+        self.cap = max(cap, 2)
+    }
+
+    var truncated: Bool { droppedBytes > 0 }
+
+    mutating func append(_ chunk: Data) {
+        var rest = chunk[...]
+        let headLimit = cap / 2
+        if head.count < headLimit {
+            let take = min(headLimit - head.count, rest.count)
+            head.append(rest.prefix(take))
+            rest = rest.dropFirst(take)
+        }
+        guard !rest.isEmpty else { return }
+        tail.append(rest)
+        let tailLimit = cap - headLimit
+        if tail.count > tailLimit {
+            let excess = tail.count - tailLimit
+            droppedBytes += excess
+            tail.removeFirst(excess)
+        }
+    }
+
+    /// The kept text, with a note where the middle was cut. Partial UTF-8
+    /// characters at the cut are dropped rather than shown as U+FFFD.
+    var text: String {
+        guard truncated else { return String(decoding: head + tail, as: UTF8.self) }
+        var headBytes = head[...]
+        if let last = headBytes.lastIndex(where: { $0 & 0b1100_0000 != 0b1000_0000 }),
+           headBytes.endIndex - last < Self.sequenceLength(headBytes[last]) {
+            headBytes = headBytes[..<last]
+        }
+        let tailBytes = tail.drop { $0 & 0b1100_0000 == 0b1000_0000 }
+        return String(decoding: headBytes, as: UTF8.self)
+            + "\n…（输出过长，省略中间 \(droppedBytes) 字节）…\n"
+            + String(decoding: tailBytes, as: UTF8.self)
+    }
+
+    private static func sequenceLength(_ lead: UInt8) -> Int {
+        if lead & 0b1000_0000 == 0 { return 1 }
+        if lead & 0b1110_0000 == 0b1100_0000 { return 2 }
+        if lead & 0b1111_0000 == 0b1110_0000 { return 3 }
+        if lead & 0b1111_1000 == 0b1111_0000 { return 4 }
+        return 1
+    }
+}
+
+#if os(macOS)
+extension HostExecutor {
+    /// What `runCommand` observed.
+    struct CommandRun: Sendable, Equatable {
+        var stdout: String
+        /// Empty when `mergeStderr` sent stderr into `stdout`.
+        var stderr: String
+        /// The shell's exit status; 128 + the signal when a signal ended it.
+        var exitCode: Int32
+        var timedOut: Bool
+        var cancelled: Bool
+        /// True when a stream ran past `outputCap` and lost its middle.
+        var truncated: Bool
+        /// Set when the shell could not be started at all.
+        var launchError: String?
+    }
+
+    /// Runs `command` under `/bin/zsh -c` (`-lc` with `loginShell`) in `cwd`,
+    /// with the real home and a PATH that sees `~/.local/bin` and Homebrew.
+    /// `stdin` is written and closed; without it the child reads EOF. Each
+    /// stream keeps its head and tail within `outputCap` bytes. On `timeout`
+    /// or task cancellation the whole process tree gets SIGINT, then SIGKILL
+    /// after 2 s. Pipes are drained on dedicated threads (a readability
+    /// handler never fires without a run loop).
+    static func runCommand(
+        _ command: String,
+        cwd: String,
+        stdin: Data? = nil,
+        timeout: Double,
+        outputCap: Int = 64 * 1024,
+        loginShell: Bool = false,
+        mergeStderr: Bool = false,
+        extraEnvironment: [String: String] = [:]
+    ) async -> CommandRun {
+        if Task.isCancelled {
+            return CommandRun(stdout: "", stderr: "", exitCode: 130, timedOut: false, cancelled: true, truncated: false)
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [loginShell ? "-lc" : "-c", command]
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        var environment = childEnvironment(home: realHomeDirectory())
+        environment.merge(extraEnvironment) { $1 }
+        process.environment = environment
+        let outPipe = Pipe()
+        let errPipe = mergeStderr ? outPipe : Pipe()
+        let inPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        process.standardInput = inPipe
+
+        let outcome = RunOutcome()
+        process.terminationHandler = { _ in outcome.resolve(.exited) }
+        do {
+            try process.run()
+        } catch {
+            return CommandRun(
+                stdout: "", stderr: "", exitCode: 127, timedOut: false, cancelled: false,
+                truncated: false, launchError: error.localizedDescription
+            )
+        }
+
+        let readers = mergeStderr ? [outPipe] : [outPipe, errPipe]
+        let drain = PipeDrain(fileDescriptors: readers.map { $0.fileHandleForReading.fileDescriptor }, cap: outputCap)
+        let input = inPipe.fileHandleForWriting.fileDescriptor
+        let payload = stdin ?? Data()
+        Thread.detachNewThread {
+            // A child that exits without reading must not SIGPIPE the app.
+            _ = fcntl(input, F_SETNOSIGPIPE, 1)
+            payload.withUnsafeBytes { raw in
+                guard var pointer = raw.baseAddress else { return }
+                var remaining = raw.count
+                while remaining > 0 {
+                    let written = Darwin.write(input, pointer, remaining)
+                    if written <= 0 { break }
+                    pointer += written
+                    remaining -= written
+                }
+            }
+            try? inPipe.fileHandleForWriting.close()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + max(timeout, 0.1)) {
+            outcome.resolve(.timedOut)
+        }
+
+        let kind = await withTaskCancellationHandler {
+            await outcome.wait()
+        } onCancel: {
+            outcome.resolve(.cancelled)
+        }
+        if kind != .exited {
+            // Not cancellable itself: a cancelled task's sleeps return at once,
+            // which would skip the grace period and spin.
+            await Task.detached {
+                stopTree(of: process, escalated: false)
+                if await !finished(process, within: 2) {
+                    stopTree(of: process, escalated: true)
+                    _ = await finished(process, within: 2)
+                }
+            }.value
+        }
+        // An orphaned background child can hold a pipe open after the shell
+        // is gone; its later output is not this command's.
+        let streams = await drain.finish(within: kind == .exited ? 0.5 : 1)
+        let status: Int32
+        if process.isRunning {
+            status = 128 + SIGKILL
+        } else if process.terminationReason == .uncaughtSignal {
+            status = 128 + process.terminationStatus
+        } else {
+            status = process.terminationStatus
+        }
+        return CommandRun(
+            stdout: streams[0].text,
+            stderr: streams.count > 1 ? streams[1].text : "",
+            exitCode: status,
+            timedOut: kind == .timedOut,
+            cancelled: kind == .cancelled,
+            truncated: streams.contains { $0.truncated }
+        )
+    }
+}
+
+/// The first of exit, timeout and cancel to happen, readable once.
+private final class RunOutcome: @unchecked Sendable {
+    enum Kind { case exited, timedOut, cancelled }
+
+    private let lock = NSLock()
+    private var result: Kind?
+    private var continuation: CheckedContinuation<Kind, Never>?
+
+    func resolve(_ kind: Kind) {
+        lock.lock()
+        guard result == nil else { lock.unlock(); return }
+        result = kind
+        let waiting = continuation
+        continuation = nil
+        lock.unlock()
+        waiting?.resume(returning: kind)
+    }
+
+    func wait() async -> Kind {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(returning: result)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+}
+
+/// Reads pipes to EOF on dedicated threads into head-and-tail buffers.
+private final class PipeDrain: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffers: [OutputHeadTail]
+    private var open: Int
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var resumed = false
+
+    init(fileDescriptors: [Int32], cap: Int) {
+        buffers = fileDescriptors.map { _ in OutputHeadTail(cap: cap) }
+        open = fileDescriptors.count
+        for (index, fd) in fileDescriptors.enumerated() {
+            Thread.detachNewThread { [self] in
+                var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+                while true {
+                    let count = Darwin.read(fd, &chunk, chunk.count)
+                    if count <= 0 { break }
+                    lock.lock()
+                    buffers[index].append(Data(chunk.prefix(count)))
+                    lock.unlock()
+                }
+                closed()
+            }
+        }
+    }
+
+    private func closed() {
+        lock.lock()
+        open -= 1
+        let waiting = open == 0 ? takeContinuation() : nil
+        lock.unlock()
+        waiting?.resume()
+    }
+
+    /// Must hold `lock`.
+    private func takeContinuation() -> CheckedContinuation<Void, Never>? {
+        guard !resumed, let continuation else { return nil }
+        resumed = true
+        self.continuation = nil
+        return continuation
+    }
+
+    /// Waits for every pipe to reach EOF, or `grace` seconds, then returns
+    /// what was read.
+    func finish(within grace: Double) async -> [OutputHeadTail] {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if open == 0 {
+                resumed = true
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+            DispatchQueue.global().asyncAfter(deadline: .now() + grace) { [self] in
+                lock.lock()
+                let waiting = takeContinuation()
+                lock.unlock()
+                waiting?.resume()
+            }
+        }
+        return snapshot()
+    }
+
+    private func snapshot() -> [OutputHeadTail] {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffers
+    }
+}
+#endif

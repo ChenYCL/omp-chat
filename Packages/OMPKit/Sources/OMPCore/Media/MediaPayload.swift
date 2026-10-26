@@ -17,7 +17,8 @@ public struct MediaPayload: Hashable, Sendable {
 public typealias MediaPayloadProvider = @Sendable (MediaRef) -> MediaPayload?
 
 public enum MediaPayloadResolver {
-    /// Collects every image referenced by a request into `[MediaRef.id: payload]`.
+    /// Collects every image referenced by a request into `[MediaRef.id: payload]`,
+    /// including images a tool returned (`ToolResult.media`).
     public static func resolve(
         messages: [ChatMessage],
         using provider: MediaPayloadProvider?
@@ -26,9 +27,14 @@ public enum MediaPayloadResolver {
         var result: [UUID: MediaPayload] = [:]
         for message in messages {
             for part in message.parts {
-                guard case .media(let ref) = part, ref.kind == .image else { continue }
-                if result[ref.id] == nil, let payload = provider(ref) {
-                    result[ref.id] = payload
+                let refs: [MediaRef]
+                switch part {
+                case .media(let ref): refs = [ref]
+                case .toolResult(let tool): refs = tool.media
+                default: refs = []
+                }
+                for ref in refs where ref.kind == .image && result[ref.id] == nil {
+                    if let payload = provider(ref) { result[ref.id] = payload }
                 }
             }
         }

@@ -507,28 +507,124 @@ public struct PaseoArchivedSheet: View {
     }
 }
 
-// MARK: - 5. MCP Plugins Sheet (插件与工具)
+// MARK: - 5. Tools sheet (本对话可用的工具)
 
+/// What the next request of the selected thread offers the model: the
+/// built-in tools and every connected MCP server's, grouped by source, with
+/// the risk that decides whether a call asks first.
 public struct MCPPluginsSheet: View {
+    @Environment(ChatAppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var specs: [AgentToolSpec] = []
+    @State private var loaded = false
     public init() {}
+
+    private var conversationID: UUID? { model.selectedConversationID }
+
+    private var toolsOn: Bool {
+        conversationID.map(model.toolsEnabled(for:)) ?? false
+    }
+
+    /// Built-in tools first, then MCP servers and skills by name.
+    private var groups: [(source: String, tools: [AgentToolSpec])] {
+        Dictionary(grouping: specs, by: \.source)
+            .map { (source: $0.key, tools: $0.value) }
+            .sorted { lhs, rhs in
+                let lhsBuiltin = lhs.source == "内置", rhsBuiltin = rhs.source == "内置"
+                return lhsBuiltin != rhsBuiltin ? lhsBuiltin : lhs.source < rhs.source
+            }
+    }
+
+    /// Reload when the thread, the providers or an MCP server's tools change.
+    private var reloadKey: String {
+        var key = "\(conversationID?.uuidString ?? "-")-\(model.toolProvidersRevision)-\(toolsOn)"
+        #if os(macOS)
+        key += "-\(model.mcp.tools.values.reduce(0) { $0 + $1.count })"
+        #endif
+        return key
+    }
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 10) {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 28))
-                    .foregroundStyle(Color.ompTextTertiary)
-                Text("没有接入 MCP")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("这个应用目前不连接任何 MCP 服务器，所以这里没有可开关的工具。之前显示的列表是写死的，开关也不会保存。")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Color.ompTextSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+            List {
+                if let id = conversationID {
+                    Section {
+                        HStack {
+                            Text("权限")
+                            Spacer()
+                            Text(toolsOn ? model.permissionMode(for: id).title : "仅聊天")
+                                .foregroundStyle(Color.ompTextSecondary)
+                        }
+                    } footer: {
+                        Text(toolsOn
+                             ? "旁边写的是工具的默认风险：读取直接运行，其余按权限决定是否先问你。读写工作目录以外的路径按运行命令处理。"
+                             : "这个对话没有开工具。在输入栏的「工具与权限」菜单里打开；绑定了工作目录的对话默认开启。")
+                    }
+                }
+                if toolsOn, loaded, specs.isEmpty {
+                    Section { Text("没有可用的工具").foregroundStyle(Color.ompTextSecondary) }
+                }
+                ForEach(groups, id: \.source) { group in
+                    Section(group.source) {
+                        ForEach(group.tools, id: \.name) { spec in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(spec.name)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Text(spec.risk.title)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.ompTextSecondary)
+                                }
+                                if !spec.description.isEmpty {
+                                    Text(spec.description)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.ompTextTertiary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .accessibilityIdentifier("tools.spec.\(spec.name)")
+                        }
+                    }
+                }
+                #if os(macOS)
+                Section("MCP 服务器") {
+                    if model.mcp.servers.isEmpty {
+                        Text("还没有添加 MCP 服务器").foregroundStyle(Color.ompTextSecondary)
+                    }
+                    ForEach(model.mcp.servers) { server in
+                        let status = model.mcp.status(of: server.id)
+                        HStack(spacing: 6) {
+                            Circle().fill(MCPSettingsPane.color(of: status)).frame(width: 7, height: 7)
+                            Text(server.name)
+                            Spacer()
+                            Text(MCPSettingsPane.statusText(status))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.ompTextSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Button("管理 MCP 服务器…") {
+                        model.requestedSettingsSection = "mcp"
+                        model.showSettings = true
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("tools.manageMCP")
+                }
+                #else
+                Section {
+                    Text("工具在 Mac 上运行，手机上的对话不调用工具。")
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                #endif
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("MCP 扩展与工具")
+            .task(id: reloadKey) {
+                guard let id = conversationID else { specs = []; loaded = true; return }
+                specs = await model.offeredToolSpecs(for: id)
+                loaded = true
+            }
+            .navigationTitle("本对话可用的工具")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -539,7 +635,7 @@ public struct MCPPluginsSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 420, minHeight: 280)
+        .frame(minWidth: 460, minHeight: 420)
         #endif
     }
 }

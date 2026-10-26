@@ -15,6 +15,11 @@ struct OMPChatApp: App {
                 .task {
                     await model.bootstrap()
                     model.syncRelayController()
+                    // Plugins first: their bundled MCP servers join the list
+                    // MCP starts from. Without startMCP, servers would only
+                    // start when the MCP pane is first opened.
+                    model.reloadPlugins()
+                    model.startMCP()
                 }
         }
         .windowStyle(.hiddenTitleBar)

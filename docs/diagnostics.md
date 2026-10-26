@@ -88,6 +88,7 @@ python3 tools/ompshot/ompshot.py state
 python3 tools/ompshot/ompshot.py act setGoal --goal 发布前补齐文档
 python3 -I tools/ompshot/scenario_codex.py      # 跑完整场景，0 失败才退出 0
 python3 -I tools/ompshot/scenario_codex.py --live   # 另外让旁聊向真实供应商提一个问题
+python3 -I tools/ompshot/scenario_agent.py         # 代理运行时：工具、批准、AGENTS.md、MCP，全程调用供应商
 ```
 
 | 动作 | 字段 | 对应的界面操作 |
@@ -114,9 +115,16 @@ python3 -I tools/ompshot/scenario_codex.py --live   # 另外让旁聊向真实�
 | `browserNavigate` | `tabID`、`url`（必须是完整地址；地址栏的搜索与补 https 规则只在界面里） | 地址栏回车 |
 | `sideChat` | `text`，可选 `conversationID` | 侧面板 旁聊 发送；空问题返回 ok:false 和原因 |
 | `clearSideChat` / `stopSideChat` | `clearSideChat` 可选 `conversationID` | 旁聊 清空 / 停止 |
+| `send` | `text`，可选 `conversationID` | 输入框发送。立即返回，不等回复结束（回复可能停在批准卡片上） |
+| `stop` | — | 停止键 / ⌘.：同时终止正在跑的工具、拒绝所有等待中的卡片 |
+| `approve` | `approvalID`（`state.pendingApprovals[].id`）、`decision` = allowOnce / allowAlways / deny | 批准卡片的三个按钮；控制电脑类的 allowAlways 按一次处理 |
+| `setPermissionMode` | `mode` = readOnly / ask / auto / full，缺省或 null 跟随设置默认；可选 `conversationID` | 输入栏 工具与权限 菜单 |
+| `setToolsEnabled` | `enabled`（布尔），缺省或 null 为自动（绑定了工作目录才开）；可选 `conversationID` | 同上 |
+| `mcpInstall` | `entryID`（`MCPCatalog.entries` 的 id）、可选 `values`（每个输入项一个字符串数组） | 设置 → MCP 服务器 → 目录 → 安装；电脑控制服务器不在目录里，只能从 设置 → 电脑控制 加 |
+| `mcpRemove` | `serverID` | MCP 服务器行的删除（连同钥匙串里的密钥） |
 
 浏览器的重新加载、复制网址、在默认浏览器中打开要用到活的网页视图，不在动作里。
 
-`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread / sideChat`，`sideChat` 是 `role / text / status / error` 列表）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`sidePanelOpen`、`sidePanelTab`、`sideChatStreaming`、`errorMessage`、`browserTabs`（`id / title / url / selected`）、`settingsOpen`、`windowTitles`（只含可见窗口）。
+`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread / sideChat / permissionMode / toolsEnabled / lastReply`；`sideChat` 是 `role / text / status / error` 列表；`lastReply` 是最后一条用户消息之后的整段回复，一轮代理回复跨好几条助手消息，`toolCalls` 按顺序列出其中每次调用的 `id / name / arguments / result / isError`，`text` 取最后一条）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`sidePanelOpen`、`sidePanelTab`、`sideChatStreaming`、`errorMessage`、`isStreaming`、`pendingApprovals`（`id / conversationID / callID / toolName / source / risk / summary`）、`runningToolCallIDs`、`mcpServers`（`id / name / origin / enabled / status / toolCount / detail / tools`，`status` 为 disabled / needsRuntime / connecting / ready / failed，`detail` 是缺的运行时或失败原因加 stderr 末尾）、`browserTabs`（`id / title / url / selected`）、`settingsOpen`、`windowTitles`（只含可见窗口）。
 
 `scenario_codex.py` 只在自己新建的对话和临时 git 仓库（带一个本地 bare「上游」）里操作，结束时删掉它们，并把选中项、侧栏设置、侧面板、浏览器标签和原有的未读标记都还原。`--live` 是唯一会调用供应商的部分。

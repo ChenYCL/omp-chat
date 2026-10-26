@@ -266,6 +266,14 @@ public struct MessageRow: View {
         if !calls.isEmpty {
             OperationCard(calls: calls, results: results)
         }
+        // Calls of this message the agent loop is waiting on.
+        let callIDs = Set(calls.map(\.id))
+        let pending = model.pendingApprovals.filter {
+            $0.conversationID == model.selectedConversationID && callIDs.contains($0.callID)
+        }
+        ForEach(pending) { request in
+            ToolApprovalCard(request: request)
+        }
     }
 
     /// Edit-like tool calls that carry a file path render as bordered cards.

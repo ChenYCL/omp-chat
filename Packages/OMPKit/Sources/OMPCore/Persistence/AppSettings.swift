@@ -80,6 +80,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var worktreeBaseDirectory: String
     /// macOS: prefix for new worktree branch names, e.g. "omp". Empty = none.
     public var worktreeBranchPrefix: String
+    /// macOS: MCP servers the agent can use (设置 → 插件与 MCP). Secret
+    /// environment values live in the secrets vault, not here.
+    public var mcpServers: [MCPServerConfig]
+    /// `PermissionMode` raw value applied to conversations that have not chosen
+    /// their own. "ask" unless the user changed it.
+    public var defaultPermissionMode: String
 
     public init(
         version: Int = 1,
@@ -117,7 +123,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayAllowShell: Bool = false,
         worktreeBaseDirectory: String = "",
         worktreeBranchPrefix: String = "",
-        pairedDevices: [PairedDevice] = []
+        pairedDevices: [PairedDevice] = [],
+        mcpServers: [MCPServerConfig] = [],
+        defaultPermissionMode: String = "ask"
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -155,6 +163,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.pairedDevices = pairedDevices
         self.worktreeBaseDirectory = worktreeBaseDirectory
         self.worktreeBranchPrefix = worktreeBranchPrefix
+        self.mcpServers = mcpServers
+        self.defaultPermissionMode = defaultPermissionMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -195,6 +205,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         pairedDevices = try container.decodeIfPresent([PairedDevice].self, forKey: .pairedDevices) ?? []
         worktreeBaseDirectory = try container.decodeIfPresent(String.self, forKey: .worktreeBaseDirectory) ?? ""
         worktreeBranchPrefix = try container.decodeIfPresent(String.self, forKey: .worktreeBranchPrefix) ?? ""
+        mcpServers = try container.decodeIfPresent([MCPServerConfig].self, forKey: .mcpServers) ?? []
+        defaultPermissionMode = try container.decodeIfPresent(String.self, forKey: .defaultPermissionMode) ?? "ask"
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -208,5 +220,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
         case relayAllowShell, pairedDevices
         case worktreeBaseDirectory, worktreeBranchPrefix
+        case mcpServers, defaultPermissionMode
     }
 }

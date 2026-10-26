@@ -157,6 +157,76 @@ enum DebugActions {
                 return .failure("这个对话没有绑定工作目录")
             }
             return await runGit(operation, in: directory, model: model)
+
+        case .send(let raw, let text):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure("消息是空的") }
+            guard !model.isStreaming else { return .failure("还在回复") }
+            if model.selectedConversationID != id { model.selectedConversationID = id }
+            let before = model.selectedConversation?.messages.count ?? 0
+            // Not awaited: with tools on, the reply can stop at an approval
+            // card that only a later `approve` action resolves.
+            Task { await model.sendNow(text: text, attachments: []) }
+            let sent = await waitUntil { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
+            if sent, (model.selectedConversation?.messages.count ?? 0) > before { return .success }
+            return .failure(model.errorMessage ?? "没有发出")
+
+        case .stop:
+            model.stop()
+            return .success
+
+        case .approve(let raw, let decision):
+            guard let id = UUID(uuidString: raw), model.pendingApprovals.contains(where: { $0.id == id }) else {
+                return .failure("no such approval")
+            }
+            model.resolveApproval(id, decision)
+            return .success
+
+        case .setPermissionMode(let raw, let mode):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.setPermissionMode(mode, for: id)
+            return .success
+
+        case .setToolsEnabled(let raw, let enabled):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.setToolsEnabled(enabled, for: id)
+            return .success
+
+        case .mcpInstall(let entryID, let values):
+            guard let entry = MCPCatalog.entries.first(where: { $0.id == entryID }) else {
+                return .failure("no such catalog entry")
+            }
+            var settings = model.settings
+            let installation: MCPCatalogEntry.Installation
+            do {
+                installation = try entry.install(
+                    values: values, existingIDs: Set(model.mcp.servers.map(\.id)),
+                    home: HostExecutor.realHomeDirectory()
+                )
+            } catch {
+                return .failure(error.localizedDescription)
+            }
+            // Same order as the pane: secrets into the vault first, so a
+            // failed write never leaves a server without its key.
+            for (variable, value) in installation.secrets
+            where !model.setMCPSecret(value, serverID: installation.config.id, variable: variable) {
+                return .failure("无法把「\(variable)」写入钥匙串")
+            }
+            settings.mcpServers.append(installation.config)
+            await model.saveSettings(settings)
+            return .success
+
+        case .mcpRemove(let serverID):
+            var settings = model.settings
+            guard let config = settings.mcpServers.first(where: { $0.id == serverID }) else {
+                return .failure("no such server")
+            }
+            for variable in config.env.keys {
+                model.setMCPSecret(nil, serverID: serverID, variable: variable)
+            }
+            settings.mcpServers.removeAll { $0.id == serverID }
+            await model.saveSettings(settings)
+            return .success
         }
     }
 
@@ -201,6 +271,47 @@ enum DebugActions {
             var hasUnread: Bool
             /// The selected thread's side chat; never part of the thread.
             var sideChat: [SideChatLine]
+            var permissionMode: String
+            var toolsEnabled: Bool
+            /// The reply to the last user message. An agent reply spans one
+            /// assistant message per model turn, so this covers all of them:
+            /// every tool call in order, and the last message's text.
+            var lastReply: ReplyLine?
+        }
+        struct ReplyLine: Encodable {
+            var text: String
+            var status: String
+            var error: String?
+            var toolCalls: [ToolCallLine]
+        }
+        struct ToolCallLine: Encodable {
+            var id: String
+            var name: String
+            var arguments: String
+            /// Nil until the call has a result.
+            var result: String?
+            var isError: Bool
+        }
+        struct MCPServerLine: Encodable {
+            var id: String
+            var name: String
+            var origin: String
+            var enabled: Bool
+            /// disabled / needsRuntime / connecting / ready / failed
+            var status: String
+            var toolCount: Int?
+            /// The missing runtime, or the failure reason and stderr tail.
+            var detail: String?
+            var tools: [String]
+        }
+        struct ApprovalLine: Encodable {
+            var id: String
+            var conversationID: String
+            var callID: String
+            var toolName: String
+            var source: String
+            var risk: String
+            var summary: String
         }
         struct SideChatLine: Encodable {
             var role: String
@@ -231,9 +342,36 @@ enum DebugActions {
             var sideChatStreaming: Bool
             /// The banner above the thread, if one is showing.
             var errorMessage: String?
+            var isStreaming: Bool
+            /// Approval cards waiting, oldest first.
+            var pendingApprovals: [ApprovalLine]
+            /// Tool calls executing right now.
+            var runningToolCallIDs: [String]
+            /// 设置 → MCP 服务器, including plugin servers.
+            var mcpServers: [MCPServerLine]
             var browserTabs: [BrowserTabLine]
             var settingsOpen: Bool
             var windowTitles: [String]
+        }
+        func replyLine(_ messages: [ChatMessage]) -> ReplyLine? {
+            let turn = messages.reversed().prefix { $0.role != .user }.reversed().filter { $0.role == .assistant }
+            guard let last = turn.last else { return nil }
+            let parts = turn.flatMap(\.parts)
+            let results = parts.compactMap { part -> ToolResult? in
+                if case .toolResult(let result) = part { result } else { nil }
+            }
+            let calls = parts.compactMap { part -> ToolCallLine? in
+                guard case .toolCall(let call) = part else { return nil }
+                let result = results.first { $0.callID == call.id }
+                return ToolCallLine(
+                    id: call.id, name: call.name, arguments: call.argumentsJSON,
+                    result: result.map { String($0.outputText.prefix(2000)) }, isError: result?.isError ?? false
+                )
+            }
+            return ReplyLine(
+                text: last.concatenatedText, status: last.status.rawValue,
+                error: last.errorText, toolCalls: calls
+            )
         }
         let selected = model.selectedConversation.map {
             Selected(
@@ -245,7 +383,10 @@ enum DebugActions {
                 hasUnread: $0.hasUnread,
                 sideChat: model.sideChat(for: $0.id).map {
                     SideChatLine(role: $0.role.rawValue, text: $0.concatenatedText, status: $0.status.rawValue, error: $0.errorText)
-                }
+                },
+                permissionMode: model.permissionMode(for: $0.id).rawValue,
+                toolsEnabled: model.toolsEnabled(for: $0.id),
+                lastReply: replyLine($0.messages)
             )
         }
         let state = State(
@@ -261,6 +402,29 @@ enum DebugActions {
             sidePanelTab: model.sidePanelOpen ? model.sidePanelTab.rawValue : nil,
             sideChatStreaming: model.sideChatStreamingID != nil,
             errorMessage: model.errorMessage,
+            isStreaming: model.isStreaming,
+            pendingApprovals: model.pendingApprovals.map {
+                ApprovalLine(
+                    id: $0.id.uuidString, conversationID: $0.conversationID.uuidString, callID: $0.callID,
+                    toolName: $0.toolName, source: $0.source, risk: $0.risk.rawValue, summary: $0.summary
+                )
+            },
+            runningToolCallIDs: model.runningToolCallIDs.sorted(),
+            mcpServers: model.mcp.servers.map { config in
+                let line: (String, Int?, String?)
+                switch model.mcp.status(of: config.id) {
+                case .disabled: line = ("disabled", nil, nil)
+                case .needsRuntime(let runtime): line = ("needsRuntime", nil, runtime.rawValue)
+                case .connecting: line = ("connecting", nil, nil)
+                case .ready(let count): line = ("ready", count, nil)
+                case .failed(let reason, let log): line = ("failed", nil, ([reason] + log.suffix(5)).joined(separator: "\n"))
+                }
+                return MCPServerLine(
+                    id: config.id, name: config.name, origin: config.origin, enabled: config.enabled,
+                    status: line.0, toolCount: line.1, detail: line.2,
+                    tools: (model.mcp.tools[config.id] ?? []).map(\.name)
+                )
+            },
             browserTabs: model.browserTabs.tabs.map {
                 BrowserTabLine(
                     id: $0.id.uuidString, title: $0.displayTitle, url: $0.url,

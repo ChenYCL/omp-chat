@@ -32,6 +32,12 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// What this thread is trying to achieve (Official Codex
     /// `composer.threadGoal`). Nil means no goal; older documents have none.
     public var goal: String?
+    /// `PermissionMode` raw value for this thread's tool calls; nil follows
+    /// `AppSettings.defaultPermissionMode`.
+    public var permissionMode: String? = nil
+    /// Whether the model is offered tools here; nil means automatic: offered
+    /// when the thread has a working directory.
+    public var toolsEnabled: Bool? = nil
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -91,6 +97,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         hasUnread = (try? container.decodeIfPresent(Bool.self, forKey: .hasUnread)) ?? false
         workingDirectory = try? container.decodeIfPresent(String.self, forKey: .workingDirectory)
         goal = try? container.decodeIfPresent(String.self, forKey: .goal)
+        permissionMode = try? container.decodeIfPresent(String.self, forKey: .permissionMode)
+        toolsEnabled = try? container.decodeIfPresent(Bool.self, forKey: .toolsEnabled)
     }
 
 

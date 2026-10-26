@@ -126,11 +126,16 @@ struct OpenAIRequestBuilder {
             var content: WireContent?
             var toolCalls: [WireToolCall]?
             var toolCallID: String?
+            /// The turn's reasoning, echoed back on assistant turns that call
+            /// tools: DeepSeek's thinking mode rejects the next request
+            /// (HTTP 400) without it. Omitted when the model streamed none.
+            var reasoningContent: String?
 
             enum CodingKeys: String, CodingKey {
                 case role, content
                 case toolCalls = "tool_calls"
                 case toolCallID = "tool_call_id"
+                case reasoningContent = "reasoning_content"
             }
         }
 
@@ -213,11 +218,39 @@ struct OpenAIRequestBuilder {
         if let system = request.systemPrompt, !system.isEmpty {
             messages.append(.init(role: "system", content: .text(system)))
         }
+        let pairing = ToolCallPairing(request.messages)
+        // Images a tool returned cannot ride in a `tool` message. They follow
+        // the run of tool messages as one user message, so the run stays
+        // contiguous after its assistant `tool_calls`.
+        var toolImages: [WireContent.Block] = []
+        func flushToolImages() {
+            guard !toolImages.isEmpty else { return }
+            let note = WireContent.Block(type: "text", text: "以上工具调用返回的图片：", imageURL: nil)
+            messages.append(.init(role: "user", content: .blocks([note] + toolImages)))
+            toolImages = []
+        }
+        func appendResults(_ results: [ToolResult]) {
+            for result in results {
+                messages.append(.init(role: "tool", content: .text(result.outputText), toolCallID: result.callID))
+                toolImages += result.media.compactMap { ref in
+                    guard ref.kind == .image, let payload = media[ref.id] else { return nil }
+                    return WireContent.Block(type: "image_url", text: nil, imageURL: .init(url: payload.dataURL))
+                }
+            }
+        }
+
         for message in request.messages where message.role != .system {
+            let results = pairing.pairedResults(in: message)
+            if message.role == .tool {
+                appendResults(results)
+                continue
+            }
+            flushToolImages()
             let text = message.parts.compactMap { part -> String? in
                 switch part {
                 case .text(let value): value
-                case .toolResult(let result): result.outputText
+                // A result whose call is gone is kept as plain text.
+                case .toolResult(let result) where !pairing.isPaired(result): result.outputText
                 default: nil
                 }
             }.joined()
@@ -240,17 +273,28 @@ struct OpenAIRequestBuilder {
                 }
                 content = .blocks(blocks)
             }
-            let calls = message.parts.compactMap { part -> Body.WireToolCall? in
-                guard case .toolCall(let call) = part else { return nil }
-                return Body.WireToolCall(id: call.id, function: .init(name: call.name, arguments: call.argumentsJSON))
+            let calls = pairing.pairedCalls(in: message).map { call in
+                // Malformed arguments (the model's own, already answered with an
+                // error) go back as `{}`: a gateway that translates to another
+                // dialect must parse them, and would reject the whole request.
+                let arguments = call.argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+                let valid = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any]
+                return Body.WireToolCall(id: call.id, function: .init(name: call.name, arguments: valid ? arguments : "{}"))
             }
+            // An assistant turn that only held unanswered calls has nothing left to say.
+            if content == nil && calls.isEmpty && message.role == .assistant { continue }
+            let reasoning = message.thinkingText
             messages.append(.init(
                 role: message.role.rawValue,
                 content: content,
                 toolCalls: calls.isEmpty ? nil : calls,
-                toolCallID: nil
+                toolCallID: nil,
+                reasoningContent: calls.isEmpty || reasoning.isEmpty ? nil : reasoning
             ))
+            // The agent loop stores results beside their calls.
+            appendResults(results)
         }
+        flushToolImages()
         let tools = request.tools.isEmpty ? nil : request.tools.map { spec in
             // A server-side tool (web_search) has no function schema.
             if spec.type != "function" { return Body.WireTool(type: spec.type, function: nil) }
@@ -268,5 +312,46 @@ struct OpenAIRequestBuilder {
             maxTokens: request.maxOutputTokens,
             tools: tools
         )
+    }
+}
+
+/// Which tool calls and results may go on the wire. Gateways reject an
+/// assistant turn whose calls are not each answered by a result, and a
+/// result whose call was never made, so a call stopped mid-stream (or a
+/// result left over from an edited transcript) is kept off the wire.
+struct ToolCallPairing {
+    private let answered: Set<String>
+    private let called: Set<String>
+
+    init(_ messages: [ChatMessage]) {
+        var answered: Set<String> = []
+        var called: Set<String> = []
+        for message in messages {
+            for part in message.parts {
+                switch part {
+                case .toolCall(let call): called.insert(call.id)
+                case .toolResult(let result): answered.insert(result.callID)
+                default: break
+                }
+            }
+        }
+        self.answered = answered
+        self.called = called
+    }
+
+    func isPaired(_ result: ToolResult) -> Bool { called.contains(result.callID) }
+
+    func pairedCalls(in message: ChatMessage) -> [ToolCall] {
+        message.parts.compactMap { part in
+            guard case .toolCall(let call) = part, answered.contains(call.id) else { return nil }
+            return call
+        }
+    }
+
+    func pairedResults(in message: ChatMessage) -> [ToolResult] {
+        message.parts.compactMap { part in
+            guard case .toolResult(let result) = part, called.contains(result.callID) else { return nil }
+            return result
+        }
     }
 }

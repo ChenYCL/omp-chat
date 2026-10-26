@@ -323,6 +323,7 @@ public final class ChatAppModel {
         if selectedConversationID == nil || conversations.first(where: { $0.id == selectedConversationID }) == nil {
             selectedConversationID = sortedConversations.first?.id
         }
+        registerBuiltinTools()
         for provider in providers where !apiKeys[provider.id, default: ""].isEmpty {
             if models.contains(where: { $0.providerID == provider.id }) { continue }
             await refreshModels(for: provider.id, silent: true)
@@ -733,10 +734,12 @@ public final class ChatAppModel {
     }
 
     /// Appends an assistant placeholder and streams the reply for the
-    /// conversation's current tail of messages.
+    /// conversation's current tail of messages. With tools on offer the reply
+    /// is an agent loop (`runReply`): the turn's tool calls run and the model
+    /// is called again, until it answers or `AgentLoop.maxModelTurns`.
     private func startReply(conversationID: UUID) async {
-        guard var conversation = conversation(conversationID) else { return }
-        guard let provider = resolveProvider(for: conversation), let model = resolveModel(for: conversation, provider: provider) else {
+        guard let conversation = conversation(conversationID) else { return }
+        guard let provider = resolveProvider(for: conversation), resolveModel(for: conversation, provider: provider) != nil else {
             errorMessage = "先在设置中添加供应商并选择模型"
             return
         }
@@ -747,6 +750,41 @@ public final class ChatAppModel {
             return
         }
 
+        // Claimed before the tool lookup awaits, so a second send cannot
+        // start another reply in between.
+        isStreaming = true
+        streamingConversationID = conversationID
+        errorMessage = nil
+        streamTask?.cancel()
+        let generation = stopGeneration
+        let registry = await toolRegistry(for: conversationID)
+        guard generation == stopGeneration, let first = prepareTurn(conversationID: conversationID, registry: registry) else {
+            isStreaming = false
+            streamingConversationID = nil
+            return
+        }
+        streamTask = Task { [weak self] in
+            await self?.runReply(conversationID: conversationID, first: first)
+        }
+    }
+
+    /// One model turn ready to stream: the request, and the placeholder it fills.
+    private struct PreparedTurn: Sendable {
+        var adapter: any ChatProvider
+        var request: GenerationRequest
+        var assistantID: UUID
+        /// The tools this turn offers; routes the calls it makes.
+        var registry: AgentToolRegistry
+    }
+
+    /// Appends an assistant placeholder and builds the request for the
+    /// conversation's messages so far, offering `registry`'s tools.
+    private func prepareTurn(conversationID: UUID, registry: AgentToolRegistry) -> PreparedTurn? {
+        guard var conversation = conversation(conversationID),
+              let provider = resolveProvider(for: conversation),
+              let model = resolveModel(for: conversation, provider: provider),
+              let apiKey = (try? secrets.secret(for: provider.keychainAccount)) ?? nil, !apiKey.isEmpty else { return nil }
+
         conversation.providerID = provider.id
         conversation.modelID = model.id
         let assistant = ChatMessage(role: .assistant, parts: [], status: .streaming)
@@ -755,6 +793,8 @@ public final class ChatAppModel {
         replace(conversation)
         persist(conversation)
 
+        let offered = registry.specs()
+        offeredToolCounts[conversationID] = offered.count
         let history = conversation.messages.dropLast()
         var request = GenerationRequest(
             modelID: model.id,
@@ -766,6 +806,7 @@ public final class ChatAppModel {
         if webSearchEnabled {
             request.tools = [ToolSpec(name: "web_search", description: "", parametersJSON: "{}", type: "web_search")]
         }
+        request.tools += offered.map(\.wireSpec)
         if model.capabilities.thinking, let budget = request.maxOutputTokens {
             let effort = conversation.reasoningEffort ?? "medium"
             let fraction: Int = effort == "high" ? 2 : (effort == "low" ? 8 : 4)
@@ -778,21 +819,20 @@ public final class ChatAppModel {
             transport: transport,
             mediaPayloads: { [mediaLibrary] ref in mediaLibrary.loadPayload(for: ref) }
         )
-
-        isStreaming = true
         DiagnosticsCenter.shared.record("stream", .info, "stream started",
             fields: ["host": provider.baseURL.host ?? "", "model": model.id])
-        streamingConversationID = conversation.id
-        errorMessage = nil
-        streamTask?.cancel()
-        streamTask = Task { [weak self] in
-            await self?.runStream(adapter: adapter, request: request, conversationID: conversation.id, assistantID: assistant.id)
-        }
+        return PreparedTurn(adapter: adapter, request: request, assistantID: assistant.id, registry: registry)
     }
 
+    /// Stops the reply: cancels the stream or the running tool (its whole
+    /// process tree), and refuses every approval card still waiting.
     public func stop() {
+        stopGeneration += 1
         streamTask?.cancel()
         streamTask = nil
+        for request in pendingApprovals {
+            resolveApproval(request.id, .deny)
+        }
     }
 
     public func regenerateLast() {
@@ -1081,12 +1121,20 @@ public final class ChatAppModel {
         return (estimatedTokens(conversation), limit)
     }
 
+    /// How one streamed model turn ended.
+    private struct TurnReport {
+        var failure: Error?
+        var cancelled: Bool
+    }
+
+    /// Streams one model turn into `assistantID` and settles that message.
+    /// The reply as a whole ends in `finishReply`.
     private func runStream(
         adapter: any ChatProvider,
         request: GenerationRequest,
         conversationID: UUID,
         assistantID: UUID
-    ) async {
+    ) async -> TurnReport {
         var failure: Error?
         var finishReason: FinishReason = .stop
         var firstTokenMillis: Int?
@@ -1119,16 +1167,6 @@ public final class ChatAppModel {
                 }
             }
         }
-        if failure == nil && !cancelled {
-            AudioFeedback.playComplete(enabled: settings.soundEffects)
-            if settings.completionNotifications, selectedConversationID != conversationID {
-                let title = conversation(conversationID)?.title ?? "新回复"
-                CompletionNotifier.notify(title: title)
-            }
-        }
-        isStreaming = false
-        streamingConversationID = nil
-        streamTask = nil
         if let failure, !cancelled { errorMessage = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription }
         var fields = ["host": providerHost(conversationID), "model": request.modelID]
         if let firstTokenMillis { fields["firstTokenMs"] = String(firstTokenMillis) }
@@ -1139,6 +1177,25 @@ public final class ChatAppModel {
         } else {
             DiagnosticsCenter.shared.record("stream", .info, cancelled ? "stream cancelled" : "stream finished", fields: fields)
         }
+        if let conversation = conversation(conversationID) { persist(conversation) }
+        return TurnReport(failure: failure, cancelled: cancelled)
+    }
+
+    /// Ends a reply after its last turn: the stop button goes away, the
+    /// completion sound and notification play for an answer, and the title
+    /// and unread state settle.
+    private func finishReply(conversationID: UUID, answered: Bool) {
+        if answered {
+            AudioFeedback.playComplete(enabled: settings.soundEffects)
+            if settings.completionNotifications, selectedConversationID != conversationID {
+                let title = conversation(conversationID)?.title ?? "新回复"
+                CompletionNotifier.notify(title: title)
+            }
+        }
+        isStreaming = false
+        streamingConversationID = nil
+        streamTask = nil
+        runningToolCallIDs = []
         if var conversation = conversation(conversationID) {
             if conversation.title == "新对话" || conversation.title == "图片消息" {
                 if let first = conversation.messages.first(where: { $0.role == .user }) {
@@ -1344,6 +1401,9 @@ public final class ChatAppModel {
             custom,
             memories.isEmpty ? "" : "用户希望你在对话中记住：\n" + memories.joined(separator: "\n"),
             conversation.goal.map { "本对话的目标：\($0)" } ?? "",
+            agentsDocPrompt(for: conversation.id)?.text ?? "",
+            agentToolsPrompt(for: conversation),
+            skillPromptSection(for: conversation.id) ?? "",
             GenUIGuide.systemPrompt,
         ]
             .filter { !$0.isEmpty }
@@ -1854,6 +1914,294 @@ public final class ChatAppModel {
         #endif
     }
 
+    // MARK: - Agent runtime
+
+    /// Everything the model may call, by provider id: "builtin", "mcp", "skills".
+    /// Providers come and go (an MCP server connecting or dropping), so the
+    /// registry is mutable and `toolProvidersRevision` lets views and the loop
+    /// notice.
+    @ObservationIgnored public private(set) var toolProviders: [String: any AgentToolProvider] = [:]
+    public private(set) var toolProvidersRevision = 0
+
+    /// Registers (or with nil removes) a provider under `id`.
+    public func setToolProvider(id: String, _ provider: (any AgentToolProvider)?) {
+        if let provider {
+            toolProviders[id] = provider
+        } else {
+            toolProviders.removeValue(forKey: id)
+        }
+        toolProvidersRevision += 1
+    }
+
+    /// Plugin hooks around every tool call (Codex PreToolUse /
+    /// PermissionRequest / PostToolUse); nil runs none.
+    @ObservationIgnored public private(set) var toolHooks: AgentToolHooks?
+
+    public func setToolHooks(_ hooks: AgentToolHooks?) {
+        toolHooks = hooks
+    }
+
+    /// Approval cards waiting for the user, oldest first. The loop is
+    /// suspended until each is resolved; Stop refuses them all.
+    public private(set) var pendingApprovals: [ToolApprovalRequest] = []
+    /// Tools the user allowed with 始终允许. Session-only: a relaunch asks again.
+    public private(set) var alwaysAllowedTools: Set<String> = []
+    /// Call ids whose tool is running right now (approved, no result yet).
+    public private(set) var runningToolCallIDs: Set<String> = []
+    @ObservationIgnored private var approvalWaiters: [UUID: CheckedContinuation<ToolApprovalDecision, Never>] = [:]
+    /// Tools offered by each conversation's latest turn; drives the system
+    /// prompt's tool section so it only speaks of tools that were sent.
+    @ObservationIgnored private var offeredToolCounts: [UUID: Int] = [:]
+    /// Bumped by `stop()`, so a reply still looking up its tools knows not to start.
+    @ObservationIgnored private var stopGeneration = 0
+    @ObservationIgnored private var readableRootsByOwner: [String: [String]] = [:]
+    @ObservationIgnored private var reportedToolProblems: Set<String> = []
+
+    /// The conversation's mode, else the settings default, else 每次询问.
+    public func permissionMode(for id: UUID) -> PermissionMode {
+        if let raw = conversation(id)?.permissionMode, let mode = PermissionMode(rawValue: raw) { return mode }
+        return PermissionMode(rawValue: settings.defaultPermissionMode) ?? .ask
+    }
+
+    /// Sets the conversation's mode; nil follows the settings default again.
+    public func setPermissionMode(_ mode: PermissionMode?, for id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        conversation.permissionMode = mode?.rawValue
+        replace(conversation)
+        persist(conversation)
+    }
+
+    /// Whether this conversation's requests offer tools. Automatic (nil)
+    /// offers them when the thread has a working directory.
+    public func toolsEnabled(for id: UUID) -> Bool {
+        guard let conversation = conversation(id) else { return false }
+        if let explicit = conversation.toolsEnabled { return explicit }
+        return !(conversation.workingDirectory ?? "").isEmpty
+    }
+
+    /// Turns tools on or off for the conversation; nil goes back to automatic.
+    public func setToolsEnabled(_ enabled: Bool?, for id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        conversation.toolsEnabled = enabled
+        replace(conversation)
+        persist(conversation)
+    }
+
+    /// Answers an approval card. 始终允许 also allows the tool for the rest of
+    /// the session — except a desktop-control card, which counts as 允许一次:
+    /// control asks every time. Unknown ids (already answered) are ignored.
+    public func resolveApproval(_ id: UUID, _ decision: ToolApprovalDecision) {
+        guard let index = pendingApprovals.firstIndex(where: { $0.id == id }) else { return }
+        let request = pendingApprovals.remove(at: index)
+        if decision == .allowAlways, request.risk != .control { alwaysAllowedTools.insert(request.toolName) }
+        approvalWaiters.removeValue(forKey: id)?.resume(returning: decision)
+    }
+
+    /// The tools the next request of this conversation would offer.
+    public func offeredToolSpecs(for id: UUID) async -> [AgentToolSpec] {
+        await toolRegistry(for: id).specs()
+    }
+
+    /// Replaces the folders `owner` (e.g. "plugins") lets tools read without
+    /// asking, such as installed plugin and skill directories.
+    public func setToolReadableRoots(_ roots: [String], owner: String) {
+        readableRootsByOwner[owner] = roots.isEmpty ? nil : roots
+    }
+
+    /// Where a tool call of this conversation runs.
+    public func toolContext(for id: UUID) -> AgentToolContext {
+        var roots = readableRootsByOwner.keys.sorted().flatMap { readableRootsByOwner[$0] ?? [] }
+        // Repo and user skill folders depend on the thread's directory, so
+        // they are not in the owner table.
+        for root in readableRoots(for: id) where !roots.contains(root) {
+            roots.append(root)
+        }
+        return AgentToolContext(
+            conversationID: id,
+            workingDirectory: conversation(id)?.workingDirectory.flatMap { $0.isEmpty ? nil : $0 },
+            readableRoots: roots
+        )
+    }
+
+    private func registerBuiltinTools() {
+        #if os(macOS)
+        if toolProviders[BuiltinToolProvider.providerID] == nil {
+            setToolProvider(id: BuiltinToolProvider.providerID, BuiltinToolProvider())
+        }
+        #endif
+    }
+
+    private func toolRegistry(for id: UUID) async -> AgentToolRegistry {
+        guard toolsEnabled(for: id), !toolProviders.isEmpty else { return .empty }
+        let registry = await AgentToolRegistry.build(toolProviders)
+        var problems: Set<String> = []
+        for clash in registry.clashes {
+            problems.insert("同名工具 \(clash.name)：保留 \(clash.keptProviderID)，忽略 \(clash.droppedProviderID)")
+        }
+        for invalid in registry.invalidNames {
+            problems.insert("工具名不合法，已忽略：\(invalid.providerID) · \(invalid.name)")
+        }
+        for problem in problems.subtracting(reportedToolProblems).sorted() {
+            DiagnosticsCenter.shared.record("agent", .warn, problem)
+        }
+        reportedToolProblems.formUnion(problems)
+        return registry
+    }
+
+    /// The system prompt's tool section; empty unless this turn offers tools.
+    private func agentToolsPrompt(for conversation: Conversation) -> String {
+        guard (offeredToolCounts[conversation.id] ?? 0) > 0 else { return "" }
+        let place = conversation.workingDirectory.flatMap { $0.isEmpty ? nil : "工作目录：\($0)，相对路径以它为准。" }
+            ?? "本对话没有工作目录，文件路径请用绝对路径。"
+        let rule: String
+        switch permissionMode(for: conversation.id) {
+        case .readOnly: rule = "当前是只读模式：只能读取，写文件和运行命令会被拒绝。"
+        case .ask: rule = "读取会直接执行；写文件、运行命令、访问工作目录以外的位置要先经用户批准。"
+        case .auto: rule = "读写工作目录里的文件会直接执行；运行命令、访问工作目录以外的位置要先经用户批准。"
+        case .full: rule = "文件和命令会直接执行；控制桌面要先经用户批准。"
+        }
+        return "【工具】你可以调用工具完成任务。\(place)\(rule)调用被拒绝时换个做法或询问用户，不要重复同一个调用。优先小步、可撤销的操作：先读后改，改动范围尽量小，不做用户没要求的破坏性操作。"
+    }
+
+    /// Mutable state of one running reply, shared with the loop's callbacks.
+    @MainActor
+    private final class ReplyProgress {
+        var first: PreparedTurn?
+        var lastAssistantID: UUID?
+
+        init(first: PreparedTurn) {
+            self.first = first
+        }
+    }
+
+    /// The whole reply: model turns and their tool calls, through `AgentLoop`.
+    /// `isStreaming` stays true throughout, so the stop button shows.
+    private func runReply(conversationID: UUID, first: PreparedTurn) async {
+        let progress = ReplyProgress(first: first)
+        let fallback = AgentLoop.Environment(mode: .readOnly, context: AgentToolContext(conversationID: conversationID, workingDirectory: nil))
+        let host = AgentLoop.Host(
+            modelTurn: { [weak self] turn in
+                await self?.agentModelTurn(turn, conversationID: conversationID, progress: progress) ?? .stopped
+            },
+            environment: { [weak self] in
+                await self?.agentEnvironment(conversationID) ?? fallback
+            },
+            isAlwaysAllowed: { [weak self] name in
+                await self?.alwaysAllowedTools.contains(name) ?? false
+            },
+            requestApproval: { [weak self] request in
+                await self?.awaitApproval(request) ?? .deny
+            },
+            willRun: { [weak self] call in
+                await self?.markToolRunning(call.id)
+            },
+            didRun: { [weak self] call, execution in
+                await self?.recordToolResult(call, execution, conversationID: conversationID)
+            },
+            hooks: toolHooks
+        )
+        let ending = await AgentLoop().run(host)
+        if ending == .turnLimit, let id = progress.lastAssistantID {
+            updateMessage(conversationID: conversationID, messageID: id) { message in
+                message.errorText = "已达到每条消息 \(AgentLoop.maxModelTurns) 轮模型调用的上限，已停止。发送新消息可以让它继续。"
+            }
+        }
+        finishReply(conversationID: conversationID, answered: ending == .answered)
+    }
+
+    private func agentModelTurn(_ turn: Int, conversationID: UUID, progress: ReplyProgress) async -> AgentLoop.TurnOutcome {
+        let prepared: PreparedTurn
+        if let first = progress.first {
+            prepared = first
+            progress.first = nil
+        } else {
+            guard !Task.isCancelled else { return .stopped }
+            let registry = await toolRegistry(for: conversationID)
+            guard !Task.isCancelled, let next = prepareTurn(conversationID: conversationID, registry: registry) else { return .stopped }
+            prepared = next
+        }
+        progress.lastAssistantID = prepared.assistantID
+        let report = await runStream(
+            adapter: prepared.adapter, request: prepared.request,
+            conversationID: conversationID, assistantID: prepared.assistantID
+        )
+        let calls = conversation(conversationID)?.messages.first { $0.id == prepared.assistantID }?.parts.compactMap { part -> ToolCall? in
+            if case .toolCall(let call) = part { call } else { nil }
+        } ?? []
+        // Calls that will never run still get a result, so no row spins forever.
+        let unrun: String?
+        if report.cancelled {
+            unrun = AgentLoop.stoppedText
+        } else if report.failure != nil {
+            unrun = "回复中断，这次调用没有执行"
+        } else if prepared.registry.isEmpty {
+            unrun = "本对话没有提供工具，这次调用没有执行"
+        } else {
+            unrun = nil
+        }
+        if let unrun {
+            for call in calls { recordToolResult(call, AgentLoop.failure(call, unrun), conversationID: conversationID) }
+        }
+        guard report.failure == nil, !report.cancelled else { return .stopped }
+        return .finished(calls: calls, registry: prepared.registry)
+    }
+
+    private func agentEnvironment(_ conversationID: UUID) -> AgentLoop.Environment {
+        AgentLoop.Environment(mode: permissionMode(for: conversationID), context: toolContext(for: conversationID))
+    }
+
+    /// Shows the card and waits for `resolveApproval`. Cancelling the reply
+    /// answers it as a refusal.
+    private func awaitApproval(_ request: ToolApprovalRequest) async -> ToolApprovalDecision {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<ToolApprovalDecision, Never>) in
+                if Task.isCancelled {
+                    continuation.resume(returning: .deny)
+                    return
+                }
+                approvalWaiters[request.id] = continuation
+                pendingApprovals.append(request)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.resolveApproval(request.id, .deny) }
+        }
+    }
+
+    private func markToolRunning(_ callID: String) {
+        runningToolCallIDs.insert(callID)
+    }
+
+    /// Puts a call's result beside the call, in the assistant message that
+    /// made it: `MessageRow`'s activity rows, file-change cards and the relay
+    /// snapshot pair calls with results inside one message, and the wire
+    /// encoders turn the pair into `tool_calls` + `tool` messages. Returned
+    /// images are stored in the media library and ride in `result.media`.
+    private func recordToolResult(_ call: ToolCall, _ execution: AgentLoop.Execution, conversationID: UUID) {
+        runningToolCallIDs.remove(call.id)
+        var result = execution.result
+        for image in execution.images {
+            let subtype = image.mimeType.split(separator: "/").last.map(String.init) ?? "png"
+            do {
+                result.media.append(try mediaLibrary.write(
+                    data: image.data, fileExtension: subtype == "jpeg" ? "jpg" : subtype,
+                    kind: .image, mimeType: image.mimeType
+                ))
+            } catch {
+                DiagnosticsCenter.shared.record("agent", .error, "tool image save failed",
+                    fields: ["tool": call.name, "error": error.localizedDescription])
+            }
+        }
+        guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }),
+              let messageIndex = conversations[conversationIndex].messages.lastIndex(where: { message in
+                  message.role == .assistant && message.parts.contains { part in
+                      if case .toolCall(let candidate) = part { candidate.id == call.id } else { false }
+                  }
+              }) else { return }
+        conversations[conversationIndex].messages[messageIndex].parts.append(.toolResult(result))
+        conversations[conversationIndex].updatedAt = Date()
+        persist(conversations[conversationIndex])
+    }
+
     // MARK: - Side chat
 
     /// Side-chat messages per thread (Codex `thread.sidePanel` Side chat).
@@ -1964,6 +2312,389 @@ public final class ChatAppModel {
     private func updateSideChatMessage(_ threadID: UUID, _ messageID: UUID, _ change: (inout ChatMessage) -> Void) {
         guard let index = sideChats[threadID]?.firstIndex(where: { $0.id == messageID }) else { return }
         change(&sideChats[threadID]![index])
+    }
+
+    // MARK: - Plugins
+
+    /// Installed Codex plugins. Tests replace it with a store over a
+    /// temporary folder, then call `reloadPlugins()`.
+    @ObservationIgnored public var pluginStore = PluginStore(root: PluginStore.defaultRoot())
+    /// Home whose `.agents/skills` holds the user's skills (Codex USER
+    /// scope). Tests point it at a temporary folder; nil reads none.
+    @ObservationIgnored public var skillsHome: String? = HostExecutor.realHomeDirectory()
+    /// Installed plugins as of the last `reloadPlugins()`.
+    public private(set) var installedPlugins: [InstalledPlugin] = []
+    /// Bundled servers of enabled plugins (ids `<plugin>-<server>`, origin
+    /// `plugin:<id>`), for the MCP manager to merge with its own.
+    public private(set) var pluginMCPServers: [MCPServerConfig] = []
+    /// Folders `read_file` may read without asking: enabled plugins and the
+    /// user's skill folders. Also registered as the "plugins" readable roots.
+    public private(set) var pluginReadableRoots: [String] = []
+    /// Bumped by every `reloadPlugins()`.
+    public private(set) var pluginsRevision = 0
+    /// The most recent hook runs, oldest first.
+    public private(set) var hookRunLog: [HookRunRecord] = []
+    public static let hookRunLogCapacity = 50
+    @ObservationIgnored private var activePluginHooks: [PluginHook] = []
+    /// PreToolUse `additionalContext` waiting for its call's result.
+    @ObservationIgnored private var pendingHookContext: [String: String] = [:]
+
+    /// Re-reads installed plugins and the user's skills, and passes what they
+    /// contribute on: MCP servers, readable folders and tool hooks.
+    public func reloadPlugins() {
+        let plugins = pluginStore.installed()
+        installedPlugins = plugins
+        pluginMCPServers = plugins.flatMap(\.activeMCPServers)
+        activePluginHooks = plugins.flatMap(\.activeHooks)
+        var roots = plugins.flatMap(\.activeReadableRoots)
+        for root in SkillCatalog.load(roots: baseSkillRoots(plugins)).readableRoots where !roots.contains(root) {
+            roots.append(root)
+        }
+        pluginReadableRoots = roots
+        setToolReadableRoots(roots, owner: "plugins")
+        installPluginToolHooks()
+        pluginsRevision += 1
+    }
+
+    /// User skills, then enabled plugins' skills: every thread sees these.
+    private func baseSkillRoots(_ plugins: [InstalledPlugin]) -> [SkillRoot] {
+        var roots: [SkillRoot] = []
+        if let home = skillsHome, let user = SkillCatalog.userRoot(home: home) { roots.append(user) }
+        return roots + plugins.flatMap(\.activeSkillRoots)
+    }
+
+    /// Skills available to a thread: its repository's `.agents/skills`
+    /// (nearest the working directory first), the user's, then plugins'.
+    /// Read from disk on each call, so edited skills show up at once.
+    public func skillCatalog(for conversationID: UUID?) -> SkillCatalog {
+        var roots: [SkillRoot] = []
+        if let id = conversationID, let directory = conversation(id)?.workingDirectory, !directory.isEmpty {
+            roots += SkillCatalog.repositoryRoots(workingDirectory: directory)
+        }
+        return SkillCatalog.load(roots: roots + baseSkillRoots(installedPlugins))
+    }
+
+    /// The system prompt's skills list, within 2% of the model's context
+    /// window (8,000 characters when unknown). Nil when the thread is not
+    /// offered the built-in tools, since the model reads a skill with
+    /// `read_file`.
+    public func skillPromptSection(for conversationID: UUID) -> String? {
+        guard let conversation = conversation(conversationID), toolsEnabled(for: conversationID),
+              toolProviders[BuiltinToolProvider.providerID] != nil else { return nil }
+        let modelID = conversation.modelID ?? settings.defaultModelID
+        let window = models.first { $0.id == modelID }?.limits.contextWindow
+        return skillCatalog(for: conversationID).promptSection(budget: .forContextWindow(window))
+    }
+
+    /// Folders `read_file` may read for this thread: `pluginReadableRoots`
+    /// plus its repository skill folders, which can sit above the working
+    /// directory.
+    public func readableRoots(for conversationID: UUID) -> [String] {
+        var roots = pluginReadableRoots
+        for root in skillCatalog(for: conversationID).readableRoots where !roots.contains(root) {
+            roots.append(root)
+        }
+        return roots
+    }
+
+    /// The thread's AGENTS.md instructions and the files they came from,
+    /// root → leaf. Nil without a working directory or any non-empty file.
+    public func agentsDocPrompt(for conversationID: UUID) -> (text: String, files: [String])? {
+        guard let directory = conversation(conversationID)?.workingDirectory, !directory.isEmpty,
+              let doc = AgentsMDLoader.load(workingDirectory: directory) else { return nil }
+        let text = """
+        ## 项目说明（AGENTS.md）
+        以下内容来自从仓库根目录到工作目录的 AGENTS.md 文件，按这个顺序排列：越靠后的离工作目录越近，冲突时以靠后的为准。
+
+        \(doc.text)
+        """
+        return (text, doc.files)
+    }
+
+    // Install, switches and uninstall. Each reloads on success.
+
+    public func preparePluginInstall(folder: String) throws -> PluginInstallPlan {
+        try pluginStore.prepareInstall(folder: folder)
+    }
+
+    public func preparePluginInstall(gitURL: String, ref: String?, subdirectory: String?) async throws -> PluginInstallPlan {
+        let store = pluginStore
+        return try await store.prepareInstall(gitURL: gitURL, ref: ref, subdirectory: subdirectory, runner: Self.pluginCommandRunner)
+    }
+
+    /// Installs a plan the user confirmed. Its hooks stay off until trusted.
+    public func confirmPluginInstall(_ plan: PluginInstallPlan) throws {
+        try pluginStore.commitInstall(plan)
+        reloadPlugins()
+    }
+
+    public func cancelPluginInstall(_ plan: PluginInstallPlan) {
+        pluginStore.discardInstall(plan)
+    }
+
+    public func uninstallPlugin(_ id: String) throws {
+        try pluginStore.uninstall(id: id)
+        reloadPlugins()
+    }
+
+    public func setPluginEnabled(_ enabled: Bool, id: String) throws {
+        try pluginStore.setEnabled(enabled, id: id)
+        reloadPlugins()
+    }
+
+    /// 「信任此插件的钩子」: trusts the plugin's current hook definitions.
+    public func setPluginHooksTrusted(_ trusted: Bool, id: String) throws {
+        try pluginStore.setHooksTrusted(trusted, id: id)
+        reloadPlugins()
+    }
+
+    public func setPluginMCPServerEnabled(_ enabled: Bool, server: String, pluginID: String) throws {
+        try pluginStore.setMCPServerEnabled(enabled, server: server, pluginID: pluginID)
+        reloadPlugins()
+    }
+
+    /// Runs the trusted hooks of enabled plugins for one tool call, with
+    /// Codex's names: `shell` is `Bash`, `write_file` / `edit_file` are
+    /// `apply_patch` (matchers `Edit` and `Write` too), MCP tools are
+    /// `mcp__<server>__<tool>`. Other tools have no hooks, as in Codex.
+    public func runToolHooks(
+        event: HookEvent, toolName: String, argumentsJSON: String, conversationID: UUID,
+        callID: String = "", toolResponse: String? = nil
+    ) async -> HookOutcome {
+        let proceed = HookOutcome.allow(context: nil, updatedArgumentsJSON: nil)
+        guard event.isTriggered, !activePluginHooks.isEmpty,
+              let call = hookToolCall(name: toolName, argumentsJSON: argumentsJSON, callID: callID, toolResponse: toolResponse) else { return proceed }
+        let selected = HookRunner.matching(activePluginHooks, event: event, call: call)
+        guard !selected.isEmpty else { return proceed }
+        for folder in Set(selected.map(\.pluginData)) {
+            try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        let report = await HookRunner(runner: Self.pluginCommandRunner)
+            .run(event, call: call, session: hookSession(conversationID: conversationID, callID: callID), hooks: selected)
+        hookRunLog.append(contentsOf: report.records)
+        if hookRunLog.count > Self.hookRunLogCapacity { hookRunLog.removeFirst(hookRunLog.count - Self.hookRunLogCapacity) }
+        for message in report.systemMessages {
+            DiagnosticsCenter.shared.record("plugins", .warn, message, fields: ["tool": call.toolName, "event": event.rawValue])
+        }
+        // Codex reports a failed hook and carries on; so does this.
+        for record in report.records where record.status == .failed {
+            DiagnosticsCenter.shared.record("plugins", .warn, "hook failed",
+                fields: ["plugin": record.pluginID, "event": event.rawValue, "tool": call.toolName, "error": record.message ?? ""])
+        }
+        let context = report.additionalContext.isEmpty ? nil : report.additionalContext.joined(separator: "\n\n")
+        switch event {
+        case .preToolUse:
+            if let reason = report.blockReason { return .block(reason) }
+            guard let updated = report.updatedInputJSON else { return .allow(context: context, updatedArgumentsJSON: nil) }
+            switch call.kind {
+            case .applyPatch:
+                return .block("插件钩子要求改写这次文件修改（apply_patch 的 updatedInput）；本应用不能按补丁改写文件修改，所以没有执行。")
+            case .bash:
+                return .allow(context: context, updatedArgumentsJSON: Self.merging(updated, over: argumentsJSON))
+            case .mcp:
+                return .allow(context: context, updatedArgumentsJSON: updated)
+            }
+        case .permissionRequest:
+            switch report.permission {
+            case .deny(let message)?: return .block(message)
+            case .allow?: return .approve
+            case nil: return proceed
+            }
+        default:
+            if let feedback = report.feedback { return .block(feedback) }
+            return .allow(context: context, updatedArgumentsJSON: nil)
+        }
+    }
+
+    /// Wires `runToolHooks` into the agent loop; no hooks, no wiring.
+    private func installPluginToolHooks() {
+        guard !activePluginHooks.isEmpty else {
+            setToolHooks(nil)
+            return
+        }
+        setToolHooks(AgentToolHooks(
+            preToolUse: { [weak self] call, _, context in
+                guard let self else { return .proceed }
+                switch await self.runToolHooks(event: .preToolUse, toolName: call.name, argumentsJSON: call.argumentsJSON, conversationID: context.conversationID, callID: call.id) {
+                case .block(let reason):
+                    return .block(reason)
+                case .allow(let note, let updated):
+                    if let note { await self.stashHookContext(note, for: call.id) }
+                    return updated.map { .rewrite(argumentsJSON: $0) } ?? .proceed
+                case .approve:
+                    return .proceed
+                }
+            },
+            permissionRequest: { [weak self] call, _, context in
+                guard let self else { return .undecided }
+                switch await self.runToolHooks(event: .permissionRequest, toolName: call.name, argumentsJSON: call.argumentsJSON, conversationID: context.conversationID, callID: call.id) {
+                case .approve: return .allow
+                case .block(let message): return .deny(message)
+                case .allow: return .undecided
+                }
+            },
+            postToolUse: { [weak self] call, _, result, context in
+                guard let self else { return .keep }
+                let earlier = await self.takeHookContext(for: call.id)
+                switch await self.runToolHooks(
+                    event: .postToolUse, toolName: call.name, argumentsJSON: call.argumentsJSON,
+                    conversationID: context.conversationID, callID: call.id, toolResponse: result.outputText
+                ) {
+                case .block(let feedback):
+                    return .replace(feedback)
+                case .allow(let note, _):
+                    let notes = [earlier, note].compactMap { $0 }
+                    return notes.isEmpty ? .keep : .append(notes.joined(separator: "\n\n"))
+                case .approve:
+                    return .keep
+                }
+            }
+        ))
+    }
+
+    private func stashHookContext(_ note: String, for callID: String) {
+        // Entries of calls the policy refused are never taken; keep it small.
+        if pendingHookContext.count > 100 { pendingHookContext.removeAll() }
+        pendingHookContext[callID] = note
+    }
+
+    private func takeHookContext(for callID: String) -> String? {
+        pendingHookContext.removeValue(forKey: callID)
+    }
+
+    /// The call as Codex hooks name it, or nil for a tool Codex does not hook.
+    private func hookToolCall(name: String, argumentsJSON: String, callID: String, toolResponse: String?) -> HookToolCall? {
+        let response = toolResponse.map(Self.jsonString)
+        if let mcp = toolProviders["mcp"] as? MCPToolProvider, let target = mcp.target(forWireName: name) {
+            // A plugin's server keeps the name from its own config, so the
+            // plugin's matchers (`mcp__docs__.*`) still match.
+            let server = pluginMCPServers.first { $0.id == target.serverID }?.name ?? target.serverID
+            return HookToolCall(kind: .mcp, toolName: "mcp__\(server)__\(target.tool)", toolInputJSON: argumentsJSON, toolUseID: callID, toolResponseJSON: response)
+        }
+        switch name {
+        case "shell":
+            return HookToolCall(kind: .bash, toolName: "Bash", toolInputJSON: argumentsJSON, toolUseID: callID, toolResponseJSON: response)
+        case "write_file", "edit_file":
+            return HookToolCall(kind: .applyPatch, toolName: "apply_patch", toolInputJSON: Self.applyPatchInput(tool: name, argumentsJSON: argumentsJSON), toolUseID: callID, toolResponseJSON: response)
+        default:
+            return nil
+        }
+    }
+
+    private func hookSession(conversationID: UUID, callID: String) -> HookSession {
+        let conversation = conversation(conversationID)
+        // The turn is the assistant message that made the call.
+        let turn = conversation?.messages.last { message in
+            message.role == .assistant && message.parts.contains { part in
+                if case .toolCall(let candidate) = part { candidate.id == callID } else { false }
+            }
+        }?.id ?? conversation?.messages.last { $0.role == .assistant }?.id
+        let directory = conversation?.workingDirectory.flatMap { $0.isEmpty ? nil : $0 } ?? HostExecutor.realHomeDirectory()
+        return HookSession(
+            sessionID: conversationID.uuidString,
+            turnID: turn?.uuidString ?? "",
+            cwd: directory,
+            model: conversation?.modelID ?? settings.defaultModelID ?? "",
+            permissionMode: HookSession.codexPermissionMode(permissionMode(for: conversationID))
+        )
+    }
+
+    /// Codex's `apply_patch` input: the edit as a patch in `command`, with
+    /// the built-in tool's own arguments alongside.
+    nonisolated static func applyPatchInput(tool: String, argumentsJSON: String) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+              var arguments = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let path = arguments["path"] as? String else { return argumentsJSON }
+        func lines(_ text: String, _ prefix: String) -> String {
+            text.split(separator: "\n", omittingEmptySubsequences: false).map { prefix + $0 }.joined(separator: "\n")
+        }
+        var patch = "*** Begin Patch\n"
+        if tool == "write_file" {
+            patch += "*** Add File: \(path)\n" + lines(arguments["content"] as? String ?? "", "+") + "\n"
+        } else {
+            patch += "*** Update File: \(path)\n@@\n"
+                + lines(arguments["old_string"] as? String ?? "", "-") + "\n"
+                + lines(arguments["new_string"] as? String ?? "", "+") + "\n"
+        }
+        patch += "*** End Patch"
+        arguments["command"] = patch
+        guard let encoded = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]) else { return argumentsJSON }
+        return String(decoding: encoded, as: UTF8.self)
+    }
+
+    /// `replacement`'s keys over `original`'s: a Bash `updatedInput` sets
+    /// `command` and keeps the call's other arguments, such as its timeout.
+    nonisolated static func merging(_ replacement: String, over original: String) -> String {
+        guard let new = replacement.data(using: .utf8).flatMap({ (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }) else { return replacement }
+        var merged = original.data(using: .utf8).flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
+        merged.merge(new) { $1 }
+        guard let data = try? JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys]) else { return replacement }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    nonisolated private static func jsonString(_ text: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]) else { return "null" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Runs plugin commands (hooks, `git clone`) through `HostExecutor`.
+    nonisolated static let pluginCommandRunner: PluginCommandRunner = { command in
+        #if os(macOS)
+        let run = await HostExecutor.runCommand(
+            command.command, cwd: command.cwd, stdin: command.stdin, timeout: command.timeout,
+            loginShell: command.loginShell, extraEnvironment: command.environment
+        )
+        return PluginCommandResult(
+            exitCode: run.exitCode, stdout: run.stdout, stderr: run.stderr, timedOut: run.timedOut,
+            launchError: run.launchError ?? (run.cancelled ? "已取消" : nil)
+        )
+        #else
+        return PluginCommandResult(exitCode: -1, launchError: "iPhone 上不能运行插件命令")
+        #endif
+    }
+
+    // MARK: - MCP
+
+    #if os(macOS)
+    @ObservationIgnored private var mcpManagerStorage: MCPManager?
+
+    /// The MCP servers of 设置 → MCP 服务器, connected and offered to the agent
+    /// as the "mcp" tool provider. Created on first use; `startMCP()` connects.
+    public var mcp: MCPManager {
+        if let existing = mcpManagerStorage { return existing }
+        let manager = MCPManager(model: self)
+        mcpManagerStorage = manager
+        return manager
+    }
+
+    /// Connects the enabled MCP servers and keeps them in step with settings.
+    /// Call once after `bootstrap()`; later calls do nothing.
+    public func startMCP() {
+        mcp.start()
+    }
+    #endif
+
+    /// A secret environment value of an MCP server, from the vault.
+    func mcpSecret(serverID: String, variable: String) -> String? {
+        let account = MCPServerConfig.vaultAccount(serverID: serverID, variable: variable)
+        guard let value = (try? secrets.secret(for: account)) ?? nil, !value.isEmpty else { return nil }
+        return value
+    }
+
+    /// Stores (nil or blank: removes) a secret environment value of an MCP
+    /// server. False when the vault refused the write.
+    @discardableResult
+    func setMCPSecret(_ value: String?, serverID: String, variable: String) -> Bool {
+        let account = MCPServerConfig.vaultAccount(serverID: serverID, variable: variable)
+        let stored = value.flatMap { $0.isEmpty ? nil : $0 }
+        do {
+            try secrets.setSecret(stored, for: account)
+            return true
+        } catch {
+            DiagnosticsCenter.shared.record("mcp", .error, "secret write failed",
+                fields: ["server": serverID, "error": error.localizedDescription])
+            return false
+        }
     }
 }
 

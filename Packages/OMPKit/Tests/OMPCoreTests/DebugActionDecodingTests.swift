@@ -209,6 +209,43 @@ final class DebugActionDecodingTests: XCTestCase {
         XCTAssertNil(decode(#"{"action":"git"}"#))
     }
 
+    func testMCPActions() {
+        XCTAssertEqual(
+            decode(#"{"action":"mcpInstall","entryID":"filesystem","values":{"directories":["/tmp/a","/tmp/b"]}}"#),
+            .mcpInstall(entryID: "filesystem", values: ["directories": ["/tmp/a", "/tmp/b"]])
+        )
+        XCTAssertEqual(decode(#"{"action":"mcpInstall","entryID":"git"}"#), .mcpInstall(entryID: "git", values: [:]),
+                       "没有必填项的条目可以不带 values")
+        XCTAssertNil(decode(#"{"action":"mcpInstall"}"#))
+        XCTAssertNil(decode(#"{"action":"mcpInstall","entryID":"fs","values":{"directories":"/tmp/a"}}"#),
+                     "答案必须是字符串数组，单个字符串不能被当成空答案")
+        XCTAssertNil(decode(#"{"action":"mcpInstall","entryID":"fs","values":{"directories":["/tmp",1]}}"#))
+        XCTAssertNil(decode(#"{"action":"mcpInstall","entryID":"fs","values":["/tmp"]}"#))
+        XCTAssertEqual(decode(#"{"action":"mcpRemove","serverID":"filesystem"}"#), .mcpRemove(serverID: "filesystem"))
+        XCTAssertNil(decode(#"{"action":"mcpRemove"}"#))
+    }
+
+    func testAgentActions() {
+        XCTAssertEqual(decode(#"{"action":"send","text":"跑一下测试"}"#), .send(conversationID: nil, text: "跑一下测试"))
+        XCTAssertNil(decode(#"{"action":"send"}"#), "text 必填")
+        XCTAssertEqual(decode(#"{"action":"stop"}"#), .stop)
+        XCTAssertEqual(
+            decode(#"{"action":"approve","approvalID":"a1","decision":"allowAlways"}"#),
+            .approve(approvalID: "a1", decision: .allowAlways)
+        )
+        XCTAssertNil(decode(#"{"action":"approve","approvalID":"a1","decision":"yes"}"#), "未知决定不能当成允许")
+        XCTAssertNil(decode(#"{"action":"approve","decision":"deny"}"#))
+        XCTAssertEqual(decode(#"{"action":"setPermissionMode","mode":"readOnly"}"#),
+                       .setPermissionMode(conversationID: nil, mode: .readOnly))
+        XCTAssertEqual(decode(#"{"action":"setPermissionMode","mode":null}"#),
+                       .setPermissionMode(conversationID: nil, mode: nil), "null 表示跟随默认")
+        XCTAssertNil(decode(#"{"action":"setPermissionMode","mode":"yolo"}"#), "未知模式不能悄悄退回默认")
+        XCTAssertEqual(decode(#"{"action":"setToolsEnabled","enabled":false,"conversationID":"c"}"#),
+                       .setToolsEnabled(conversationID: "c", enabled: false))
+        XCTAssertEqual(decode(#"{"action":"setToolsEnabled"}"#), .setToolsEnabled(conversationID: nil, enabled: nil))
+        XCTAssertNil(decode(#"{"action":"setToolsEnabled","enabled":"true"}"#), "字符串不是布尔值")
+    }
+
     func testOpenLinkAndDeleteNeedTheirField() {
         XCTAssertEqual(decode(#"{"action":"openLink","url":"ompchat://thread/x"}"#), .openLink(url: "ompchat://thread/x"))
         XCTAssertNil(decode(#"{"action":"openLink"}"#))
@@ -249,6 +286,13 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"browserSelectTab","tabID":"x"}"#,
             #"{"action":"browserNavigate","tabID":"x","url":"https://x"}"#,
             #"{"action":"git","op":"push"}"#,
+            #"{"action":"send","text":"x"}"#,
+            #"{"action":"stop"}"#,
+            #"{"action":"approve","approvalID":"x","decision":"deny"}"#,
+            #"{"action":"setPermissionMode","mode":"ask"}"#,
+            #"{"action":"setToolsEnabled","enabled":true}"#,
+            #"{"action":"mcpInstall","entryID":"x"}"#,
+            #"{"action":"mcpRemove","serverID":"x"}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)

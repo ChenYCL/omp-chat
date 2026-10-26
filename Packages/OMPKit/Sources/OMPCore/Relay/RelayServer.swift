@@ -148,6 +148,20 @@ public enum DebugAction: Sendable, Equatable {
     case browserNavigate(tabID: String, url: String)
     /// 改动 tab write, in the thread's working directory.
     case git(conversationID: String?, operation: DebugGitOperation)
+    /// Send a user message in a conversation (the composer's send button).
+    case send(conversationID: String?, text: String)
+    /// Stop the reply, the running tool and every pending approval (⌘.).
+    case stop
+    /// Answer one approval card.
+    case approve(approvalID: String, decision: ToolApprovalDecision)
+    /// Permission mode for a thread; nil follows the settings default.
+    case setPermissionMode(conversationID: String?, mode: PermissionMode?)
+    /// Tools on/off for a thread; nil follows its working directory.
+    case setToolsEnabled(conversationID: String?, enabled: Bool?)
+    /// 设置 → MCP 服务器 → 目录 → 安装: the entry's answers by input id.
+    case mcpInstall(entryID: String, values: [String: [String]])
+    /// Remove a server from settings (and its vault secrets).
+    case mcpRemove(serverID: String)
 
     /// The wire name of the action.
     public var name: String {
@@ -178,6 +192,13 @@ public enum DebugAction: Sendable, Equatable {
         case .browserSelectTab: "browserSelectTab"
         case .browserNavigate: "browserNavigate"
         case .git: "git"
+        case .send: "send"
+        case .stop: "stop"
+        case .approve: "approve"
+        case .setPermissionMode: "setPermissionMode"
+        case .setToolsEnabled: "setToolsEnabled"
+        case .mcpInstall: "mcpInstall"
+        case .mcpRemove: "mcpRemove"
         }
     }
 
@@ -336,6 +357,55 @@ public enum DebugAction: Sendable, Equatable {
             default: return nil
             }
             return .git(conversationID: id, operation: operation)
+        case "send":
+            guard let id = optionalString("conversationID"), let text = fields["text"] as? String else { return nil }
+            return .send(conversationID: id, text: text)
+        case "stop":
+            return .stop
+        case "approve":
+            guard let id = fields["approvalID"] as? String,
+                  let raw = fields["decision"] as? String,
+                  let decision = ToolApprovalDecision(rawValue: raw) else { return nil }
+            return .approve(approvalID: id, decision: decision)
+        case "setPermissionMode":
+            guard let id = optionalString("conversationID") else { return nil }
+            // Absent or null follows the default; an unknown mode is an error,
+            // not a silent fallback.
+            switch fields["mode"] {
+            case nil, is NSNull:
+                return .setPermissionMode(conversationID: id, mode: nil)
+            case let raw as String:
+                guard let mode = PermissionMode(rawValue: raw) else { return nil }
+                return .setPermissionMode(conversationID: id, mode: mode)
+            default:
+                return nil
+            }
+        case "setToolsEnabled":
+            guard let id = optionalString("conversationID") else { return nil }
+            switch fields["enabled"] {
+            case nil, is NSNull:
+                return .setToolsEnabled(conversationID: id, enabled: nil)
+            case let flag as Bool:
+                return .setToolsEnabled(conversationID: id, enabled: flag)
+            default:
+                return nil
+            }
+        case "mcpInstall":
+            guard let entry = fields["entryID"] as? String else { return nil }
+            var values: [String: [String]] = [:]
+            if let raw = fields["values"] {
+                // Every answer is a list of strings; anything else is a
+                // caller error rather than an empty answer.
+                guard let table = raw as? [String: Any] else { return nil }
+                for (key, value) in table {
+                    guard let list = value as? [Any], list.allSatisfy({ $0 is String }) else { return nil }
+                    values[key] = list.compactMap { $0 as? String }
+                }
+            }
+            return .mcpInstall(entryID: entry, values: values)
+        case "mcpRemove":
+            guard let id = fields["serverID"] as? String else { return nil }
+            return .mcpRemove(serverID: id)
         default:
             return nil
         }

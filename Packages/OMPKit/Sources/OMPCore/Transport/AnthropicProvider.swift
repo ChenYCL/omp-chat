@@ -55,7 +55,10 @@ public struct AnthropicProvider: ChatProvider {
                     let urlRequest = try makeRequest(request)
                     let stream = try await transport.stream(urlRequest)
                     var parser = SSEParser()
-                    var blockKinds: [Int: String] = [:]
+                    // Content-block index → position among this turn's tool calls.
+                    // Text and thinking blocks share the block index space, and
+                    // `ChatMessage.apply` expects tool calls numbered from 0.
+                    var toolOrdinals: [Int: Int] = [:]
                     var usage = TokenUsage()
                     var stopReason: FinishReason = .stop
 
@@ -70,15 +73,17 @@ public struct AnthropicProvider: ChatProvider {
                                 }
                             case "content_block_start":
                                 if let index = payload.index, let block = payload.contentBlock {
-                                    blockKinds[index] = block.type
+                                    if block.type == "tool_use", toolOrdinals[index] == nil {
+                                        toolOrdinals[index] = toolOrdinals.count
+                                    }
                                     if block.type == "text", let text = block.text, !text.isEmpty {
                                         continuation.yield(.textDelta(text))
                                     }
                                     if block.type == "thinking", let thinking = block.thinking, !thinking.isEmpty {
                                         continuation.yield(.thinkingDelta(thinking))
                                     }
-                                    if block.type == "tool_use", let name = block.name, let id = block.id {
-                                        continuation.yield(.toolCallDelta(index: index, id: id, name: name, argumentsDelta: nil))
+                                    if block.type == "tool_use", let name = block.name, let id = block.id, let ordinal = toolOrdinals[index] {
+                                        continuation.yield(.toolCallDelta(index: ordinal, id: id, name: name, argumentsDelta: nil))
                                     }
                                 }
                             case "content_block_delta":
@@ -87,8 +92,8 @@ public struct AnthropicProvider: ChatProvider {
                                         continuation.yield(.textDelta(text))
                                     } else if let thinking = delta.thinking, !thinking.isEmpty {
                                         continuation.yield(.thinkingDelta(thinking))
-                                    } else if let partial = delta.partialJSON, let index = payload.index {
-                                        continuation.yield(.toolCallDelta(index: index, id: nil, name: nil, argumentsDelta: partial))
+                                    } else if let partial = delta.partialJSON, let index = payload.index, let ordinal = toolOrdinals[index] {
+                                        continuation.yield(.toolCallDelta(index: ordinal, id: nil, name: nil, argumentsDelta: partial))
                                     }
                                 }
                             case "message_delta":
@@ -229,6 +234,15 @@ struct AnthropicRequestBuilder {
             var id: String?
             var name: String?
             var input: JSONValue?
+            var toolUseID: String?
+            var content: [Block]?
+            var isError: Bool?
+
+            enum CodingKeys: String, CodingKey {
+                case type, text, source, id, name, input, content
+                case toolUseID = "tool_use_id"
+                case isError = "is_error"
+            }
         }
         struct ImageSource: Encodable {
             var type: String = "base64"
@@ -273,27 +287,71 @@ struct AnthropicRequestBuilder {
     }
 
     static func build(_ request: GenerationRequest, media: [UUID: MediaPayload] = [:]) -> Body {
-        let messages = request.messages
-            .filter { $0.role == .user || $0.role == .assistant }
-            .map { message -> Body.WireMessage in
-                let blocks = message.parts.compactMap { part -> Body.Block? in
-                    switch part {
-                    case .text(let value):
-                        return value.isEmpty ? nil : Body.Block(type: "text", text: value)
-                    case .thinking(let value):
-                        return value.isEmpty ? nil : Body.Block(type: "thinking", text: value)
-                    case .media(let ref):
-                        guard let payload = media[ref.id] else { return nil }
-                        return Body.Block(
-                            type: "image",
-                            source: .init(mediaType: payload.mimeType, data: payload.base64)
-                        )
-                    default:
-                        return nil
-                    }
-                }
-                return Body.WireMessage(role: message.role.rawValue, content: blocks)
+        let pairing = ToolCallPairing(request.messages)
+        var messages: [Body.WireMessage] = []
+        // Turns must alternate, and tool results ride in the user turn right
+        // after the assistant's `tool_use` blocks, so same-role neighbours merge.
+        func append(_ role: String, _ blocks: [Body.Block]) {
+            guard !blocks.isEmpty else { return }
+            if messages.last?.role == role {
+                messages[messages.count - 1].content += blocks
+            } else {
+                messages.append(Body.WireMessage(role: role, content: blocks))
             }
+        }
+        func imageBlock(_ ref: MediaRef) -> Body.Block? {
+            guard ref.kind == .image, let payload = media[ref.id] else { return nil }
+            return Body.Block(type: "image", source: .init(mediaType: payload.mimeType, data: payload.base64))
+        }
+        func resultBlocks(_ results: [ToolResult]) -> [Body.Block] {
+            results.map { result in
+                var content: [Body.Block] = []
+                if !result.outputText.isEmpty { content.append(Body.Block(type: "text", text: result.outputText)) }
+                content += result.media.compactMap(imageBlock)
+                return Body.Block(
+                    type: "tool_result",
+                    toolUseID: result.callID,
+                    content: content.isEmpty ? nil : content,
+                    isError: result.isError ? true : nil
+                )
+            }
+        }
+
+        for message in request.messages where message.role != .system {
+            let results = pairing.pairedResults(in: message)
+            if message.role == .tool {
+                append("user", resultBlocks(results))
+                continue
+            }
+            var blocks = message.parts.compactMap { part -> Body.Block? in
+                switch part {
+                case .text(let value):
+                    return value.isEmpty ? nil : Body.Block(type: "text", text: value)
+                case .thinking(let value):
+                    return value.isEmpty ? nil : Body.Block(type: "thinking", text: value)
+                case .media(let ref):
+                    guard let payload = media[ref.id] else { return nil }
+                    return Body.Block(
+                        type: "image",
+                        source: .init(mediaType: payload.mimeType, data: payload.base64)
+                    )
+                case .toolResult(let result) where !pairing.isPaired(result):
+                    // A result whose call is gone is kept as plain text.
+                    return result.outputText.isEmpty ? nil : Body.Block(type: "text", text: result.outputText)
+                default:
+                    return nil
+                }
+            }
+            blocks += pairing.pairedCalls(in: message).map { call in
+                let parsed = try? JSONDecoder().decode(JSONValue.self, from: Data(call.argumentsJSON.utf8))
+                let input: JSONValue
+                if case .object = parsed { input = parsed ?? .object([:]) } else { input = .object([:]) }
+                return Body.Block(type: "tool_use", id: call.id, name: call.name, input: input)
+            }
+            append(message.role.rawValue, blocks)
+            // The agent loop stores results beside their calls.
+            append("user", resultBlocks(results))
+        }
         let tools = request.tools.isEmpty ? nil : request.tools.map { spec in
             Body.Tool(
                 name: spec.name,

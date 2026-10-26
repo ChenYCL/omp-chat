@@ -188,7 +188,7 @@ public struct ComposerBar: View {
                         Label("对话设置", systemImage: "slider.horizontal.3")
                     }
                     Button { showMCPSheet = true } label: {
-                        Label("MCP 工具", systemImage: "powerplug")
+                        Label("本对话的工具", systemImage: "hammer")
                     }
                 }
                 Button {
@@ -214,6 +214,9 @@ public struct ComposerBar: View {
             formatPills
             blockFormatMenu
             modelPill
+            if let conversationID = model.selectedConversationID {
+                AgentModeMenu(conversationID: conversationID)
+            }
 
             Button {
                 showOptionsSheet = true
