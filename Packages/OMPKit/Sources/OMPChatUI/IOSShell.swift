@@ -956,10 +956,9 @@ struct ShellDrawer: View {
         if q.isEmpty {
             return Array(model.sortedConversations.filter { !shown.contains($0.id) }.prefix(20))
         }
-        return model.sortedConversations.filter {
-            !shown.contains($0.id)
-                && ($0.title.lowercased().contains(q) || $0.lastMessagePreview.lowercased().contains(q))
-        }
+        return ConversationSearch.filter(
+            model.sortedConversations.filter { !shown.contains($0.id) }, query: search
+        )
     }
 
     private func drawerItem(icon: String, title: String, badge: String? = nil) -> some View {

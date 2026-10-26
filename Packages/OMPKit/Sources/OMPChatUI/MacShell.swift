@@ -412,12 +412,7 @@ public struct MacShellSidebar: View {
     }
 
     private var filtered: [Conversation] {
-        let sorted = model.sortedConversations
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return sorted }
-        return sorted.filter {
-            $0.title.localizedCaseInsensitiveContains(query) || $0.lastMessagePreview.localizedCaseInsensitiveContains(query)
-        }
+        ConversationSearch.filter(model.sortedConversations, query: search)
     }
 
     // MARK: Sections

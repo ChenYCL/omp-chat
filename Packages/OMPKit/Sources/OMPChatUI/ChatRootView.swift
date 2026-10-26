@@ -774,13 +774,7 @@ public struct QuickSwitcherView: View {
     }
 
     private var matchingConversations: [Conversation] {
-        let all = model.sortedConversations
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return all }
-        return all.filter {
-            $0.title.localizedCaseInsensitiveContains(trimmed) ||
-            $0.lastMessagePreview.localizedCaseInsensitiveContains(trimmed)
-        }
+        ConversationSearch.filter(model.sortedConversations, query: query)
     }
 
     public var body: some View {

@@ -374,11 +374,7 @@ public struct PaseoSessionHistorySheet: View {
     }
 
     private var filtered: [Conversation] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if q.isEmpty { return model.sortedConversations }
-        return model.sortedConversations.filter {
-            $0.title.localizedCaseInsensitiveContains(q) || $0.lastMessagePreview.localizedCaseInsensitiveContains(q)
-        }
+        ConversationSearch.filter(model.sortedConversations, query: query)
     }
 
     public var body: some View {
