@@ -291,10 +291,19 @@ public struct ChatDetailView: View {
                         Label(conversation.isArchived ? "取消归档" : "归档对话", systemImage: "archivebox")
                     }
 
-                    Button {
-                        model.duplicateConversation(conversation.id)
+                    // Official threadHeader.forkActions, three modes.
+                    Menu {
+                        ForEach(ForkMode.allCases, id: \.rawValue) { mode in
+                            Button(mode.title) {
+                                Task {
+                                    if let failure = await model.forkConversation(conversation.id, mode: mode) {
+                                        model.showError("分叉失败：\(failure)")
+                                    }
+                                }
+                            }
+                        }
                     } label: {
-                        Label("复制为新分支", systemImage: "arrow.triangle.branch")
+                        Label("分叉对话", systemImage: "arrow.triangle.branch")
                     }
     Divider()
 

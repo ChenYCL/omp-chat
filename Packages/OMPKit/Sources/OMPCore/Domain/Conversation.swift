@@ -26,6 +26,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var sortIndex: Int? = nil
     /// Whether this conversation has an unread response from a background stream.
     public var hasUnread: Bool = false
+    /// Directory this thread works in (Official Codex `threadHeader.workingDirectory`).
+    /// Nil means "wherever the app is", which is what older documents mean.
+    public var workingDirectory: String?
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -41,7 +44,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isLocked: Bool = false,
         isTemporary: Bool = false,
         reasoningEffort: String? = nil,
-        hasUnread: Bool = false
+        hasUnread: Bool = false,
+        workingDirectory: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -58,6 +62,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.isTemporary = isTemporary
         self.reasoningEffort = reasoningEffort
         self.hasUnread = hasUnread
+        self.workingDirectory = workingDirectory
     }
 
     public init(from decoder: Decoder) throws {
@@ -79,6 +84,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         alternativeReplies = try container.decodeIfPresent([ChatMessage].self, forKey: .alternativeReplies) ?? []
         sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex)
         hasUnread = (try? container.decodeIfPresent(Bool.self, forKey: .hasUnread)) ?? false
+        workingDirectory = try? container.decodeIfPresent(String.self, forKey: .workingDirectory)
     }
 
 

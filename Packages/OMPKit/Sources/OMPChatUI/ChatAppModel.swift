@@ -270,6 +270,65 @@ public final class ChatAppModel {
         return copy
     }
 
+    /// Official Codex `forkActions`. `local` copies the chat unbound, `sameWorktree`
+    /// keeps the directory, and `worktree` creates a real `git worktree` beside
+    /// the repository and binds the copy to it.
+    @discardableResult
+    public func forkConversation(_ id: UUID, mode: ForkMode) async -> String? {
+        guard let original = conversation(id) else { return "找不到这个对话" }
+        guard let copy = duplicateConversation(id) else { return nil }
+        switch mode {
+        case .local:
+            // A plain copy keeps nothing of the original's binding.
+            updateWorkingDirectory(copy.id, nil)
+            return nil
+        case .sameWorktree:
+            updateWorkingDirectory(copy.id, original.workingDirectory)
+            return nil
+        case .worktree:
+            // `Process` does not exist on iOS, and a phone has no repository to
+            // fork anyway: say so instead of pretending the fork happened.
+            #if os(iOS)
+            return "新建 Worktree 只能在 Mac 上做"
+            #else
+                let repository = original.workingDirectory ?? FileManager.default.currentDirectoryPath
+                guard let git = GitBinary.resolve() else { return "这台 Mac 上没有可用的 git" }
+                let plan = WorktreeFork.plan(title: original.title, id: copy.id, repository: repository)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: git)
+                process.arguments = plan.arguments
+                process.currentDirectoryURL = URL(fileURLWithPath: repository)
+                let pipe = Pipe()
+                process.standardError = pipe
+                process.standardOutput = Pipe()
+                do { try process.run() } catch { return error.localizedDescription }
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else {
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // The copy is already made; say why the checkout failed rather
+                    // than leaving a fork that silently points nowhere.
+                    return text.isEmpty ? "git worktree add 失败（退出码 \(process.terminationStatus)）" : text
+                }
+                updateWorkingDirectory(copy.id, plan.path)
+                return nil
+            #endif
+        }
+    }
+
+    /// Surfaces a message in the app's error banner.
+    public func showError(_ message: String) {
+        errorMessage = message
+    }
+
+    /// Binds a thread to a directory, or unbinds it with nil.
+    public func updateWorkingDirectory(_ id: UUID, _ directory: String?) {
+        guard var conversation = conversation(id) else { return }
+        conversation.workingDirectory = directory
+        replace(conversation)
+        persist(conversation)
+    }
+
     public func deleteConversation(_ id: UUID) {
         conversations.removeAll { $0.id == id }
         Task { try? await store.delete(id: id) }
