@@ -29,6 +29,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// Directory this thread works in (Official Codex `threadHeader.workingDirectory`).
     /// Nil means "wherever the app is", which is what older documents mean.
     public var workingDirectory: String?
+    /// What this thread is trying to achieve (Official Codex
+    /// `composer.threadGoal`). Nil means no goal; older documents have none.
+    public var goal: String?
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -45,7 +48,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isTemporary: Bool = false,
         reasoningEffort: String? = nil,
         hasUnread: Bool = false,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        goal: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -63,6 +67,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.hasUnread = hasUnread
         self.workingDirectory = workingDirectory
+        self.goal = goal
     }
 
     public init(from decoder: Decoder) throws {
@@ -85,6 +90,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex)
         hasUnread = (try? container.decodeIfPresent(Bool.self, forKey: .hasUnread)) ?? false
         workingDirectory = try? container.decodeIfPresent(String.self, forKey: .workingDirectory)
+        goal = try? container.decodeIfPresent(String.self, forKey: .goal)
     }
 
 

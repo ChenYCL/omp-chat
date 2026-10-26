@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, dataControls, remoteControl, diagnostics, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, remoteControl, diagnostics, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -29,6 +29,7 @@ public struct ProviderSettingsView: View {
             case .archived: "已归档的聊天"
             case .shortcuts: "键盘快捷键"
             case .sorting: "会话排序"
+            case .git: "Git"
             case .dataControls: "数据控制"
             case .remoteControl: "远程控制"
             case .diagnostics: "诊断"
@@ -46,6 +47,7 @@ public struct ProviderSettingsView: View {
             case .archived: "archivebox"
             case .shortcuts: "keyboard"
             case .sorting: "arrow.up.arrow.down"
+            case .git: "arrow.triangle.branch"
             case .dataControls: "externaldrive"
             case .providers: "point.3.connected.trianglepath.dotted"
             case .diagnostics: "stethoscope"
@@ -221,6 +223,10 @@ public struct ProviderSettingsView: View {
             shortcutsContent
         case .sorting:
             settingsCard { sortingSection }
+        case .git:
+            #if os(macOS)
+            settingsCard { gitSection }
+            #endif
         case .dataControls:
             dataControlsContent
         case .remoteControl:
@@ -426,6 +432,64 @@ public struct ProviderSettingsView: View {
         }
         .padding(.vertical, 7)
     }
+
+    /// 继续于 选择 Worktree 位置 folder picker.
+    @State private var choosingWorktreeBase = false
+
+    #if os(macOS)
+    private var gitSection: some View {
+        Section {
+            Picker("新 Worktree 位置", selection: Binding(
+                get: { draft.worktreeBaseDirectory.isEmpty },
+                set: { beside in if beside { draft.worktreeBaseDirectory = "" } }
+            )) {
+                Text("仓库旁边").tag(true)
+                Text("指定文件夹").tag(false)
+            }
+            .pickerStyle(.inline)
+
+            if !draft.worktreeBaseDirectory.isEmpty {
+                HStack {
+                    Text(GitInfo.tildified(draft.worktreeBaseDirectory))
+                        .font(.system(size: 12).monospaced())
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("选择…") { choosingWorktreeBase = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            } else {
+                Button("改用指定文件夹…") { choosingWorktreeBase = true }
+                    .buttonStyle(.borderless)
+            }
+
+            TextField("分支名前缀（留空则不加）", text: $draft.worktreeBranchPrefix)
+
+            if let git = GitBinary.resolve() {
+                LabeledContent("Git", value: git)
+            } else {
+                Label("没有找到可用的 git", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("Git")
+        } footer: {
+            Text("「分叉对话」和「继续于 → 新建 Worktree」都按这里的位置和分支前缀创建 checkout。")
+        }
+        .fileImporter(
+            isPresented: $choosingWorktreeBase,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            draft.worktreeBaseDirectory = url.path
+        }
+    }
+    #endif
 
     @State private var portDraft = ""
     @State private var hubURLDraft = ""

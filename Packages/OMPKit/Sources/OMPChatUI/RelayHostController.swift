@@ -74,6 +74,22 @@ public final class RelayHostController {
         server.onDebugSnapshot = { number in
             await MainActor.run { AppSnapshot.png(windowNumber: number) }
         }
+        // Black-box automation: run one UI-level action / read one state
+        // summary, on the main actor like the UI would.
+        server.onDebugAction = { [weak self] action in
+            await MainActor.run {
+                guard let model = self?.model else {
+                    return DebugActionOutcome.failure("no model")
+                }
+                return DebugActions.perform(action, model: model)
+            }
+        }
+        server.onDebugState = { [weak self] in
+            await MainActor.run {
+                guard let model = self?.model else { return Data("{}".utf8) }
+                return DebugActions.stateJSON(model: model)
+            }
+        }
         #endif
     }
 

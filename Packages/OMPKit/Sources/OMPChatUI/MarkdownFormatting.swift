@@ -117,6 +117,113 @@ public enum MarkdownFormatting {
         let clamped = max(0, min(range.length, maxLength))
         return NSRange(location: location, length: clamped)
     }
+
+    /// Block styles. The composer reports no caret, so these act on the
+    /// current block: the last paragraph of the draft.
+    public enum BlockStyle: Sendable, Equatable {
+        case heading(Int)
+        case paragraph
+        case bulletedList
+        case numberedList
+        case link
+    }
+
+    /// Applies `style` to the last paragraph of `text` (everything after the
+    /// last blank line). A heading sets the paragraph's first line to that
+    /// many `#`s, replacing any level already there; the same level again
+    /// removes it. Paragraph strips heading and list markers. A bulleted list
+    /// toggles `- ` on every line, a numbered list toggles `1. 2. …`. Link is
+    /// the exception: it wraps the whole draft, and an empty draft becomes
+    /// `[链接文字](https://)`.
+    public static func applyBlock(_ style: BlockStyle, to text: String) -> String {
+        if case .link = style {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "[链接文字](https://)" : "[\(trimmed)](https://)"
+        }
+
+        let lines = text.components(separatedBy: "\n")
+        guard let start = lastParagraphStart(in: lines) else {
+            return applyToParagraph([], style: style).joined(separator: "\n")
+        }
+        var result = lines
+        result.replaceSubrange(start..., with: applyToParagraph(Array(lines[start...]), style: style))
+        return result.joined(separator: "\n")
+    }
+
+    /// Index of the first line of the last paragraph, or nil when the text is
+    /// empty or only whitespace.
+    private static func lastParagraphStart(in lines: [String]) -> Int? {
+        guard lines.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+        var index = lines.count - 1
+        while index > 0, lines[index].trimmingCharacters(in: .whitespaces).isEmpty { index -= 1 }
+        while index > 0, !lines[index - 1].trimmingCharacters(in: .whitespaces).isEmpty { index -= 1 }
+        return index
+    }
+
+    private static func applyToParagraph(_ lines: [String], style: BlockStyle) -> [String] {
+        switch style {
+        case .heading(let level):
+            let marks = String(repeating: "#", count: max(1, min(level, 6)))
+            guard let first = lines.first else { return ["\(marks) "] }
+            let (existing, body) = headingParts(first)
+            // Pressing the level the line already has removes it.
+            if existing == marks.count { return [body] + Array(lines.dropFirst()) }
+            return ["\(marks) \(body)"] + Array(lines.dropFirst())
+        case .paragraph:
+            let stripped = lines.map(stripMarker)
+            return stripped.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) ? [] : stripped
+        case .bulletedList:
+            if !lines.isEmpty, lines.allSatisfy(isBullet) { return lines.map(stripMarker) }
+            return listLines(lines).enumerated().map { "- \($0.element)" }
+        case .numberedList:
+            if !lines.isEmpty, isNumbered(lines) { return lines.map(stripMarker) }
+            return listLines(lines).enumerated().map { "\($0.offset + 1). \($0.element)" }
+        case .link:
+            return lines
+        }
+    }
+
+    /// `(level, rest)` when the line opens with `#`s, otherwise `(nil, line)`.
+    private static func headingParts(_ line: String) -> (Int?, String) {
+        var index = line.startIndex
+        var count = 0
+        while index < line.endIndex, line[index] == "#", count < 6 {
+            count += 1
+            index = line.index(after: index)
+        }
+        guard count > 0, index == line.endIndex || line[index] == " " else { return (nil, line) }
+        if index < line.endIndex { index = line.index(after: index) }
+        return (count, String(line[index...]))
+    }
+
+    /// Removes one heading, bullet or numbering marker from a line.
+    private static func stripMarker(_ line: String) -> String {
+        if headingParts(line).0 != nil { return headingParts(line).1 }
+        if line.hasPrefix("- ") || line.hasPrefix("* ") { return String(line.dropFirst(2)) }
+        guard let dot = line.firstIndex(of: "."), line.distance(from: line.startIndex, to: dot) <= 9 else { return line }
+        let digits = line[..<dot]
+        guard !digits.isEmpty, digits.allSatisfy(\.isNumber) else { return line }
+        let after = line.index(after: dot)
+        guard after < line.endIndex, line[after] == " " else { return line }
+        return String(line[line.index(after: after)...])
+    }
+
+    private static func isBullet(_ line: String) -> Bool {
+        line.hasPrefix("- ") || line.hasPrefix("* ")
+    }
+
+    private static func isNumbered(_ lines: [String]) -> Bool {
+        lines.enumerated().allSatisfy { offset, line in
+            line.hasPrefix("\(offset + 1). ")
+        }
+    }
+
+    /// Content lines of a list, markers stripped. An empty paragraph yields one
+    /// blank entry so the marker still appears for the next keystroke.
+    private static func listLines(_ lines: [String]) -> [String] {
+        let content = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(stripMarker)
+        return content.isEmpty ? [""] : content
+    }
 }
 
 /// Position arithmetic for in-chat search: which hit to move to next.

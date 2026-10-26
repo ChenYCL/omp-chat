@@ -44,6 +44,18 @@ struct OMPChatApp: App {
 
                 Button("下划线") { model.applyMarkdown(.underline) }
                 .keyboardShortcut("u", modifiers: .command)
+
+                Divider()
+
+                // Block styles have no shortcuts: every plain letter is already
+                // taken by the 对话 menu (⌘F/⌘K/⌘J/⌘B) or by 加粗/斜体/下划线.
+                Button("标题 1") { model.applyBlockFormat(.heading(1)) }
+                Button("标题 2") { model.applyBlockFormat(.heading(2)) }
+                Button("标题 3") { model.applyBlockFormat(.heading(3)) }
+                Button("段落") { model.applyBlockFormat(.paragraph) }
+                Button("无序列表") { model.applyBlockFormat(.bulletedList) }
+                Button("有序列表") { model.applyBlockFormat(.numberedList) }
+                Button("链接") { model.applyBlockFormat(.link) }
             }
             CommandMenu("对话") {
                 Button("重新生成") {

@@ -12,7 +12,13 @@ struct BrowserPane: View {
     @State private var committed = "https://example.com"
     @State private var isLoading = false
     @State private var failure: String?
+    /// Address of the page the web view actually holds; nil before any load
+    /// succeeded. Drives the page actions (reload / copy / open externally).
+    @State private var currentURL: String?
 
+    /// Reload / copy / open-in-browser all target the page that is loaded, not
+    /// whatever the address field is mid-typing.
+    private var pageActionsEnabled: Bool { currentURL != nil }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -36,6 +42,43 @@ struct BrowserPane: View {
                 if isLoading {
                     ProgressView().controlSize(.mini)
                 }
+                Spacer(minLength: 0)
+
+                Button {
+                    reloadCurrentPage()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!pageActionsEnabled)
+                .help("重新加载")
+                .accessibilityIdentifier("panel.browser.reload")
+
+                Button {
+                    copyCurrentPageURL()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!pageActionsEnabled)
+                .help("复制网址")
+                .accessibilityIdentifier("panel.browser.copyURL")
+
+                Button {
+                    openCurrentPageInDefaultBrowser()
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!pageActionsEnabled)
+                .help("在默认浏览器中打开")
+                .accessibilityIdentifier("panel.browser.openExternal")
             }
             .padding(.horizontal, 10)
             .frame(height: 32)
@@ -43,7 +86,12 @@ struct BrowserPane: View {
             Divider()
 
             ZStack {
-                BrowserWebView(url: committed, isLoading: $isLoading, failure: $failure)
+                BrowserWebView(
+                    url: committed,
+                    isLoading: $isLoading,
+                    failure: $failure,
+                    currentURL: $currentURL
+                )
                 if let failure {
                     VStack(spacing: 6) {
                         Image(systemName: "wifi.exclamationmark")
@@ -65,12 +113,32 @@ struct BrowserPane: View {
     private func target(_ raw: String) -> String {
         BrowserTarget.resolve(raw, fallback: committed)
     }
+
+    /// Reloads the page the web view currently holds, whatever the field says.
+    private func reloadCurrentPage() {
+        committed = currentURL ?? committed
+        text = committed
+    }
+
+    /// Copies the loaded page's address to the pasteboard.
+    private func copyCurrentPageURL() {
+        guard let currentURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(currentURL, forType: .string)
+    }
+
+    /// Hands the loaded page to the user's default browser via NSWorkspace.
+    private func openCurrentPageInDefaultBrowser() {
+        guard let currentURL, let url = URL(string: currentURL) else { return }
+        NSWorkspace.shared.open(url)
+    }
 }
 
 private struct BrowserWebView: NSViewRepresentable {
     let url: String
     @Binding var isLoading: Bool
     @Binding var failure: String?
+    @Binding var currentURL: String?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -113,6 +181,7 @@ private struct BrowserWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.isLoading = false
             parent.failure = nil
+            parent.currentURL = webView.url?.absoluteString
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -126,7 +195,6 @@ private struct BrowserWebView: NSViewRepresentable {
         }
     }
 }
-#endif
 
 /// Turns what the user typed into a URL.
 ///
@@ -152,3 +220,5 @@ enum BrowserTarget {
         return (isLocal ? "http://" : "https://") + text
     }
 }
+
+#endif

@@ -406,4 +406,105 @@ final class RelayDebugRouteTests: XCTestCase {
         XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(data, list)
     }
+
+    // MARK: - Debug actions + state
+
+    private func post(_ path: String, json: String, token: String?) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        if let token { request.setValue(token, forHTTPHeaderField: "X-OMP-Token") }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(json.utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return (data, response as! HTTPURLResponse)
+    }
+
+    func testDebugActionWithoutTokenReturns401() async throws {
+        let (_, response) = try await post("/debug/action", json: #"{"action":"newChat"}"#, token: nil)
+        XCTAssertEqual(response.statusCode, 401)
+    }
+
+    func testDebugActionWithWrongTokenReturns401() async throws {
+        let (_, response) = try await post("/debug/action", json: #"{"action":"newChat"}"#, token: "nope")
+        XCTAssertEqual(response.statusCode, 401)
+    }
+
+    func testDebugActionWithoutHookReturns503() async throws {
+        let (_, response) = try await post("/debug/action", json: #"{"action":"newChat"}"#, token: token)
+        XCTAssertEqual(response.statusCode, 503)
+    }
+
+    func testDebugActionMalformedBodyReturns400EvenWithHook() async throws {
+        server.onDebugAction = { _ in .success }
+        for body in ["", "not json", "[]", #"{"action":"nope"}"#, #"{"action":"select"}"#] {
+            let (_, response) = try await post("/debug/action", json: body, token: token)
+            XCTAssertEqual(response.statusCode, 400, body)
+        }
+    }
+
+    func testDebugActionDeliversEveryActionToTheHook() async throws {
+        let box = ActionBox()
+        server.onDebugAction = { action in
+            box.append(action)
+            return .success
+        }
+        let bodies: [String] = [
+            #"{"action":"select","conversationID":"ABC"}"#,
+            #"{"action":"newChat"}"#,
+            #"{"action":"sidePanel","open":true,"tab":"browser"}"#,
+            #"{"action":"sidePanel","open":false}"#,
+            #"{"action":"openSettings"}"#,
+            #"{"action":"closeSettings"}"#,
+        ]
+        for body in bodies {
+            let (data, response) = try await post("/debug/action", json: body, token: token)
+            XCTAssertEqual(response.statusCode, 200, body)
+            XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            let reply = try JSONDecoder().decode(DebugActionOutcome.self, from: data)
+            XCTAssertEqual(reply, .success, body)
+        }
+        XCTAssertEqual(box.all.count, 6)
+        XCTAssertEqual(box.all[0], .select(conversationID: "ABC"))
+        XCTAssertEqual(box.all[1], .newChat)
+        XCTAssertEqual(box.all[2], .sidePanel(open: true, tab: .browser))
+        XCTAssertEqual(box.all[3], .sidePanel(open: false, tab: nil))
+        XCTAssertEqual(box.all[4], .openSettings)
+        XCTAssertEqual(box.all[5], .closeSettings)
+    }
+
+    func testDebugActionReportsTheHostFailureVerbatim() async throws {
+        server.onDebugAction = { _ in .failure("settings window did not open") }
+        let (data, response) = try await post("/debug/action", json: #"{"action":"openSettings"}"#, token: token)
+        XCTAssertEqual(response.statusCode, 200, "宿主没做到也是 200，错误在 JSON 里")
+        let reply = try JSONDecoder().decode(DebugActionOutcome.self, from: data)
+        XCTAssertEqual(reply, .failure("settings window did not open"))
+    }
+
+    func testDebugStateWithoutTokenReturns401() async throws {
+        let (_, response) = try await get("/debug/state", token: nil)
+        XCTAssertEqual(response.statusCode, 401)
+    }
+
+    func testDebugStateWithoutHookReturns503() async throws {
+        let (_, response) = try await get("/debug/state", token: token)
+        XCTAssertEqual(response.statusCode, 503)
+    }
+
+    func testDebugStateReturnsTheHostJSON() async throws {
+        let state = Data(#"{"selectedID":null,"sidePanelOpen":false,"sidePanelTab":null,"settingsOpen":false,"windowTitles":["OMPChat"]}"#.utf8)
+        server.onDebugState = { state }
+        let (data, response) = try await get("/debug/state", token: token)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(data, state)
+    }
+}
+
+/// Thread-safe action carrier between the `onDebugAction` hook and the test.
+private final class ActionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [DebugAction] = []
+    func append(_ value: DebugAction) { lock.lock(); values.append(value); lock.unlock() }
+    var all: [DebugAction] { lock.lock(); defer { lock.unlock() }; return values }
 }

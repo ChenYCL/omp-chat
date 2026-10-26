@@ -46,6 +46,96 @@ public enum RelayServerError: Error, Sendable {
     case cannotBind
 }
 
+/// The side panel's tabs, shared by `SidePanel.Tab`, the model's panel state
+/// and the `/debug/action` wire format. Raw values are the wire names; the
+/// UI strings stay in the view layer.
+public enum SidePanelTab: String, Codable, Sendable, CaseIterable {
+    case terminal
+    case files
+    case changes
+    case browser
+}
+
+/// One automation action for the token-gated `POST /debug/action` route. This
+/// is the black-box test channel: the integrator drives the app without
+/// bringing it to the front, exactly the actions the UI's own menus offer.
+///
+/// The request body is decoded as `{"action": "<name>", ...}` where the
+/// remaining keys are the case payload fields, so a new case only needs a
+/// decoding branch in [`DebugAction.decode(from:)`] and, on the host, a
+/// handler.
+public enum DebugAction: Sendable, Equatable {
+    /// Select a conversation by UUID string.
+    case select(conversationID: String)
+    /// Create and select a fresh conversation.
+    case newChat
+    /// Show/hide the side panel and optionally switch its tab.
+    case sidePanel(open: Bool, tab: SidePanelTab?)
+    /// Open the app's Settings scene.
+    case openSettings
+    /// Close the Settings scene.
+    case closeSettings
+
+    /// The wire name of the action.
+    public var name: String {
+        switch self {
+        case .select: "select"
+        case .newChat: "newChat"
+        case .sidePanel: "sidePanel"
+        case .openSettings: "openSettings"
+        case .closeSettings: "closeSettings"
+        }
+    }
+
+    /// Decodes `{"action": ..., ...payload}`; any shape the parser does not
+    /// fully understand — unknown action name, missing or mistyped fields,
+    /// wrong JSON type at the top level — returns `nil`, which the route
+    /// answers with `400`.
+    public static func decode(from data: Data) -> DebugAction? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let fields = object as? [String: Any],
+              let name = fields["action"] as? String else { return nil }
+        switch name {
+        case "select":
+            guard let id = fields["conversationID"] as? String else { return nil }
+            return .select(conversationID: id)
+        case "newChat":
+            return .newChat
+        case "sidePanel":
+            guard let open = fields["open"] as? Bool else { return nil }
+            if let rawTab = fields["tab"] {
+                // A misspelled tab is a caller error, not a default: reject
+                // instead of silently landing on 终端.
+                guard let rawTab = rawTab as? String, let tab = SidePanelTab(rawValue: rawTab) else {
+                    return nil
+                }
+                return .sidePanel(open: open, tab: tab)
+            }
+            return .sidePanel(open: open, tab: nil)
+        case "openSettings":
+            return .openSettings
+        case "closeSettings":
+            return .closeSettings
+        default:
+            return nil
+        }
+    }
+}
+
+/// Result of one executed debug action, serialized as the route's reply.
+public struct DebugActionOutcome: Codable, Sendable, Equatable {
+    public var ok: Bool
+    /// Present only when `ok` is false.
+    public var error: String?
+
+    public static let success = DebugActionOutcome(ok: true, error: nil)
+    public static func failure(_ message: String) -> DebugActionOutcome {
+        DebugActionOutcome(ok: false, error: message)
+    }
+}
+
+/// Errors thrown by [`RelayServer.start(port:token:)`].
+
 /// Minimal LAN HTTP server mirroring structured chat state to a remote
 /// controller. Hand-rolled HTTP/1.1 (request line + headers +
 /// `Content-Length` body) on top of `NWListener` — no third-party code.
@@ -74,6 +164,14 @@ public enum RelayServerError: Error, Sendable {
 ///   other windows and never contains another app. Without `window` the host
 ///   picks its main window. `400` for a non-numeric `window`, `404` when that
 ///   window does not exist, `503` until the host installs `onDebugSnapshot`.
+/// - `POST /debug/action` → JSON `{"action": ..., ...}`; the host hook
+///   [`onDebugAction`] runs it and the route answers
+///   `200 {"ok":true,"error":null}` on success or
+///   `200 {"ok":false,"error":"…"}` when the host could not do it. `400` for
+///   a body that does not decode, `503` until the host installs the hook.
+/// - `GET /debug/state` → JSON `{"selectedID":…,"sidePanelOpen":…,
+///   "sidePanelTab":…,"windowTitles":[…]}` read from the host hook
+///   [`onDebugState`]. Answers `503` until that hook is installed.
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
@@ -84,6 +182,11 @@ public final class RelayServer: @unchecked Sendable {
     public var onRPC: (@Sendable (HostRPCRequest) async -> HostRPCResponse)?
     /// Host hook for `GET /debug/report`. Returns the report JSON.
     public var onDebugReport: (@Sendable () async -> Data)?
+    /// Host hook for `POST /debug/action`. Runs one [`DebugAction`] and
+    /// reports success or a short error string; `nil` answers `503`.
+    public var onDebugAction: (@Sendable (DebugAction) async -> DebugActionOutcome)?
+    /// Host hook for `GET /debug/state`. Returns the app-state JSON.
+    public var onDebugState: (@Sendable () async -> Data)?
     /// Host hook for `GET /debug/windows`. Returns the window-list JSON.
     public var onDebugWindows: (@Sendable () async -> Data)?
     /// Host hook for `GET /debug/snapshot`. A `nil` argument means the main
@@ -462,6 +565,32 @@ public final class RelayServer: @unchecked Sendable {
                     } else {
                         self.send(self.json(ErrorBody(ok: false), status: "404 Not Found"), id: id)
                     }
+                }
+            }
+        case ("POST", "/debug/action"):
+            guard let action = DebugAction.decode(from: request.body) else {
+                send(json(DebugActionOutcome(ok: false, error: "bad_action"), status: "400 Bad Request"), id: id)
+                return
+            }
+            guard let handler = onDebugAction else {
+                send(json(DebugActionOutcome(ok: false, error: "unsupported"), status: "503 Service Unavailable"), id: id)
+                return
+            }
+            Task {
+                let outcome = await handler(action)
+                self.queue.async {
+                    self.send(self.json(outcome, status: "200 OK"), id: id)
+                }
+            }
+        case ("GET", "/debug/state"):
+            guard let handler = onDebugState else {
+                send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
+                return
+            }
+            Task {
+                let body = await handler()
+                self.queue.async {
+                    self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
                 }
             }
         default:

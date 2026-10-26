@@ -324,7 +324,7 @@ public struct MacShellSidebar: View {
                     ungroupedSection
                     lockedSection
                     archivedSection
-                    if model.conversations.isEmpty { emptyHint }
+                    if model.conversations.isEmpty || sidebarHiddenEverything { emptyHint }
                 }
             }
             .padding(.horizontal, 8)
@@ -441,18 +441,48 @@ public struct MacShellSidebar: View {
         }
     }
 
+    /// Conversations the 整理侧栏 filter lets through, applied to every list.
+    private var filterAllowed: (Conversation) -> Bool {
+        let rule = SidebarFilter(stored: model.settings.sidebarFilter)
+        return { rule.includes($0) }
+    }
+
+    @ViewBuilder
     private var prioritySection: some View {
-        let items = priorityItems
-        return Group {
-            if !items.isEmpty {
-                sectionHeader("待处理")
-                ForEach(items) { row($0) }
-            }
+        let items = priorityItems.filter(filterAllowed)
+        if !items.isEmpty {
+            sectionHeader("待处理")
+            ForEach(items) { row($0) }
+            markAllReadButton
         }
     }
 
+    /// 全部标为已读 under the 待处理 header: one click clears every unread flag.
+    private var markAllReadButton: some View {
+        Button {
+            model.markAllRead()
+        } label: {
+            Label("全部标为已读", systemImage: "envelope.open")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color.ompTextSecondary)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 2)
+        .accessibilityLabel("全部标为已读")
+        .accessibilityIdentifier("sidebar.markAllRead")
+        .help("全部标为已读")
+    }
+
+    /// True when the filter hides every conversation the sidebar could list,
+    /// so the empty state explains why instead of a bare sidebar.
+    private var sidebarHiddenEverything: Bool {
+        !model.conversations.isEmpty
+            && SidebarOrganization.filter(model.sortedConversations, by: SidebarFilter(stored: model.settings.sidebarFilter)).isEmpty
+    }
+
     private var pinnedSection: some View {
-        let pinned = model.sortedConversations.filter { $0.isPinned && !$0.isArchived && !$0.isLocked }
+        let pinned = model.sortedConversations.filter { $0.isPinned && !$0.isArchived && !$0.isLocked }.filter(filterAllowed)
         return Group {
             if !pinned.isEmpty {
                 sectionHeader("置顶")
@@ -489,7 +519,7 @@ public struct MacShellSidebar: View {
             .buttonStyle(.plain)
             .contextMenu { customSectionMenu(custom) }
             if !collapsed {
-                ForEach(model.conversations(inCustomSection: custom.id).filter { !$0.isPinned && !handled.contains($0.id) }) { row($0) }
+                ForEach(model.conversations(inCustomSection: custom.id).filter { !$0.isPinned && !handled.contains($0.id) }.filter(filterAllowed)) { row($0) }
             }
         }
     }
@@ -526,7 +556,7 @@ public struct MacShellSidebar: View {
         return ForEach(model.orderedProjects) { project in
             projectHeader(project)
             if !collapsedProjects.contains(project.id) {
-                ForEach(model.conversations(in: project.id).filter { !$0.isPinned && !handled.contains($0.id) }) { row($0) }
+                ForEach(model.conversations(in: project.id).filter { !$0.isPinned && !handled.contains($0.id) }.filter(filterAllowed)) { row($0) }
             }
         }
     }
@@ -555,7 +585,7 @@ public struct MacShellSidebar: View {
         let handled = model.priorityConversationIDs()
         let items = model.conversations(in: nil).filter {
             !$0.isPinned && !$0.isArchived && !$0.isLocked && !handled.contains($0.id)
-        }
+        }.filter(filterAllowed)
         var groups: [DateBucket: [Conversation]] = [:]
         for c in items {
             let b = Self.bucket(for: c.updatedAt)
@@ -565,7 +595,9 @@ public struct MacShellSidebar: View {
         return Group {
             if !items.isEmpty {
                 recentsHeader
-                if model.projects.isEmpty {
+                if SidebarGrouping(stored: model.settings.sidebarGrouping) == .connection {
+                    connectionGroups(items)
+                } else if model.projects.isEmpty {
                     ForEach(DateBucket.allCases, id: \.self) { b in
                         if let bucketItems = groups[b], !bucketItems.isEmpty {
                             sectionHeader(b.rawValue)
@@ -579,6 +611,17 @@ public struct MacShellSidebar: View {
         }
     }
 
+    /// 按连接: one collapsible group per provider (Codex
+    /// `sidebarElectron.groupByMenu` connection mode), most recent first.
+    @ViewBuilder
+    private func connectionGroups(_ items: [Conversation]) -> some View {
+        let groups = SidebarOrganization.connectionGroups(items, providers: model.providers)
+        ForEach(Array(groups.enumerated()), id: \.element.name) { _, group in
+            ConnectionGroupHeader(name: group.name, count: group.conversations.count)
+            ForEach(group.conversations) { row($0) }
+        }
+    }
+
     /// Codex `Recents` group heading: 11.5pt medium tertiary + sort menu
     /// (最后更新 / 创建时间 / 手动, backed by real `settings.conversationSort`).
     private var recentsHeader: some View {
@@ -588,6 +631,7 @@ public struct MacShellSidebar: View {
                 .tracking(0.2)
                 .foregroundStyle(Color.ompTextTertiary)
             Spacer(minLength: 0)
+            organizeMenu
             Menu {
                 sortItem("updated", "最后更新")
                 sortItem("created", "创建时间")
@@ -623,6 +667,53 @@ public struct MacShellSidebar: View {
                 Text(title)
             }
         }
+    }
+
+    /// Codex `sidebarElectron.groupByMenu`: 分组 (按项目 / 按连接) and 显示
+    /// (全部 / 聊天 / 工作), both persisted through `saveSettings`.
+    private var organizeMenu: some View {
+        Menu {
+            Section("分组") {
+                organizeItem(SidebarGrouping.project.rawValue, "按项目") { $0.sidebarGrouping = SidebarGrouping.project.rawValue }
+                organizeItem(SidebarGrouping.connection.rawValue, "按连接") { $0.sidebarGrouping = SidebarGrouping.connection.rawValue }
+            }
+            Section("显示") {
+                organizeItem(SidebarFilter.all.rawValue, "全部") { $0.sidebarFilter = SidebarFilter.all.rawValue }
+                organizeItem(SidebarFilter.chat.rawValue, "聊天") { $0.sidebarFilter = SidebarFilter.chat.rawValue }
+                organizeItem(SidebarFilter.work.rawValue, "工作") { $0.sidebarFilter = SidebarFilter.work.rawValue }
+            }
+        } label: {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.ompTextTertiary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("整理侧栏")
+        .accessibilityIdentifier("sidebar.organize")
+        .help("整理侧栏")
+    }
+
+    private func organizeItem(_ value: String, _ title: String, apply: @escaping (inout AppSettings) -> Void) -> some View {
+        Button {
+            var settings = model.settings
+            apply(&settings)
+            Task { await model.saveSettings(settings) }
+        } label: {
+            if isSelected(value) {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    /// Ticked when this grouping or filter value is the stored one.
+    private func isSelected(_ value: String) -> Bool {
+        model.settings.sidebarGrouping == value || model.settings.sidebarFilter == value
     }
 
     private var archivedSection: some View {
@@ -778,7 +869,7 @@ public struct MacShellSidebar: View {
             Image(systemName: search.isEmpty ? "bubble.left.and.bubble.right" : "magnifyingglass")
                 .font(.system(size: 18))
                 .foregroundStyle(Color.ompTextTertiary)
-            Text(search.isEmpty ? "还没有对话" : "没有匹配的对话")
+            Text(search.isEmpty ? (sidebarHiddenEverything ? "没有符合的对话" : "还没有对话") : "没有匹配的对话")
                 .font(.system(size: 12))
                 .foregroundStyle(Color.ompTextSecondary)
         }
@@ -1062,4 +1153,38 @@ private struct MacShellConversationRow: View {
                 .frame(width: 5, height: 5)
         }
     }
+}
+
+// MARK: - Connection group header
+
+/// Collapsible 按连接 group header: provider name + conversation count,
+/// styled like the locked section's disclosure row.
+private struct ConnectionGroupHeader: View {
+    let name: String
+    let count: Int
+    @State private var collapsed = false
+
+    var body: some View {
+        Button {
+            collapsed.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                Text(name)
+                    .font(Self.sectionTitle)
+                Text("\(count)")
+                    .font(.system(size: 9.5).monospacedDigit())
+            }
+            .foregroundStyle(Color.ompTextTertiary)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("连接分组 \(name)")
+        .accessibilityIdentifier("sidebar.connectionGroup.\(name)")
+    }
+
+    private static let sectionTitle = Font.system(size: 11.5, weight: .medium)
 }

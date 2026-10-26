@@ -79,4 +79,69 @@ final class MarkdownFormattingTests: XCTestCase {
         XCTAssertEqual(SearchCursor.step(from: 0, by: -1, count: 3), 2, "开头往前回到末尾")
         XCTAssertNil(SearchCursor.step(from: nil, by: 1, count: 0), "没有匹配就没有下一处")
     }
+
+    // MARK: - Block styles
+
+    func testHeadingSetsAndReplacesLevel() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(2), to: "第一段"), "## 第一段")
+        // An existing level is replaced, not stacked.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(1), to: "### 已有标题"), "# 已有标题")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(3), to: "# 标题\n第二行"), "### 标题\n第二行")
+    }
+
+    func testSameHeadingLevelRemovesIt() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(2), to: "## 标题"), "标题")
+        // Only the level being pressed toggles off.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(1), to: "## 标题"), "# 标题")
+    }
+
+    func testParagraphRemovesHeadingAndListMarkers() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.paragraph, to: "### 标题"), "标题")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.paragraph, to: "- 甲\n- 乙"), "甲\n乙")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.paragraph, to: "1. 甲\n2. 乙"), "甲\n乙")
+        // Plain text is left alone.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.paragraph, to: "普通段落"), "普通段落")
+    }
+
+    func testBulletedListToggles() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.bulletedList, to: "甲\n乙"), "- 甲\n- 乙")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.bulletedList, to: "- 甲\n- 乙"), "甲\n乙", "已是无序列表时再按一次取消")
+        // A numbered list is not a bulleted one, so it becomes bulleted.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.bulletedList, to: "1. 甲\n2. 乙"), "- 甲\n- 乙")
+    }
+
+    func testNumberedListTogglesAndRenumbers() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.numberedList, to: "甲\n乙\n丙"), "1. 甲\n2. 乙\n3. 丙")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.numberedList, to: "1. 甲\n2. 乙"), "甲\n乙", "已编号时再按一次取消")
+        // A bulleted list becomes numbered, not stacked.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.numberedList, to: "- 甲\n- 乙"), "1. 甲\n2. 乙")
+    }
+
+    func testOnlyTheLastParagraphChanges() {
+        let text = "第一段\n\n第二段"
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(1), to: text), "第一段\n\n# 第二段")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.bulletedList, to: text), "第一段\n\n- 第二段")
+        // Trailing blank lines are not a new paragraph.
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(2), to: "甲\n\n乙\n"), "甲\n\n## 乙\n")
+    }
+
+    func testEmptyDraftBlockStyles() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(1), to: ""), "# ")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(2), to: "   "), "## ")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.paragraph, to: ""), "")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.bulletedList, to: ""), "- ")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.numberedList, to: ""), "1. ")
+    }
+
+    func testLinkWrapsTheWholeDraft() {
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.link, to: "说明文字"), "[说明文字](https://)")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.link, to: "第一段\n\n第二段"), "[第一段\n\n第二段](https://)")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.link, to: ""), "[链接文字](https://)")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.link, to: "  \n"), "[链接文字](https://)")
+    }
+
+    func testBlockStylesLeaveInlineFormattingAlone() {
+        XCTAssertEqual(MarkdownFormatting.toggle(.bold, in: "整段文字", selection: nil).text, "**整段文字**")
+        XCTAssertEqual(MarkdownFormatting.applyBlock(.heading(1), to: "**整段文字**"), "# **整段文字**")
+    }
 }

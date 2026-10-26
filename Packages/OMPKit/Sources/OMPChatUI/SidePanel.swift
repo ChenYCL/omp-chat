@@ -8,15 +8,13 @@ import OMPDesign
 /// list is the directory the terminal is in, and 改动 is `git status
 /// --porcelain`. Nothing is invented when git is missing — the tab says so.
 struct SidePanel: View {
-    enum Tab: String, CaseIterable, Identifiable {
-        case terminal = "终端"
-        case files = "文件"
-        case changes = "改动"
-        case browser = "浏览器"
-        var id: String { rawValue }
-    }
+    /// Display names for [`SidePanelTab`]; the stored value lives in the model
+    /// so debug actions can drive it.
+    private static let titles: [SidePanelTab: String] = [
+        .terminal: "终端", .files: "文件", .changes: "改动", .browser: "浏览器"
+    ]
 
-    @State private var tab: Tab = .terminal
+    @Environment(ChatAppModel.self) private var model
     @State private var directory = FileManager.default.currentDirectoryPath
     @State private var entries: [Entry] = []
     @State private var changes: [Change] = []
@@ -25,6 +23,10 @@ struct SidePanel: View {
     @State private var diff: Diff?
     @State private var picking = false
     @State private var saveFailure: String?
+
+    private var tab: Tab {
+        get { Tab(model.sidePanelTab) ?? .terminal }
+    }
 
     private struct Entry: Identifiable {
         var name: String
@@ -48,7 +50,7 @@ struct SidePanel: View {
             Divider()
             switch tab {
             case .terminal:
-                TerminalView()
+                TerminalView(startingDirectory: followDirectory)
             case .files:
                 fileList
             case .changes:
@@ -59,6 +61,11 @@ struct SidePanel: View {
         }
         .background(Color.ompCanvas)
         .task(id: tab) { if tab != .terminal { await refresh() } }
+        // A thread bound to a repository points the panel at it; switching
+        // threads re-points it. The terminal keeps its own cwd once running.
+        .onChange(of: model.selectedConversationID) { _, _ in followThread() }
+        .onChange(of: model.selectedConversation?.workingDirectory) { _, _ in followThread() }
+        .task { followThread() }
         // The panel starts in the app's own directory, which is usually not a
         // repository; this lets it point at one.
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
@@ -72,13 +79,32 @@ struct SidePanel: View {
         }
     }
 
+    /// The directory this thread wants the panel to work in (its bound
+    /// repository, or whatever the panel already shows).
+    private var followDirectory: String {
+        SidePanelDirectory.resolve(
+            threadDirectory: model.selectedConversation?.workingDirectory,
+            current: directory
+        )
+    }
+
+    /// Applies [`followDirectory`], refreshing the listing when it moves.
+    private func followThread() {
+        let target = followDirectory
+        guard target != directory else { return }
+        directory = target
+        openFile = nil
+        diff = nil
+        Task { await refresh() }
+    }
+
     private var tabBar: some View {
         HStack(spacing: 4) {
             ForEach(Tab.allCases) { item in
                 Button {
-                    tab = item
+                    model.sidePanelTab = item.wire
                 } label: {
-                    Text(item.rawValue)
+                    Text(Self.titles[item.wire] ?? item.wire.rawValue)
                         .font(.system(size: 12, weight: tab == item ? .semibold : .regular))
                         .foregroundStyle(tab == item ? Color.ompText : Color.ompTextSecondary)
                         .padding(.horizontal, 10)
@@ -552,6 +578,32 @@ struct SidePanel: View {
             items.append(Change(code: code.isEmpty ? "?" : code, path: path))
         }
         return .success(items)
+    }
+}
+
+extension SidePanel {
+    /// Bridges the wire enum to the local case list.
+    enum Tab: CaseIterable, Identifiable {
+        case terminal, files, changes, browser
+        var id: Self { self }
+
+        init?(_ wire: SidePanelTab) {
+            switch wire {
+            case .terminal: self = .terminal
+            case .files: self = .files
+            case .changes: self = .changes
+            case .browser: self = .browser
+            }
+        }
+
+        var wire: SidePanelTab {
+            switch self {
+            case .terminal: .terminal
+            case .files: .files
+            case .changes: .changes
+            case .browser: .browser
+            }
+        }
     }
 }
 #endif

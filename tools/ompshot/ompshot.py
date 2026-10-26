@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ompshot: screenshots of OMPChat's own windows without bringing it to the front.
+"""ompshot: screenshots and black-box automation of OMPChat's own windows.
 
 The app renders its windows itself (GET /debug/snapshot on its relay), so the
 capture works while OMPChat is behind other windows, never contains another
@@ -8,6 +8,13 @@ app, and needs no Screen Recording permission.
     ompshot.py windows                 list OMPChat's windows
     ompshot.py snap                    PNG of the main window
     ompshot.py snap -w 36245 -o a.png  PNG of one window, to a chosen path
+    ompshot.py state                   JSON: selected chat, side panel, windows
+    ompshot.py act newChat             run one automation action
+    ompshot.py act sidePanel --open true --tab browser
+    ompshot.py act select --conversationID <uuid>
+
+Actions: select, newChat, sidePanel, openSettings, closeSettings.
+`act` prints the reply JSON and exits non-zero when the app answers ok:false.
 
 Needs 设置 → 远程控制 enabled in OMPChat. The token comes from --token, then
 $OMP_RELAY_TOKEN, then the app's own secrets file; it is never printed.
@@ -46,23 +53,27 @@ def resolve_token(explicit):
     return token
 
 
-def request(args, path):
+def request(args, path, body=None):
     url = f"http://{args.host}:{args.port}{path}"
-    req = urllib.request.Request(url, headers={"X-OMP-Token": resolve_token(args.token)})
+    headers = {"X-OMP-Token": resolve_token(args.token)}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=args.timeout) as response:
             return response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as error:
         reasons = {
-            400: "window 参数必须是窗口编号（数字）",
+            400: "请求没通过：action 名或参数不对（看 --help）",
             401: "令牌不对",
             404: "没有这个窗口，先用 windows 看编号",
-            503: "这个 OMPChat 版本没有截图接口，装上新版本再试",
+            503: "这个 OMPChat 版本没有这个接口，装上新版本再试",
         }
         sys.exit(f"HTTP {error.code}：{reasons.get(error.code, error.reason)}")
     except urllib.error.URLError as error:
         sys.exit(f"连不上 {args.host}:{args.port}（{error.reason}）：OMPChat 没开，或 设置 → 远程控制 没打开")
-
 
 def png_size(data):
     """Width and height from the PNG IHDR chunk, or None when it is not a PNG."""
@@ -98,6 +109,38 @@ def cmd_snap(args):
     print(f"{out}  {size[0]}x{size[1]}  {len(body)} bytes")
 
 
+def cmd_state(args):
+    body, _ = request(args, "/debug/state")
+    print(json.dumps(json.loads(body), ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def cmd_act(args):
+    payload = {"action": args.action}
+    pending_key = None
+    for token in args.key_value:
+        if pending_key is not None:
+            if pending_key in payload:
+                sys.exit(f"参数 {pending_key} 重复")
+            if token.lower() in ("true", "false"):
+                payload[pending_key] = token.lower() == "true"
+            else:
+                payload[pending_key] = token
+            pending_key = None
+        elif token.startswith("--"):
+            pending_key = token[2:]
+            if not pending_key:
+                sys.exit("参数要写成 --key value 的形式")
+        else:
+            sys.exit(f"参数要写成 --key value 的形式，收到：{token}")
+    if pending_key is not None:
+        sys.exit(f"参数 {pending_key} 缺少值")
+    reply_bytes, _ = request(args, "/debug/action", body=payload)
+    reply = json.loads(reply_bytes)
+    print(json.dumps(reply, ensure_ascii=False, indent=2, sort_keys=True))
+    if not reply.get("ok"):
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="127.0.0.1")
@@ -110,6 +153,12 @@ def main():
     snap.add_argument("-w", "--window", type=int, help="窗口编号；缺省为主窗口")
     snap.add_argument("-o", "--output", help="输出路径；缺省 ompshot-<时间>.png")
     snap.set_defaults(run=cmd_snap)
+    state = sub.add_parser("state", help="应用状态 JSON（选中会话、侧面板、窗口标题）")
+    state.set_defaults(run=cmd_state)
+    act = sub.add_parser("act", help="执行一个自动化动作")
+    act.add_argument("action", help="动作名：select / newChat / sidePanel / openSettings / closeSettings")
+    act.add_argument("key_value", nargs=argparse.REMAINDER, help="动作参数，成对出现：--conversationID <uuid> --open true --tab browser")
+    act.set_defaults(run=cmd_act)
     args = parser.parse_args()
     args.run(args)
 

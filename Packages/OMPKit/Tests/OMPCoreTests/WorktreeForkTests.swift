@@ -24,6 +24,46 @@ final class WorktreeForkTests: XCTestCase {
         XCTAssertEqual(plan.arguments, ["worktree", "add", "-b", "fork-me-aaaaaaaa", "/Users/x/code/fork-me-aaaaaaaa"])
     }
 
+    func testPlanHonoursChosenBaseDirectory() {
+        let id = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let plan = WorktreeFork.plan(
+            title: "Fork me",
+            id: id,
+            repository: "/Users/x/code/app",
+            baseDirectory: "/tmp/worktrees/"
+        )
+        XCTAssertEqual(plan.path, "/tmp/worktrees/fork-me-aaaaaaaa", "指定目录优先于仓库旁边")
+        XCTAssertEqual(plan.arguments.last, "/tmp/worktrees/fork-me-aaaaaaaa")
+    }
+
+    func testBlankBaseDirectoryStaysBesideTheRepository() {
+        let id = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let plan = WorktreeFork.plan(
+            title: "Fork me",
+            id: id,
+            repository: "/Users/x/code/app",
+            baseDirectory: "   "
+        )
+        XCTAssertEqual(plan.path, "/Users/x/code/fork-me-aaaaaaaa", "空白等于仓库旁边")
+    }
+
+    func testBranchPrefixIsSanitised() {
+        let id = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let plan = WorktreeFork.plan(
+            title: "Fork me",
+            id: id,
+            repository: "/repo/app",
+            branchPrefix: "  OMP Feature! "
+        )
+        XCTAssertEqual(
+            plan.arguments,
+            ["worktree", "add", "-b", "omp-feature-fork-me-aaaaaaaa", "/repo/fork-me-aaaaaaaa"],
+            "前缀只保留字母数字，目录名不加前缀"
+        )
+        let bare = WorktreeFork.plan(title: "Fork me", id: id, repository: "/repo/app", branchPrefix: "---")
+        XCTAssertEqual(bare.arguments[3], "fork-me-aaaaaaaa", "清洗后为空等于不加前缀")
+    }
+
     func testGitBinaryPrefersHomebrew() throws {
         guard let git = GitBinary.resolve() else {
             throw XCTSkip("no git on this machine")

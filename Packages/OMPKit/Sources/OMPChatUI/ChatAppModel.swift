@@ -57,6 +57,13 @@ public final class ChatAppModel {
         draft = MarkdownFormatting.toggle(style, in: draft, selection: nil).text
     }
 
+    /// Applies a block style to the draft's last paragraph (the whole draft
+    /// for a link). The composer exposes no caret, so there is no selection.
+    public func applyBlockFormat(_ style: MarkdownFormatting.BlockStyle) {
+        draft = MarkdownFormatting.applyBlock(style, to: draft)
+    }
+
+
     /// The composer's 联网 pill. When on, the next request asks the gateway
     /// to search the web server-side (`tools: [{type: web_search}]`).
     public var webSearchEnabled = false
@@ -79,6 +86,29 @@ public final class ChatAppModel {
     /// Messages checked for bulk actions; empty means selection mode is off.
     public var selectedMessageIDs: Set<UUID> = []
     public var showSettings = false
+
+    // MARK: - Side panel
+
+    /// The right-hand 终端/文件/改动/浏览器 panel. Lives here rather than in
+    /// view state so the relay's debug actions (and the header button, ⌘J and
+    /// the 对话 menu, which all write through the same property) drive one
+    /// shared truth.
+    public var sidePanelOpen = false
+    /// Selected tab; meaningful only while `sidePanelOpen`.
+    public var sidePanelTab: SidePanelTab = .terminal
+
+    /// Toggles the panel, optionally landing on one tab. Opening straight to a
+    /// tab switches to it; toggling closed ignores the tab.
+    public func toggleSidePanel(open: Bool? = nil, tab: SidePanelTab? = nil) {
+        if let open {
+            sidePanelOpen = open
+        } else {
+            sidePanelOpen.toggle()
+        }
+        if let tab {
+            sidePanelTab = tab
+        }
+    }
 
     // MARK: Dependencies
 
@@ -293,7 +323,13 @@ public final class ChatAppModel {
             #else
                 let repository = original.workingDirectory ?? FileManager.default.currentDirectoryPath
                 guard let git = GitBinary.resolve() else { return "这台 Mac 上没有可用的 git" }
-                let plan = WorktreeFork.plan(title: original.title, id: copy.id, repository: repository)
+                let plan = WorktreeFork.plan(
+                    title: original.title,
+                    id: copy.id,
+                    repository: repository,
+                    baseDirectory: settings.worktreeBaseDirectory,
+                    branchPrefix: settings.worktreeBranchPrefix
+                )
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: git)
                 process.arguments = plan.arguments
@@ -348,6 +384,20 @@ public final class ChatAppModel {
         replace(conversation)
         persist(conversation)
     }
+
+    // MARK: - Thread goal
+
+    /// Sets the thread's goal, or clears it when the text is blank. Trimmed
+    /// and persisted, so every later request of this conversation carries it.
+    public func setGoal(_ id: UUID, _ goal: String?) {
+        guard var conversation = conversation(id) else { return }
+        let trimmed = goal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        conversation.goal = trimmed.isEmpty ? nil : trimmed
+        conversation.updatedAt = Date()
+        replace(conversation)
+        persist(conversation)
+    }
+
 
     // MARK: Projects
 
@@ -541,6 +591,20 @@ public final class ChatAppModel {
         replace(conversation)
         persist(conversation)
     }
+
+    // MARK: - Sidebar organization
+
+    /// Clears the unread flag on every conversation that is not archived.
+    /// Archived chats are left exactly as they are, flag included.
+    public func markAllRead() {
+        for conversation in conversations where !conversation.isArchived && conversation.hasUnread {
+            var cleared = conversation
+            cleared.hasUnread = false
+            replace(cleared)
+            persist(cleared)
+        }
+    }
+
 
     public func setModel(_ model: ModelDescriptor) {
         guard var conversation = selectedConversation else { return }
@@ -1207,6 +1271,7 @@ public final class ChatAppModel {
             base.trimmingCharacters(in: .whitespacesAndNewlines),
             custom,
             memories.isEmpty ? "" : "用户希望你在对话中记住：\n" + memories.joined(separator: "\n"),
+            conversation.goal.map { "本对话的目标：\($0)" } ?? "",
             GenUIGuide.systemPrompt,
         ]
             .filter { !$0.isEmpty }
@@ -1656,6 +1721,65 @@ public final class ChatAppModel {
             checks: checks,
             events: DiagnosticsCenter.shared.recent(50)
         )
+    }
+
+    // MARK: - Thread links
+
+    /// Opens `ompchat://thread/<uuid>`: selects the conversation when it
+    /// exists, otherwise says it cannot be found.
+    public func openThreadLink(_ url: URL) {
+        guard let id = ThreadLink.threadID(in: url) else { return }
+        if conversations.contains(where: { $0.id == id }) {
+            selectedConversationID = id
+        } else {
+            showError("找不到这个对话")
+        }
+    }
+
+    /// Official Codex `threadHeader.continueActions`: rebinds THIS thread
+    /// instead of copying it. `directory` nil unbinds it. Returns a failure
+    /// message, nil on success.
+    @discardableResult
+    public func continueConversation(_ id: UUID, directory: String?) -> String? {
+        guard conversation(id) != nil else { return "找不到这个对话" }
+        updateWorkingDirectory(id, directory)
+        return nil
+    }
+
+    /// 继续于 新建 Worktree: the same `git worktree add` fork uses, but the
+    /// checkout is bound back onto this conversation rather than a copy.
+    @discardableResult
+    public func continueInNewWorktree(_ id: UUID) async -> String? {
+        guard let original = conversation(id) else { return "找不到这个对话" }
+        #if os(iOS)
+        return "新建 Worktree 只能在 Mac 上做"
+        #else
+        let repository = original.workingDirectory ?? FileManager.default.currentDirectoryPath
+        guard let git = GitBinary.resolve() else { return "这台 Mac 上没有可用的 git" }
+        let plan = WorktreeFork.plan(
+            title: original.title,
+            id: original.id,
+            repository: repository,
+            baseDirectory: settings.worktreeBaseDirectory,
+            branchPrefix: settings.worktreeBranchPrefix
+        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: git)
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: repository)
+        let pipe = Pipe()
+        process.standardError = pipe
+        process.standardOutput = Pipe()
+        do { try process.run() } catch { return error.localizedDescription }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? "git worktree add 失败（退出码 \(process.terminationStatus)）" : text
+        }
+        updateWorkingDirectory(original.id, plan.path)
+        return nil
+        #endif
     }
 }
 

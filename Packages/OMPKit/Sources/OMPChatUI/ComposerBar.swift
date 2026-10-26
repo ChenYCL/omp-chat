@@ -8,6 +8,8 @@ public struct ComposerBar: View {
     @State private var importingFiles = false
     @State private var showImageSheet = false
     @State private var showOptionsSheet = false
+    @State private var showGoalPopover = false
+    @State private var goalDraft = ""
     @State private var showMCPSheet = false
     @State private var showVoiceSheet = false
     @State private var showModelPicker = false
@@ -189,6 +191,12 @@ public struct ComposerBar: View {
                         Label("MCP 工具", systemImage: "powerplug")
                     }
                 }
+                Button {
+                    beginGoalEdit()
+                } label: {
+                    Label("设定目标", systemImage: "target")
+                }
+                .accessibilityIdentifier("composer.goal.set")
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -204,6 +212,7 @@ public struct ComposerBar: View {
 
             webSearchPill
             formatPills
+            blockFormatMenu
             modelPill
 
             Button {
@@ -283,6 +292,89 @@ public struct ComposerBar: View {
         }
     }
 
+    /// Block styles for the draft's last paragraph (official
+    /// composer.formatToolbar beyond B/I/U).
+    private var blockFormatMenu: some View {
+        Menu {
+            Button("标题 1") { model.applyBlockFormat(.heading(1)) }
+            Button("标题 2") { model.applyBlockFormat(.heading(2)) }
+            Button("标题 3") { model.applyBlockFormat(.heading(3)) }
+            Button("段落") { model.applyBlockFormat(.paragraph) }
+            Divider()
+            Button("无序列表") { model.applyBlockFormat(.bulletedList) }
+            Button("有序列表") { model.applyBlockFormat(.numberedList) }
+            Button("链接") { model.applyBlockFormat(.link) }
+        } label: {
+            Text("Aa")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.ompTextSecondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityIdentifier("composer.format.blocks")
+        .accessibilityLabel("段落格式")
+        .help("段落格式")
+    }
+
+    /// Opens the goal editor seeded with the current goal.
+    private func beginGoalEdit() {
+        goalDraft = model.selectedConversation?.goal ?? ""
+        showGoalPopover = true
+    }
+
+    /// 「目标：…」 chip, shown only while this thread has a goal.
+    @ViewBuilder
+    private var goalChip: some View {
+        if let goal = model.selectedConversation?.goal, !goal.isEmpty {
+            Button {
+                beginGoalEdit()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "target")
+                        .font(.system(size: 9))
+                    Text("目标：\(goal)")
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("composer.goal.chip")
+            .accessibilityLabel("目标：\(goal)")
+            .help(goal)
+        }
+    }
+
+    /// Edits or clears the thread goal.
+    private var goalPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("本对话的目标")
+                .font(.system(size: 12, weight: .semibold))
+            TextField("这个对话要达成什么", text: $goalDraft)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("composer.goal.field")
+            HStack {
+                Button("清除") {
+                    if let id = model.selectedConversationID { model.setGoal(id, nil) }
+                    showGoalPopover = false
+                }
+                .accessibilityIdentifier("composer.goal.clear")
+                Spacer()
+                Button("完成") {
+                    if let id = model.selectedConversationID { model.setGoal(id, goalDraft) }
+                    showGoalPopover = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("composer.goal.save")
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+    }
+
     /// 🌐 联网 toggle pill (real `webSearchEnabled` state).
     private var webSearchPill: some View {
         Button {
@@ -329,11 +421,15 @@ public struct ComposerBar: View {
                         .font(.system(size: 10.5, design: .monospaced))
                 }
             }
+            goalChip
             Spacer()
         }
         .foregroundStyle(Color.ompTextTertiary)
         .padding(.horizontal, 6)
         .padding(.bottom, 2)
+        .popover(isPresented: $showGoalPopover, arrowEdge: .top) {
+            goalPopover
+        }
     }
 
     /// Active @-mention query: the token after the last `@` when it contains no

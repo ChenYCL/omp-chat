@@ -83,4 +83,45 @@ final class ForkConversationTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: path + "/a.txt"), "新 worktree 应有仓库内容")
         XCTAssertTrue(path.hasPrefix(root.path), "新 worktree 应在仓库旁边")
     }
+
+    /// 继续于 新建 Worktree moves the same conversation instead of copying it.
+    func testContinueInWorktreeRebindsTheSameConversation() async throws {
+        guard let git = GitBinary.resolve() else { throw XCTSkip("no git") }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ompchat-cont-\(UUID().uuidString)", isDirectory: true)
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        func run(_ args: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: git)
+            process.arguments = args
+            process.currentDirectoryURL = repo
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "git \(args.joined(separator: " ")) 失败")
+        }
+        try run(["init", "-q"])
+        try run(["config", "user.email", "probe@example.com"])
+        try run(["config", "user.name", "probe"])
+        try "hello".write(to: repo.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try run(["add", "-A"])
+        try run(["commit", "-qm", "init"])
+
+        let (m, id) = model()
+        m.updateWorkingDirectory(id, repo.path)
+        let before = m.conversations.count
+        let failure = await m.continueInNewWorktree(id)
+        XCTAssertNil(failure, "继续于新建 Worktree 应成功：\(failure ?? "")")
+
+        XCTAssertEqual(m.conversations.count, before, "继续于不复制对话")
+        let rebound = m.conversations.first { $0.id == id }
+        let path = try XCTUnwrap(rebound?.workingDirectory, "原对话应改绑到新目录")
+        XCTAssertNotEqual(path, repo.path, "应离开原来的目录")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path + "/a.txt"), "新 worktree 应有仓库内容")
+        XCTAssertTrue(path.hasPrefix(root.path), "新 worktree 应在仓库旁边")
+    }
 }

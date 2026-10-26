@@ -775,12 +775,26 @@ struct ShellDrawer: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     if search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !priorityConversations.isEmpty {
-                        Text("待处理")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(Color.ompTextTertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 2)
-                            .padding(.bottom, 4)
+                        HStack {
+                            Text("待处理")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(Color.ompTextTertiary)
+                            Spacer()
+                            Button {
+                                model.markAllRead()
+                            } label: {
+                                Label("全部标为已读", systemImage: "envelope.open")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.accentColor)
+                                    .labelStyle(.titleAndIcon)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("全部标为已读")
+                            .accessibilityIdentifier("drawer.markAllRead")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 2)
+                        .padding(.bottom, 4)
                         ForEach(priorityConversations) { conv in
                             conversationRow(conv)
                         }
@@ -1021,10 +1035,74 @@ struct PaseoComposerBar: View {
     @State private var showVoiceSheet = false
     @State private var showImageSheet = false
     @State private var importingFile = false
+    @State private var showGoalAlert = false
+    @State private var goalDraft = ""
 
     var body: some View {
         @Bindable var model = model
-        HStack(alignment: .bottom, spacing: 8) {
+        VStack(spacing: 6) {
+            if let goal = model.selectedConversation?.goal, !goal.isEmpty {
+                Button {
+                    beginGoalEdit()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "target")
+                            .font(.system(size: 10))
+                        Text("目标：\(goal)")
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.ompFill, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer.goal.chip")
+                .accessibilityLabel("目标：\(goal)")
+                .padding(.horizontal, 12)
+            }
+            composerRow
+        }
+        .sheet(isPresented: $showVoiceSheet) {
+            VoiceModeSheet().environment(model)
+        }
+        .fileImporter(isPresented: $importingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                do { try model.attach(url: url, removeSandboxScope: scoped) }
+                catch { model.dismissError() }
+            }
+        }
+        .sheet(isPresented: $showImageSheet) {
+            ImageGenerationSheet().environment(model)
+        }
+        .alert("本对话的目标", isPresented: $showGoalAlert) {
+            TextField("这个对话要达成什么", text: $goalDraft)
+            Button("清除", role: .destructive) {
+                if let id = model.selectedConversationID { model.setGoal(id, nil) }
+            }
+            .accessibilityIdentifier("composer.goal.clear")
+            Button("完成") {
+                if let id = model.selectedConversationID { model.setGoal(id, goalDraft) }
+            }
+            .accessibilityIdentifier("composer.goal.save")
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    /// Opens the goal editor seeded with the current goal.
+    private func beginGoalEdit() {
+        goalDraft = model.selectedConversation?.goal ?? ""
+        showGoalAlert = true
+    }
+
+    private var composerRow: some View {
+        @Bindable var model = model
+        return HStack(alignment: .bottom, spacing: 8) {
             Menu {
                 if !model.imageModels.isEmpty {
                     Button {
@@ -1056,6 +1134,12 @@ struct PaseoComposerBar: View {
                         model.draft = "请为以下模块编写严谨的单元测试，覆盖正常路径、边界值与错误分支：\n\n```\n\n```"
                     }
                 }
+                Button {
+                    beginGoalEdit()
+                } label: {
+                    Label("设定目标", systemImage: "target")
+                }
+                .accessibilityIdentifier("composer.goal.set")
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 16, weight: .medium))
@@ -1087,20 +1171,6 @@ struct PaseoComposerBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
-        .sheet(isPresented: $showVoiceSheet) {
-            VoiceModeSheet().environment(model)
-        }
-        .fileImporter(isPresented: $importingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
-            for url in urls {
-                let scoped = url.startAccessingSecurityScopedResource()
-                do { try model.attach(url: url, removeSandboxScope: scoped) }
-                catch { model.dismissError() }
-            }
-        }
-        .sheet(isPresented: $showImageSheet) {
-            ImageGenerationSheet().environment(model)
-        }
     }
 
     @ViewBuilder

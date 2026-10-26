@@ -36,6 +36,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var speechVoiceLanguage: String
     /// Sidebar ordering: "updated" (default), "created", or "manual".
     public var conversationSort: String
+    /// Sidebar grouping: "project" (default) or "connection".
+    public var sidebarGrouping: String
+    /// Sidebar filter: "all" (default), "chat", or "work".
+    public var sidebarFilter: String
     /// Global custom instructions appended after the base system prompt
     /// (ChatGPT `settings.personalization.customInstructions`).
     public var customInstructions: String
@@ -72,6 +76,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var relayAllowShell: Bool
     /// iOS: every Mac this phone has paired with, newest first.
     public var pairedDevices: [PairedDevice]
+    /// macOS: where 新建 Worktree checkouts live. Empty = beside the repository.
+    public var worktreeBaseDirectory: String
+    /// macOS: prefix for new worktree branch names, e.g. "omp". Empty = none.
+    public var worktreeBranchPrefix: String
 
     public init(
         version: Int = 1,
@@ -89,6 +97,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         speechRateMultiplier: Double = 1.0,
         speechVoiceLanguage: String = "zh-CN",
         conversationSort: String = "updated",
+        sidebarGrouping: String = "project",
+        sidebarFilter: String = "all",
         customInstructions: String = "",
         enableMemories: Bool = false,
         memories: String = "",
@@ -105,6 +115,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remoteHubURL: String = "",
         remoteRoomCode: String = "",
         relayAllowShell: Bool = false,
+        worktreeBaseDirectory: String = "",
+        worktreeBranchPrefix: String = "",
         pairedDevices: [PairedDevice] = []
     ) {
         self.version = version
@@ -122,6 +134,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.speechRateMultiplier = speechRateMultiplier
         self.speechVoiceLanguage = speechVoiceLanguage
         self.conversationSort = conversationSort
+        self.sidebarGrouping = sidebarGrouping
+        self.sidebarFilter = sidebarFilter
         self.customInstructions = customInstructions
         self.enableMemories = enableMemories
         self.memories = memories
@@ -139,6 +153,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.remoteRoomCode = remoteRoomCode
         self.relayAllowShell = relayAllowShell
         self.pairedDevices = pairedDevices
+        self.worktreeBaseDirectory = worktreeBaseDirectory
+        self.worktreeBranchPrefix = worktreeBranchPrefix
     }
 
     public init(from decoder: Decoder) throws {
@@ -158,6 +174,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         speechRateMultiplier = try container.decodeIfPresent(Double.self, forKey: .speechRateMultiplier) ?? 1.0
         speechVoiceLanguage = try container.decodeIfPresent(String.self, forKey: .speechVoiceLanguage) ?? "zh-CN"
         conversationSort = try container.decodeIfPresent(String.self, forKey: .conversationSort) ?? "updated"
+        sidebarGrouping = try container.decodeIfPresent(String.self, forKey: .sidebarGrouping) ?? "project"
+        sidebarFilter = try container.decodeIfPresent(String.self, forKey: .sidebarFilter) ?? "all"
         customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
         enableMemories = try container.decodeIfPresent(Bool.self, forKey: .enableMemories) ?? false
         memories = try container.decodeIfPresent(String.self, forKey: .memories) ?? ""
@@ -175,17 +193,20 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remoteRoomCode = try container.decodeIfPresent(String.self, forKey: .remoteRoomCode) ?? ""
         relayAllowShell = try container.decodeIfPresent(Bool.self, forKey: .relayAllowShell) ?? false
         pairedDevices = try container.decodeIfPresent([PairedDevice].self, forKey: .pairedDevices) ?? []
+        worktreeBaseDirectory = try container.decodeIfPresent(String.self, forKey: .worktreeBaseDirectory) ?? ""
+        worktreeBranchPrefix = try container.decodeIfPresent(String.self, forKey: .worktreeBranchPrefix) ?? ""
     }
 
     private enum CodingKeys: String, CodingKey {
         case version, defaultProviderID, defaultModelID, sendOnReturn, appearance
         case systemPrompt, temperature, maxOutputTokens, fontSize, soundEffects
         case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage
-        case conversationSort, customInstructions, enableMemories, memories, accentColorHex
+        case conversationSort, sidebarGrouping, sidebarFilter, customInstructions, enableMemories, memories, accentColorHex
         case completionNotifications
         case remoteHost, remotePort, remoteToken
         case relayToken, relayPort, relayEnabled
         case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
         case relayAllowShell, pairedDevices
+        case worktreeBaseDirectory, worktreeBranchPrefix
     }
 }

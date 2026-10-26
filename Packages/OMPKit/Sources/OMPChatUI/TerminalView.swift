@@ -13,8 +13,13 @@ public struct TerminalView: View {
     @State private var workingDirectory = FileManager.default.currentDirectoryPath
     @State private var running = false
     @FocusState private var focused: Bool
+    /// Repository the current thread is bound to. Re-points the prompt while
+    /// the terminal is idle; a running command keeps its own cwd.
+    private let startingDirectory: String?
 
-    public init() {}
+    public init(startingDirectory: String? = nil) {
+        self.startingDirectory = startingDirectory
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -47,7 +52,20 @@ public struct TerminalView: View {
             if lines.isEmpty {
                 append("OMP Chat 终端 — 输入命令直接在本机执行", color: .ompTextTertiary)
             }
+            followStartingDirectory()
         }
+        .onChange(of: startingDirectory) { _, _ in followStartingDirectory() }
+    }
+
+    /// Applies the thread's bound directory when it changes. Only while idle:
+    /// moving the cwd under a running command would change what that command
+    /// operates on mid-flight.
+    private func followStartingDirectory() {
+        guard !running,
+              let target = startingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !target.isEmpty,
+              target != workingDirectory else { return }
+        workingDirectory = target
     }
 
     private var promptText: String {

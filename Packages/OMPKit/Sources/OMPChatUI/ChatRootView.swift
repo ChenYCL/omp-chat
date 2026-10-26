@@ -27,6 +27,7 @@ public struct ChatRootView: View {
 
     public var body: some View {
         @Bindable var bindable = model
+        Group {
         #if os(iOS)
         IOSShell()
             .sheet(isPresented: $bindable.showSettings) {
@@ -56,13 +57,14 @@ public struct ChatRootView: View {
                 model.discardTemporaryConversations()
             }
         #endif
+        }
+        .onOpenURL { url in model.openThreadLink(url) }
     }
 
     // MARK: - macOS (official ChatGPT desktop: single sidebar + main content)
 
     #if os(macOS)
     @State private var sidebarWidth: CGFloat = 260
-    @State private var showTerminal = false
 
     private var macOSRoot: some View {
         HStack(spacing: 0) {
@@ -75,11 +77,13 @@ public struct ChatRootView: View {
             ChatDetailView(
                 onQuickSwitch: { showSwitcher = true },
                 onToggleSidebar: toggleSidebar,
-                onToggleTerminal: { showTerminal.toggle() }
+                onToggleTerminal: { model.toggleSidePanel() }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Terminal / files / changes on the local working tree.
-            if showTerminal {
+            // Terminal / files / changes on the local working tree. The open
+            // flag and the tab live in the model so the relay's debug actions
+            // drive the same panel.
+            if model.sidePanelOpen {
                 Divider()
                 SidePanel()
                     .frame(width: 460)
@@ -88,9 +92,9 @@ public struct ChatRootView: View {
         }
         .background(Color.ompCanvas)
         .animation(Theme.Motion.quick, value: sidebarVisible)
-        .animation(Theme.Motion.quick, value: showTerminal)
+        .animation(Theme.Motion.quick, value: model.sidePanelOpen)
         .onReceive(NotificationCenter.default.publisher(for: .ompToggleTerminal)) { _ in
-            showTerminal.toggle()
+            model.toggleSidePanel()
         }
     }
 
@@ -132,6 +136,8 @@ public struct ChatDetailView: View {
     @State private var matchCursor: UUID?
     @State private var showRenameAlert = false
     @State private var renamingTitle = ""
+    /// 继续于 选择文件夹… is presented.
+    @State private var choosingDirectory = false
     @ObservedObject private var network = NetworkMonitor.shared
 
     public init(
@@ -204,6 +210,19 @@ public struct ChatDetailView: View {
             allowsMultipleSelection: false
         ) { result in
             if case .success(let urls) = result, let url = urls.first { importJSON(url) }
+        }
+        .fileImporter(
+            isPresented: $choosingDirectory,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let id = model.selectedConversationID,
+               let failure = model.continueConversation(id, directory: url.path) {
+                model.showError("继续失败：\(failure)")
+            }
         }
         .alert("导入失败", isPresented: Binding(
             get: { importFailure != nil },
@@ -310,6 +329,52 @@ public struct ChatDetailView: View {
                     } label: {
                         Label("分叉对话", systemImage: "arrow.triangle.branch")
                     }
+
+                    // Official threadHeader.continueActions: moves THIS thread.
+                    Menu {
+                        Button("本地（不绑定目录）") {
+                            if let failure = model.continueConversation(conversation.id, directory: nil) {
+                                model.showError("继续失败：\(failure)")
+                            }
+                        }
+                        .disabled(conversation.workingDirectory == nil)
+
+                        Button("选择文件夹…") { choosingDirectory = true }
+
+                        Button("新建 Worktree") {
+                            Task {
+                                if let failure = await model.continueInNewWorktree(conversation.id) {
+                                    model.showError("继续失败：\(failure)")
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("继续于", systemImage: "arrow.right.circle")
+                    }
+
+                    // Official threadHeader.copyActions.
+                    Menu {
+                        Button {
+                            copyToPasteboard(model.exportMarkdown(conversation))
+                        } label: {
+                            Label("复制为 Markdown", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            copyToPasteboard(ThreadLink.url(for: conversation.id).absoluteString)
+                        } label: {
+                            Label("复制应用链接", systemImage: "link")
+                        }
+                        Button {
+                            if let directory = conversation.workingDirectory {
+                                copyToPasteboard(directory)
+                            }
+                        } label: {
+                            Label("复制工作目录", systemImage: "folder")
+                        }
+                        .disabled(conversation.workingDirectory == nil)
+                    } label: {
+                        Label("复制", systemImage: "doc.on.doc")
+                    }
     Divider()
 
     Menu("导出对话") {
@@ -339,13 +404,6 @@ public struct ChatDetailView: View {
         Label("导入 JSON 对话", systemImage: "square.and.arrow.down")
     }
 
-    Button {
-        if let conversation = model.selectedConversation {
-            copyToPasteboard(model.exportMarkdown(conversation))
-        }
-    } label: {
-        Label("复制整篇对话内容", systemImage: "doc.on.doc")
-    }
 
     Button {
         showOptions = true
@@ -384,6 +442,27 @@ public struct ChatDetailView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
+
+                if let directory = conversation.workingDirectory {
+                    Button {
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 10))
+                            Text(GitInfo.tildified(directory))
+                                .font(.system(size: 11).monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .foregroundStyle(Color.ompTextTertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.ompFill, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(directory)
+                }
             }
 
             Spacer()

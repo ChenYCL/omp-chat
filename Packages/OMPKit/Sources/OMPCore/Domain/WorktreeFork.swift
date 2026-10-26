@@ -44,12 +44,35 @@ public enum WorktreeFork {
         return "\(slug)-\(id.uuidString.prefix(8).lowercased())"
     }
 
-    /// The `git worktree add` invocation for a fork of `title`.
-    public static func plan(title: String, id: UUID, repository: String) -> Plan {
+    /// Git branch names cannot contain these, and spaces make commands brittle.
+    static func sanitisedBranchPrefix(_ prefix: String) -> String {
+        var cleaned = String(prefix.lowercased().map { character -> Character in
+            character.isLetter || character.isNumber ? character : "-"
+        })
+        while cleaned.contains("--") { cleaned = cleaned.replacingOccurrences(of: "--", with: "-") }
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return cleaned
+    }
+
+    /// The `git worktree add` invocation for a fork of `title`. `baseDirectory`
+    /// empty means beside the repository, `branchPrefix` empty means bare slug.
+    public static func plan(
+        title: String,
+        id: UUID,
+        repository: String,
+        baseDirectory: String = "",
+        branchPrefix: String = ""
+    ) -> Plan {
         let name = slug(title: title, id: id)
-        let path = (repository as NSString).deletingLastPathComponent + "/" + name
+        let prefix = sanitisedBranchPrefix(branchPrefix)
+        let branch = prefix.isEmpty ? name : "\(prefix)-\(name)"
+        let parent = baseDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = parent.isEmpty
+            ? (repository as NSString).deletingLastPathComponent
+            : parent.hasSuffix("/") ? String(parent.dropLast()) : parent
+        let path = base + "/" + name
         return Plan(
-            arguments: ["worktree", "add", "-b", name, path],
+            arguments: ["worktree", "add", "-b", branch, path],
             path: path
         )
     }
