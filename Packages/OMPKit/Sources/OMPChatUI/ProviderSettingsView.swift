@@ -658,10 +658,15 @@ public struct ProviderSettingsView: View {
             TextField("全局自定义指令", text: $draft.customInstructions, axis: .vertical)
                 .lineLimit(3...8)
             Toggle("记忆上下文（跨对话记住要点）", isOn: $draft.enableMemories)
+            if draft.enableMemories {
+                TextField("记忆（每行一条）", text: $draft.memories, axis: .vertical)
+                    .lineLimit(3...8)
+                    .accessibilityIdentifier("settings.memories")
+            }
         } header: {
             Text("个性化")
         } footer: {
-            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效；「ChatGPT → 设置 → 个性化 → 自定义指令」同款。")
+            Text("全局自定义指令会拼在系统提示词后，单对话留空时生效。开启记忆后，每条记忆都会随请求发给模型。")
         }
     }
 

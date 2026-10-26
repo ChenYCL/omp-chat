@@ -1122,15 +1122,39 @@ public final class ChatAppModel {
             .first
     }
 
+    /// The system prompt as it would be sent. Exposed so the memory wiring can
+    /// be tested without a network round trip.
+    public func debugSystemPrompt(for conversation: Conversation) -> String? {
+        systemPrompt(for: conversation)
+    }
+
     private func systemPrompt(for conversation: Conversation) -> String? {
         let base = (conversation.systemPrompt ?? "").isEmpty ? settings.systemPrompt : (conversation.systemPrompt ?? "")
         let custom = settings.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
         // The omp-ui guide always rides last so the client can render native
         // interfaces; user/system instructions above it still take priority.
-        let combined = [base.trimmingCharacters(in: .whitespacesAndNewlines), custom, GenUIGuide.systemPrompt]
+        let memories = memoryLines
+        let combined = [
+            base.trimmingCharacters(in: .whitespacesAndNewlines),
+            custom,
+            memories.isEmpty ? "" : "用户希望你在对话中记住：\n" + memories.joined(separator: "\n"),
+            GenUIGuide.systemPrompt,
+        ]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
         return combined
+    }
+
+    /// The memory lines to send, one per non-empty line, or none when the
+    /// switch is off. Capped so a pasted log cannot flood every request.
+    private var memoryLines: [String] {
+        guard settings.enableMemories else { return [] }
+        return settings.memories
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .prefix(50)
+            .map { $0 }
     }
 
     private func conversation(_ id: UUID) -> Conversation? {

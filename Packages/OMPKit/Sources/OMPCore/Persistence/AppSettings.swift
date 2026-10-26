@@ -39,8 +39,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Global custom instructions appended after the base system prompt
     /// (ChatGPT `settings.personalization.customInstructions`).
     public var customInstructions: String
-    /// Remember context between chats (memory.enableMemories).
+    /// Master switch for memories (memory.enableMemories).
     public var enableMemories: Bool
+    /// One memory per line, typed by the user. When `enableMemories` is on these
+    /// are appended to the system prompt; the switch used to control nothing.
+    public var memories: String
     /// Custom accent color hex; empty means follow the system tint.
     public var accentColorHex: String
     /// Notify when a reply finishes while the app is in the background.
@@ -88,6 +91,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         conversationSort: String = "updated",
         customInstructions: String = "",
         enableMemories: Bool = false,
+        memories: String = "",
         accentColorHex: String = "",
         completionNotifications: Bool = false,
         remoteHost: String = "",
@@ -120,6 +124,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.conversationSort = conversationSort
         self.customInstructions = customInstructions
         self.enableMemories = enableMemories
+        self.memories = memories
         self.accentColorHex = accentColorHex
         self.completionNotifications = completionNotifications
         self.remoteHost = remoteHost
@@ -155,6 +160,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         conversationSort = try container.decodeIfPresent(String.self, forKey: .conversationSort) ?? "updated"
         customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
         enableMemories = try container.decodeIfPresent(Bool.self, forKey: .enableMemories) ?? false
+        memories = try container.decodeIfPresent(String.self, forKey: .memories) ?? ""
         accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex) ?? ""
         completionNotifications = try container.decodeIfPresent(Bool.self, forKey: .completionNotifications) ?? false
         remoteHost = try container.decodeIfPresent(String.self, forKey: .remoteHost) ?? ""
@@ -175,7 +181,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case version, defaultProviderID, defaultModelID, sendOnReturn, appearance
         case systemPrompt, temperature, maxOutputTokens, fontSize, soundEffects
         case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage
-        case conversationSort, customInstructions, enableMemories, accentColorHex
+        case conversationSort, customInstructions, enableMemories, memories, accentColorHex
         case completionNotifications
         case remoteHost, remotePort, remoteToken
         case relayToken, relayPort, relayEnabled
