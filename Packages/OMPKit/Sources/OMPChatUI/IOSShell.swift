@@ -198,7 +198,11 @@ struct ChatScreen: View {
                     emptyState
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
+                    // Same appearance settings as the desktop transcript.
                     ChatTranscriptView()
+                        .environment(\.ompBodyFontSize, model.settings.fontSize)
+                        .environment(\.ompCodeFontName, model.settings.codeFontName)
+                        .environment(\.ompShowLineNumbers, model.settings.showLineNumbers)
                     VStack(spacing: 8) {
                         scrollChevron
                         IOSStatusChips(showingSubagents: $showingSubagents)

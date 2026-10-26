@@ -162,11 +162,11 @@ public struct ChatDetailView: View {
             // Official three layers: Surface → Viewport(scroll) → Frame(768 centered).
             #if os(macOS)
             ZStack(alignment: .top) {
-                mainViewport.environment(\.ompSearchHighlight, activeQuery)
+                themedViewport
                 MainContentTopFade()
             }
             #else
-            mainViewport.environment(\.ompSearchHighlight, activeQuery)
+            themedViewport
             #endif
         }
         .background(Color.ompCanvas)
@@ -439,6 +439,16 @@ public struct ChatDetailView: View {
         .disabled(matches.count < 2)
         .keyboardShortcut(key, modifiers: .control)
         .help(help)
+    }
+
+    /// The transcript with the appearance settings applied: search highlight,
+    /// body size, code font, code line numbers.
+    private var themedViewport: some View {
+        mainViewport
+            .environment(\.ompSearchHighlight, activeQuery)
+            .environment(\.ompBodyFontSize, model.settings.fontSize)
+            .environment(\.ompCodeFontName, model.settings.codeFontName)
+            .environment(\.ompShowLineNumbers, model.settings.showLineNumbers)
     }
 
     /// The term to highlight: only while the search bar is open and non-empty.

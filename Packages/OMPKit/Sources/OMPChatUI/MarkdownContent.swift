@@ -5,6 +5,12 @@ import OMPDesign
 /// Lightweight markdown: fenced code blocks are split out so they can render
 /// as selectable monospaced cards; everything else uses inline markdown.
 extension EnvironmentValues {
+    /// Body text size from 设置 → 外观 → 字号. `Theme.Typography.body` is a
+    /// constant, so the slider had no effect until the rendered text read this.
+    @Entry var ompBodyFontSize: Double = 16
+    /// 设置 → 外观 → 代码字体; "SF Mono" maps to the system monospaced face.
+    @Entry var ompCodeFontName: String = "SF Mono"
+    @Entry var ompShowLineNumbers: Bool = true
     /// In-chat search term. Text matching it is drawn with a highlight so the
     /// jumped-to message shows *where* the hit is, not just that it exists.
     @Entry var ompSearchHighlight: String? = nil
@@ -13,6 +19,9 @@ extension EnvironmentValues {
 public struct MarkdownText: View {
     private let segments: [Segment]
     @Environment(\.ompSearchHighlight) private var highlight
+    @Environment(\.ompBodyFontSize) private var bodySize
+
+    private var bodyFont: Font { .system(size: bodySize) }
 
     public init(_ text: String) {
         self.segments = Segment.parse(text)
@@ -25,7 +34,7 @@ public struct MarkdownText: View {
                 case .text(let value):
                     if let attributed = Self.inlineAttributed(value, highlighting: highlight) {
                         Text(attributed)
-                            .font(Theme.Typography.body)
+                            .font(bodyFont)
                             .lineSpacing(10)
                             .textSelection(.enabled)
                             .tint(Color.ompDynamic(light: 0x3A83F7, dark: 0x63A8F8))
@@ -40,7 +49,7 @@ public struct MarkdownText: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text(value)
-                            .font(Theme.Typography.body)
+                            .font(bodyFont)
                             .lineSpacing(10)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -59,7 +68,7 @@ public struct MarkdownText: View {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("•")
-                                    .font(Theme.Typography.body)
+                                    .font(bodyFont)
                                     .foregroundStyle(Color.ompTextSecondary)
                                 inlineText(item)
                             }
@@ -71,7 +80,7 @@ public struct MarkdownText: View {
                         ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("\(index + 1).")
-                                    .font(Theme.Typography.body)
+                                    .font(bodyFont)
                                     .foregroundStyle(Color.ompTextSecondary)
                                     .monospacedDigit()
                                 inlineText(item)
@@ -122,7 +131,7 @@ public struct MarkdownText: View {
                 Text(value)
             }
         }
-        .font(Theme.Typography.body)
+        .font(bodyFont)
         .foregroundStyle(color)
         .lineSpacing(10)
         .textSelection(.enabled)
@@ -448,6 +457,16 @@ public struct CodeBlockView: View {
     let language: String?
     let code: String
     @Environment(\.ompSearchHighlight) private var highlight
+    /// 设置 → 外观: the code font and whether the gutter is drawn. Both were
+    /// settable and read by nothing.
+    @Environment(\.ompCodeFontName) private var codeFontName
+    @Environment(\.ompShowLineNumbers) private var showLineNumbers
+
+    private var codeFont: Font {
+        codeFontName == "SF Mono"
+            ? .system(size: 13, design: .monospaced)
+            : .custom(codeFontName, size: 13)
+    }
 
     /// Blocks longer than this fold behind an "展开全部 / 收起" pill.
     private static let foldThreshold = 20
@@ -526,16 +545,18 @@ public struct CodeBlockView: View {
         // code scrolls horizontally (ChatGPT desktop behaviour).
         ScrollView([.horizontal, .vertical], showsIndicators: true) {
             HStack(alignment: .top, spacing: 10) {
+                if showLineNumbers {
                 VStack(alignment: .trailing, spacing: 3) {
                     ForEach(0..<visibleLineCount, id: \.self) { i in
                         Text("\(i + 1)")
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(codeFont)
                             .foregroundStyle(Color.ompTextTertiary.opacity(0.6))
                     }
                 }
                 .frame(width: 40, alignment: .trailing)
                 .padding(.vertical, 14)
                 .padding(.leading, 8)
+                }
 
                 if isDiff {
                     VStack(alignment: .leading, spacing: 3) {
@@ -543,7 +564,7 @@ public struct CodeBlockView: View {
                             let isAdd = line.hasPrefix("+") && !line.hasPrefix("+++")
                             let isDel = line.hasPrefix("-") && !line.hasPrefix("---")
                             Text(line.isEmpty ? " " : line)
-                                .font(.system(size: 13, design: .monospaced))
+                                .font(codeFont)
                                 .foregroundStyle(isAdd ? Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2) : (isDel ? Color.ompFlat(rgb: 0xDE4A43) : Color.ompText))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 4)
@@ -555,7 +576,7 @@ public struct CodeBlockView: View {
                     .textSelection(.enabled)
                 } else {
                     Text(Self.highlightedCode(visibleCode, query: highlight))
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(codeFont)
                         .lineSpacing(2)
                         .textSelection(.enabled)
                         .padding(.vertical, 14)
