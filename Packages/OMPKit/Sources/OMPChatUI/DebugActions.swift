@@ -34,7 +34,9 @@ enum DebugActions {
             model.toggleSidePanel(open: open, tab: tab)
             return .success
 
-        case .openSettings:
+        case .openSettings(let section):
+            // Set before opening so a freshly created window picks it up too.
+            if let section { model.requestedSettingsSection = section }
             return await openSettings()
 
         case .closeSettings:
@@ -98,6 +100,91 @@ enum DebugActions {
             guard let id = existingID(raw, in: model) else { return .failure("no such conversation") }
             model.deleteConversation(id)
             return .success
+
+        case .dismissError:
+            model.dismissError()
+            return .success
+
+        case .sideChat(let raw, let text):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(model.sendSideChat(text, about: id))
+
+        case .clearSideChat(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.clearSideChat(id)
+            return .success
+
+        case .stopSideChat:
+            model.stopSideChat()
+            return .success
+
+        case .browserOpenTab(let url, let rightOf):
+            var anchor: UUID?
+            if let rightOf {
+                guard let id = tabID(rightOf, in: model) else { return .failure("no such tab") }
+                anchor = id
+            }
+            model.openBrowserTab(url: url, rightOf: anchor)
+            return .success
+
+        case .browserCloseTab(let raw):
+            guard let id = tabID(raw, in: model) else { return .failure("no such tab") }
+            model.closeBrowserTab(id)
+            return .success
+
+        case .browserDuplicateTab(let raw):
+            guard let id = tabID(raw, in: model) else { return .failure("no such tab") }
+            return model.duplicateBrowserTab(id) == nil ? .failure("duplicate failed") : .success
+
+        case .browserRenameTab(let raw, let title):
+            guard let id = tabID(raw, in: model) else { return .failure("no such tab") }
+            model.renameBrowserTab(id, to: title)
+            return .success
+
+        case .browserSelectTab(let raw):
+            guard let id = tabID(raw, in: model) else { return .failure("no such tab") }
+            model.selectBrowserTab(id)
+            return .success
+
+        case .browserNavigate(let raw, let url):
+            guard let id = tabID(raw, in: model) else { return .failure("no such tab") }
+            model.navigateBrowserTab(id, to: url)
+            return .success
+
+        case .git(let raw, let operation):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            guard let directory = model.conversations.first(where: { $0.id == id })?.workingDirectory else {
+                return .failure("这个对话没有绑定工作目录")
+            }
+            return await runGit(operation, in: directory, model: model)
+        }
+    }
+
+    /// Runs one 改动-tab write through the model, so the tab re-reads status
+    /// exactly as it does after a click.
+    private static func runGit(_ operation: DebugGitOperation, in directory: String, model: ChatAppModel) async -> DebugActionOutcome {
+        do {
+            switch operation {
+            case .stage(let paths):
+                try await model.changeWorkingTree { try GitWorkingTree.stage(paths, in: directory) }
+            case .unstage(let paths):
+                try await model.changeWorkingTree { try GitWorkingTree.unstage(paths, in: directory) }
+            case .stageAll:
+                try await model.changeWorkingTree { try GitWorkingTree.stageAll(in: directory) }
+            case .unstageAll:
+                try await model.changeWorkingTree { try GitWorkingTree.unstageAll(in: directory) }
+            case .discard(let path):
+                try await model.changeWorkingTree { try GitWorkingTree.discard(path, in: directory) }
+            case .commit(let message):
+                _ = try await model.changeWorkingTree { try GitWorkingTree.commit(message: message, in: directory) }
+            case .push:
+                _ = try await model.changeWorkingTree { try GitWorkingTree.push(in: directory) }
+            }
+            return .success
+        } catch let failure as GitWorkingTree.Failure {
+            return .failure(failure.message)
+        } catch {
+            return .failure(error.localizedDescription)
         }
     }
 
@@ -112,6 +199,20 @@ enum DebugActions {
             var workingDirectory: String?
             var messageCount: Int
             var hasUnread: Bool
+            /// The selected thread's side chat; never part of the thread.
+            var sideChat: [SideChatLine]
+        }
+        struct SideChatLine: Encodable {
+            var role: String
+            var text: String
+            var status: String
+            var error: String?
+        }
+        struct BrowserTabLine: Encodable {
+            var id: String
+            var title: String
+            var url: String
+            var selected: Bool
         }
         struct State: Encodable {
             var selectedID: String?
@@ -127,6 +228,10 @@ enum DebugActions {
             var sidebarFilter: String
             var sidePanelOpen: Bool
             var sidePanelTab: String?
+            var sideChatStreaming: Bool
+            /// The banner above the thread, if one is showing.
+            var errorMessage: String?
+            var browserTabs: [BrowserTabLine]
             var settingsOpen: Bool
             var windowTitles: [String]
         }
@@ -137,7 +242,10 @@ enum DebugActions {
                 goal: $0.goal,
                 workingDirectory: $0.workingDirectory,
                 messageCount: $0.messages.count,
-                hasUnread: $0.hasUnread
+                hasUnread: $0.hasUnread,
+                sideChat: model.sideChat(for: $0.id).map {
+                    SideChatLine(role: $0.role.rawValue, text: $0.concatenatedText, status: $0.status.rawValue, error: $0.errorText)
+                }
             )
         }
         let state = State(
@@ -151,6 +259,14 @@ enum DebugActions {
             sidebarFilter: model.settings.sidebarFilter,
             sidePanelOpen: model.sidePanelOpen,
             sidePanelTab: model.sidePanelOpen ? model.sidePanelTab.rawValue : nil,
+            sideChatStreaming: model.sideChatStreamingID != nil,
+            errorMessage: model.errorMessage,
+            browserTabs: model.browserTabs.tabs.map {
+                BrowserTabLine(
+                    id: $0.id.uuidString, title: $0.displayTitle, url: $0.url,
+                    selected: $0.id == model.browserTabs.selectedID
+                )
+            },
             settingsOpen: visibleSettingsWindow() != nil,
             windowTitles: AppSnapshot.windows().filter(\.visible).map(\.title).filter { !$0.isEmpty }
         )
@@ -166,6 +282,12 @@ enum DebugActions {
         guard let id = UUID(uuidString: raw), model.conversations.contains(where: { $0.id == id }) else {
             return nil
         }
+        return id
+    }
+
+    /// A UUID string that names an open browser tab.
+    private static func tabID(_ raw: String, in model: ChatAppModel) -> UUID? {
+        guard let id = UUID(uuidString: raw), model.browserTabs.tab(id) != nil else { return nil }
         return id
     }
 

@@ -7,13 +7,15 @@ never activated and no screen pixels are read. Every feature is checked by its
 observable state; window snapshots are saved for visual review.
 
 It touches as little real data as possible: it works in a conversation it
-creates and deletes, in a temporary git repository it removes, and it puts back
-the selection, sidebar settings and every unread flag it found.
+creates and deletes, in a temporary git repository (with a local bare
+"upstream") it removes, and it puts back the selection, sidebar settings,
+side panel, browser tabs and every unread flag it found.
 
     python3 -I tools/ompshot/scenario_codex.py
-    python3 -I tools/ompshot/scenario_codex.py --shots .artifacts/shots/scenario
+    python3 -I tools/ompshot/scenario_codex.py --live    # also asks the side chat a real question
 
-Exit status is 0 only when every check passed. Needs 设置 → 远程控制 enabled.
+--live is the only part that calls the configured model provider. Exit status
+is 0 only when every check passed. Needs 设置 → 远程控制 enabled.
 """
 
 import argparse
@@ -111,7 +113,7 @@ def settle():
     time.sleep(0.6)
 
 
-def run(relay, shots, check):
+def run(relay, shots, check, live=False):
     baseline = relay.state()
     created = []
     root = f"/private/tmp/omp-scenario-{os.getpid()}"
@@ -126,6 +128,12 @@ def run(relay, shots, check):
         check("closeSettings 成功", relay.act("closeSettings").get("ok"))
         check("设置窗口已关闭", not relay.state()["settingsOpen"])
         check("再次打开（复用已关闭的窗口）", relay.act("openSettings").get("ok") and relay.state()["settingsOpen"])
+        relay.act("closeSettings")
+        check("打开到 用量 分区", relay.act("openSettings", section="usage").get("ok"))
+        settle()
+        settings = next((w for w in relay.windows() if w["title"] == "OMPChat Settings" and w["visible"]), None)
+        if settings:
+            relay.snap(os.path.join(shots, "01b-settings-usage.png"), settings["number"])
         relay.act("closeSettings")
 
         print("新对话与草稿格式")
@@ -166,7 +174,7 @@ def run(relay, shots, check):
         os.makedirs(repo)
         with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as handle:
             handle.write("scenario\n")
-        for args in (("init", "-q"), ("config", "user.email", "scenario@example.com"),
+        for args in (("init", "-q", "-b", "main"), ("config", "user.email", "scenario@example.com"),
                      ("config", "user.name", "scenario"), ("add", "-A"), ("commit", "-qm", "init")):
             git(*args, cwd=repo)
         check("继续于选择文件夹", relay.act("continueIn", mode="folder", path=repo).get("ok"))
@@ -176,17 +184,44 @@ def run(relay, shots, check):
         relay.act("sidePanel", open=True, tab="files")
         settle()
         relay.snap(os.path.join(shots, "04-bound-files.png"))
+
+        print("改动面板：暂存 / 提交 / 丢弃 / 推送")
+        bare = os.path.join(root, "origin.git")
+        git("init", "-q", "--bare", "-b", "main", bare, cwd=root)
+        git("remote", "add", "origin", bare, cwd=repo)
+        git("push", "-q", "-u", "origin", "main", cwd=repo)
         with open(os.path.join(repo, "a.txt"), "a", encoding="utf-8") as handle:
             handle.write("changed\n")
         # A Chinese name with a space: plain porcelain would show it escaped.
-        spaced = os.path.join(repo, "说明 文档.md")
-        with open(spaced, "w", encoding="utf-8") as handle:
+        spaced = "说明 文档.md"
+        with open(os.path.join(repo, spaced), "w", encoding="utf-8") as handle:
             handle.write("新文件\n")
         relay.act("sidePanel", open=True, tab="changes")
         settle()
-        relay.snap(os.path.join(shots, "05-bound-changes.png"))
-        git("checkout", "--", "a.txt", cwd=repo)
-        os.remove(spaced)
+        relay.snap(os.path.join(shots, "05-changes-unstaged.png"))
+
+        def cached():
+            return git("diff", "--cached", "--name-only", cwd=repo).stdout.splitlines()
+
+        reply = relay.act("git", op="stage", paths=[spaced])
+        check("暂存中文带空格的文件", reply.get("ok") and spaced in cached(), reply.get("error", ""))
+        check("没点的文件不被暂存", "a.txt" not in cached())
+        settle()
+        relay.snap(os.path.join(shots, "05b-changes-staged.png"))
+        check("空的提交说明被拒绝", not relay.act("git", op="commit", message="  ").get("ok"))
+        reply = relay.act("git", op="commit", message="场景提交：说明文档")
+        subject = git("log", "-1", "--format=%s", cwd=repo).stdout.strip()
+        check("提交成功", reply.get("ok") and subject == "场景提交：说明文档", reply.get("error", subject))
+        check("提交只带暂存的文件", " M a.txt" in git("status", "--porcelain", cwd=repo).stdout)
+        reply = relay.act("git", op="discard", path="a.txt")
+        with open(os.path.join(repo, "a.txt"), encoding="utf-8") as handle:
+            check("丢弃改动回到提交时的内容", reply.get("ok") and handle.read() == "scenario\n")
+        reply = relay.act("git", op="push")
+        head = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        remote = git("rev-parse", "main", cwd=bare).stdout.strip()
+        check("推送到上游", reply.get("ok") and head and head == remote, reply.get("error", f"{head} vs {remote}"))
+        settle()
+        relay.snap(os.path.join(shots, "05c-changes-pushed.png"))
 
         reply = relay.act("continueIn", mode="worktree")
         check("继续于新建 Worktree", reply.get("ok"), reply.get("error", ""))
@@ -237,7 +272,84 @@ def run(relay, shots, check):
               relay.act("openLink", url=f"ompchat://thread/{scenario_id}").get("ok")
               and relay.state()["selectedID"] == scenario_id)
         check("不存在的对话报错", not relay.act("openLink", url=f"ompchat://thread/{uuid.uuid4()}").get("ok"))
+        check("界面上给出提示", relay.state().get("errorMessage") == "找不到这个对话")
+        settle()
+        relay.snap(os.path.join(shots, "07b-error-banner.png"))
+        relay.act("dismissError")
+        check("关掉提示", relay.state().get("errorMessage") is None)
         check("别的链接报错", not relay.act("openLink", url="https://example.com").get("ok"))
+
+        print("侧面板浏览器多标签")
+        relay.act("sidePanel", open=True, tab="browser")
+        base_tabs = relay.state()["browserTabs"]
+        base_ids = [tab["id"] for tab in base_tabs]
+        page = relay.base + "/v1/health"
+
+        def tabs():
+            return relay.state()["browserTabs"]
+
+        def selected_tab():
+            return next((tab for tab in tabs() if tab["selected"]), None)
+
+        check("新建标签页", relay.act("browserOpenTab", url=page).get("ok"))
+        opened = tabs()[-1]
+        check("新标签放在末尾并选中", len(tabs()) == len(base_tabs) + 1 and opened["selected"] and opened["url"] == page)
+        relay.act("browserRenameTab", tabID=opened["id"], title="场景标签")
+        check("重命名", next(t for t in tabs() if t["id"] == opened["id"])["title"] == "场景标签")
+        relay.act("browserDuplicateTab", tabID=opened["id"])
+        current = tabs()
+        copy_tab = current[current.index(next(t for t in current if t["id"] == opened["id"])) + 1]
+        check("复制标签放在右侧、选中、带上地址和名字",
+              copy_tab["selected"] and copy_tab["url"] == page and copy_tab["title"] == "场景标签")
+        relay.act("browserOpenTab", rightOf=base_ids[0])
+        check("在右侧新建标签页", tabs()[1]["selected"] and tabs()[1]["id"] not in base_ids)
+        right_of_first = tabs()[1]["id"]
+        relay.act("browserSelectTab", tabID=copy_tab["id"])
+        relay.act("browserCloseTab", tabID=copy_tab["id"])
+        check("关掉最右边的选中标签，选中左边那个", (selected_tab() or {}).get("id") == opened["id"])
+        relay.act("browserCloseTab", tabID=right_of_first)
+        check("关掉别的标签不改选中", (selected_tab() or {}).get("id") == opened["id"])
+        relay.act("browserNavigate", tabID=opened["id"], url=page + "?scenario=1")
+        check("导航只改这个标签", next(t for t in tabs() if t["id"] == opened["id"])["url"] == page + "?scenario=1")
+        check("不存在的标签报错", not relay.act("browserSelectTab", tabID=str(uuid.uuid4())).get("ok"))
+        settle()
+        time.sleep(1.5)  # let the page load before the snapshot
+        relay.snap(os.path.join(shots, "08-browser-tabs.png"))
+        for tab in tabs():
+            if tab["id"] not in base_ids:
+                relay.act("browserCloseTab", tabID=tab["id"])
+        base_selected = next((tab["id"] for tab in base_tabs if tab["selected"]), None)
+        if base_selected:
+            relay.act("browserSelectTab", tabID=base_selected)
+        check("浏览器标签已还原", [tab["id"] for tab in tabs()] == base_ids)
+
+        print("旁聊")
+        relay.act("select", conversationID=scenario_id)
+        relay.act("sidePanel", open=True, tab="sideChat")
+        reply = relay.act("sideChat", text="  ")
+        check("空问题被拒绝并说明原因", not reply.get("ok") and "空" in (reply.get("error") or ""))
+        check("不存在的对话被拒绝", not relay.act("sideChat", conversationID=str(uuid.uuid4()), text="x").get("ok"))
+        if live:
+            relay.act("setGoal", goal="把协议文档写完")
+            reply = relay.act("sideChat", text="这个对话的目标是什么？只回答目标本身，不要别的字。")
+            check("旁聊发出", reply.get("ok"), reply.get("error", ""))
+            deadline = time.time() + 90
+            while time.time() < deadline and relay.state()["sideChatStreaming"]:
+                time.sleep(1)
+            state = relay.state()
+            lines = state["selected"]["sideChat"]
+            answer = lines[-1] if lines else {}
+            check("旁聊按主对话的目标回答", answer.get("role") == "assistant" and answer.get("status") == "complete"
+                  and "协议文档" in answer.get("text", ""), json.dumps(answer, ensure_ascii=False)[:200])
+            check("主对话没有多出消息", state["selected"]["messageCount"] == 0)
+            settle()
+            relay.snap(os.path.join(shots, "09-side-chat.png"))
+            relay.act("clearSideChat")
+            check("清空旁聊", relay.state()["selected"]["sideChat"] == [])
+            relay.act("setGoal", goal="")
+        else:
+            settle()
+            relay.snap(os.path.join(shots, "09-side-chat-empty.png"))
 
         print("未读与待处理")
         relay.act("setUnread", conversationID=scenario_id, unread=True)
@@ -253,6 +365,8 @@ def run(relay, shots, check):
         relay.act("select", conversationID=scenario_id)
         relay.act("continueIn", mode="local")
         check("解除绑定", relay.state()["selected"].get("workingDirectory") is None)
+        reply = relay.act("git", op="push")
+        check("没绑定目录时 git 操作报错", not reply.get("ok") and "工作目录" in (reply.get("error") or ""))
 
         print("错误输入")
         status, _, _ = relay.call("/debug/action", {"action": "format", "style": "heading4"})
@@ -268,7 +382,7 @@ def run(relay, shots, check):
                 if line.startswith("worktree ") and path != repo:
                     git("worktree", "remove", "--force", path, cwd=repo)
         shutil.rmtree(root, ignore_errors=True)
-        relay.act("sidePanel", open=baseline["sidePanelOpen"])
+        relay.act("sidePanel", open=baseline["sidePanelOpen"], **({"tab": baseline["sidePanelTab"]} if baseline.get("sidePanelTab") else {}))
         if baseline.get("selectedID"):
             relay.act("select", conversationID=baseline["selectedID"])
         relay.act("closeSettings")
@@ -285,15 +399,16 @@ def main():
     parser.add_argument("--port", type=int, default=8795)
     parser.add_argument("--token")
     parser.add_argument("--shots", default=".artifacts/shots/scenario")
+    parser.add_argument("--live", action="store_true", help="旁聊向真实供应商提一个问题")
     args = parser.parse_args()
     if GIT is None:
         sys.exit("没有可用的 git")
     relay = Relay(args.host, args.port, ompshot.resolve_token(args.token))
     check = Checks()
     try:
-        run(relay, args.shots, check)
-    except (RuntimeError, urllib.error.URLError, KeyError) as error:
-        check("场景跑完", False, str(error))
+        run(relay, args.shots, check, live=args.live)
+    except (RuntimeError, urllib.error.URLError, KeyError, StopIteration, IndexError) as error:
+        check("场景跑完", False, f"{type(error).__name__}: {error}")
     print(f"\n{check.passed} 通过，{len(check.failed)} 失败；截图在 {args.shots}")
     sys.exit(0 if not check.failed else 1)
 

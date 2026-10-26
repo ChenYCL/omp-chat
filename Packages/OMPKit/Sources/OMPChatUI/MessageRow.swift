@@ -448,7 +448,7 @@ public struct MessageRow: View {
                     }
                     if usage.reasoningTokens > 0 {
                         HStack {
-                            Text("思考 (Thinking):")
+                            Text("其中思考 (Thinking):")
                             Spacer()
                             Text("\(usage.reasoningTokens)")
                                 .font(.system(size: 11.5).monospacedDigit())

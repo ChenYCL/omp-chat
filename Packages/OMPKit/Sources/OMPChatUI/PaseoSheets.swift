@@ -267,36 +267,44 @@ public struct PaseoUsageSheet: View {
     public init() {}
 
     public var body: some View {
+        let usage = UsageSummary(conversations: model.conversations)
         NavigationStack {
             List {
                 Section("总体统计") {
                     statRow(title: "总会话数", value: "\(model.conversations.count)")
                     statRow(title: "总消息数", value: "\(totalMessages)")
-                    statRow(title: "输入 Token (Prompt)", value: TokenFormat.compact(totalInputTokens))
-                    statRow(title: "输出 Token (Completion)", value: TokenFormat.compact(totalOutputTokens))
-                    statRow(title: "推理 Token", value: TokenFormat.compact(totalReasoningTokens))
-                    statRow(title: "累计消耗 Token", value: TokenFormat.compact(totalTokens))
+                    statRow(title: "请求次数", value: "\(usage.all.requests)")
+                    statRow(title: "输入 Token (Prompt)", value: TokenFormat.compact(usage.all.inputTokens))
+                    statRow(title: "输出 Token (Completion)", value: TokenFormat.compact(usage.all.outputTokens))
+                    statRow(title: "其中推理", value: TokenFormat.compact(usage.all.reasoningTokens))
+                    statRow(title: "累计消耗 Token", value: TokenFormat.compact(usage.all.totalTokens))
                 }
 
-                Section("模型使用分布") {
-                    ForEach(model.models) { descriptor in
-                        let count = model.conversations.filter { $0.modelID == descriptor.id }.count
-                        if count > 0 {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(descriptor.displayName)
-                                        .font(.system(size: 13.5, weight: .medium))
-                                    Text("上下文上限: \(descriptor.limits.contextWindow.map { TokenFormat.compact($0) } ?? "未知")")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(Color.ompTextTertiary)
-                                }
-                                Spacer()
-                                Text("\(count) 个会话")
-                                    .font(.system(size: 12).monospacedDigit())
-                                    .foregroundStyle(Color.ompTextSecondary)
+                Section("近期") {
+                    statRow(title: "最近 7 天", value: TokenFormat.compact(usage.last7Days.totalTokens))
+                    statRow(title: "最近 30 天", value: TokenFormat.compact(usage.last30Days.totalTokens))
+                }
+
+                Section {
+                    ForEach(usage.byModel) { group in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(modelName(group.modelID))
+                                    .font(.system(size: 13.5, weight: .medium))
+                                Text("\(group.conversations) 个会话 · \(group.totals.requests) 次请求")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.ompTextTertiary)
                             }
+                            Spacer()
+                            Text(TokenFormat.compact(group.totals.totalTokens))
+                                .font(.system(size: 12).monospacedDigit())
+                                .foregroundStyle(Color.ompTextSecondary)
                         }
                     }
+                } header: {
+                    Text("按对话模型")
+                } footer: {
+                    Text("消息不记录生成它的模型，这里按每个对话当前的模型归类。合计 = 输入 + 输出，推理已含在输出里；已归档和临时对话也计入。")
                 }
 
                 Section("当前连接网关") {
@@ -326,26 +334,9 @@ public struct PaseoUsageSheet: View {
         model.conversations.reduce(0) { $0 + $1.messages.count }
     }
 
-    private var totalInputTokens: Int {
-        model.conversations.reduce(0) { sum, conv in
-            sum + conv.messages.compactMap(\.usage).reduce(0) { $0 + $1.inputTokens }
-        }
-    }
-
-    private var totalOutputTokens: Int {
-        model.conversations.reduce(0) { sum, conv in
-            sum + conv.messages.compactMap(\.usage).reduce(0) { $0 + $1.outputTokens }
-        }
-    }
-
-    private var totalReasoningTokens: Int {
-        model.conversations.reduce(0) { sum, conv in
-            sum + conv.messages.compactMap(\.usage).reduce(0) { $0 + $1.reasoningTokens }
-        }
-    }
-
-    private var totalTokens: Int {
-        totalInputTokens + totalOutputTokens + totalReasoningTokens
+    private func modelName(_ modelID: String?) -> String {
+        guard let modelID else { return "默认模型" }
+        return model.models.first { $0.id == modelID }?.displayName ?? modelID
     }
 
     private func statRow(title: String, value: String) -> some View {

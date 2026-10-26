@@ -5,22 +5,23 @@ import OMPDesign
 
 /// Right-hand panel with 终端 / 文件 / 改动 tabs (official `thread.sidePanel.*`).
 /// Everything here is the real working tree: the terminal runs zsh, the file
-/// list is the directory the terminal is in, and 改动 is `git status
-/// --porcelain`. Nothing is invented when git is missing — the tab says so.
+/// list is the directory the terminal is in, and 改动 reviews, stages and
+/// commits it (`ChangesPane`). Nothing is invented when git is missing — the
+/// tab says so.
 struct SidePanel: View {
     /// Display names for [`SidePanelTab`]; the stored value lives in the model
     /// so debug actions can drive it.
     private static let titles: [SidePanelTab: String] = [
-        .terminal: "终端", .files: "文件", .changes: "改动", .browser: "浏览器"
+        .terminal: "终端", .files: "文件", .changes: "改动", .sideChat: "旁聊", .browser: "浏览器"
     ]
 
     @Environment(ChatAppModel.self) private var model
     @State private var directory = FileManager.default.currentDirectoryPath
     @State private var entries: [Entry] = []
-    @State private var changes: [Change] = []
     @State private var state: LoadState = .idle
     @State private var openFile: OpenFile?
-    @State private var diff: Diff?
+    /// Bumped by the refresh button so the 改动 tab re-reads git too.
+    @State private var changesReload = 0
     @State private var picking = false
     @State private var saveFailure: String?
 
@@ -34,14 +35,8 @@ struct SidePanel: View {
         var id: String { name }
     }
 
-    private struct Change: Identifiable {
-        var code: String
-        var path: String
-        var id: String { code + path }
-    }
-
     private enum LoadState: Equatable {
-        case idle, loading, notARepo, gitMissing
+        case idle, loading
     }
 
     var body: some View {
@@ -54,7 +49,9 @@ struct SidePanel: View {
             case .files:
                 fileList
             case .changes:
-                changeList
+                ChangesPane(directory: directory, reload: changesReload)
+            case .sideChat:
+                SideChatPane()
             case .browser:
                 BrowserPane()
             }
@@ -94,7 +91,6 @@ struct SidePanel: View {
         guard target != directory else { return }
         directory = target
         openFile = nil
-        diff = nil
         Task { await refresh() }
     }
 
@@ -132,6 +128,7 @@ struct SidePanel: View {
             .buttonStyle(.plain)
             .help("选择文件夹")
             Button {
+                changesReload += 1
                 Task { await refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -345,182 +342,14 @@ struct SidePanel: View {
         Task { await refresh() }
     }
 
-    private var changeList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 1) {
-                switch state {
-                case .gitMissing:
-                    Text("这台 Mac 上没有可用的 git，改动列表不可用。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.ompTextSecondary)
-                        .padding(12)
-                case .notARepo:
-                    Text("当前目录不在 git 仓库里。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.ompTextSecondary)
-                        .padding(12)
-                default:
-                    if changes.isEmpty, state != .loading {
-                        Text("没有未提交的改动。")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.ompTextTertiary)
-                            .padding(12)
-                    }
-                    ForEach(changes) { change in
-                        Button {
-                            showDiff(change)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(change.code)
-                                    .font(.system(size: 10, weight: .semibold).monospaced())
-                                    .foregroundStyle(color(for: change.code))
-                                Text(change.path)
-                                    .font(.system(size: 12).monospaced())
-                                    .foregroundStyle(diff?.path == change.path ? Color.ompText : Color.ompTextSecondary)
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(height: 24)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if let diff {
-                        diffView(diff)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    /// Unified diff of one changed path, or the file's text when git has no
-    /// diff for it (a new, untracked file).
-    private struct Diff {
-        var path: String
-        var lines: [Line]
-        struct Line: Identifiable {
-            var text: String
-            var kind: Kind
-            var id: String { text + "\(kind)" }
-        }
-        enum Kind { case context, added, removed, note }
-    }
-
-    private func showDiff(_ change: Change) {
-        if diff?.path == change.path { diff = nil; return }
-        let dir = directory
-        let path = change.path
-        let untracked = change.code.contains("?")
-        let body = Task.detached(priority: .userInitiated) {
-            SidePanel.readDiff(directory: dir, path: path, untracked: untracked)
-        }
-        diff = Diff(path: path, lines: [.init(text: "读取中…", kind: .note)])
-        Task {
-            let lines = await body.value
-            diff = Diff(path: path, lines: lines)
-        }
-    }
-
-    private static func readDiff(directory: String, path: String, untracked: Bool) -> [Diff.Line] {
-        let full = directory == "/" ? "/\(path)" : "\(directory)/\(path)"
-        if untracked {
-            guard let text = try? String(contentsOf: URL(fileURLWithPath: full), encoding: .utf8) else {
-                return [.init(text: "无法读取这个文件", kind: .note)]
-            }
-            return text.split(separator: "\n", omittingEmptySubsequences: false).prefix(200).map {
-                .init(text: String($0), kind: .added)
-            }
-        }
-        guard let git = GitBinary.resolve() else {
-            return [.init(text: "没有可用的 git", kind: .note)]
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: git)
-        process.arguments = ["diff", "--no-color", "--", path]
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [.init(text: "git 启动失败", kind: .note)] }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return [.init(text: "git 没有这个文件的可显示差异（可能只是权限或重命名）", kind: .note)]
-        }
-        var lines: [Diff.Line] = []
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(400) {
-            let line = String(raw)
-            if line.hasPrefix("+++") || line.hasPrefix("---") {
-                lines.append(.init(text: line, kind: .note))
-            } else if line.hasPrefix("+") {
-                lines.append(.init(text: line, kind: .added))
-            } else if line.hasPrefix("-") {
-                lines.append(.init(text: line, kind: .removed))
-            } else if line.hasPrefix("@@") || line.hasPrefix("diff ") || line.hasPrefix("index ") {
-                lines.append(.init(text: line, kind: .note))
-            } else {
-                lines.append(.init(text: line, kind: .context))
-            }
-        }
-        return lines
-    }
-
-    private func diffView(_ diff: Diff) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(diff.lines) { line in
-                Text(line.text.isEmpty ? " " : line.text)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(foreground(line.kind))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(background(line.kind))
-            }
-        }
-        .padding(.vertical, 6)
-        .textSelection(.enabled)
-    }
-
-    private func foreground(_ kind: Diff.Kind) -> Color {
-        switch kind {
-        case .added: return Color.ompFlat(rgb: 0x2F9E5E)
-        case .removed: return Color.ompFlat(rgb: 0xDE4A43)
-        case .note: return Color.ompTextTertiary
-        case .context: return Color.ompTextSecondary
-        }
-    }
-
-    private func background(_ kind: Diff.Kind) -> Color {
-        switch kind {
-        case .added: return Color.ompFlat(rgb: 0x2F9E5E).opacity(0.10)
-        case .removed: return Color.ompFlat(rgb: 0xDE4A43).opacity(0.10)
-        default: return .clear
-        }
-    }
-
-    private func color(for code: String) -> Color {
-        if code.contains("D") { return Color.ompFlat(rgb: 0xDE4A43) }
-        if code.contains("A") || code.contains("?") { return Color.ompFlat(rgb: 0x2F9E5E) }
-        return Color.ompFlat(rgb: 0xC98A1B)
-    }
-
     private func refresh() async {
         state = .loading
         let dir = directory
-        let (listing, git) = await Task.detached(priority: .userInitiated) {
-            (Self.list(dir), Self.gitStatus(dir))
+        let listing = await Task.detached(priority: .userInitiated) {
+            Self.list(dir)
         }.value
         entries = listing
-        switch git {
-        case .success(let items): changes = items; state = .idle
-        case .notARepo: changes = []; state = .notARepo
-        case .gitMissing: changes = []; state = .gitMissing
-        }
+        state = .idle
     }
 
     private static func list(_ directory: String) -> [Entry] {
@@ -542,37 +371,12 @@ struct SidePanel: View {
         FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
         return isDir.boolValue
     }
-
-    private enum GitResult {
-        case success([Change])
-        case notARepo
-        case gitMissing
-    }
-
-    private static func gitStatus(_ directory: String) -> GitResult {
-        guard let git = GitBinary.resolve() else { return .gitMissing }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: git)
-        // -z: paths with spaces or Chinese characters are quoted/escaped in
-        // plain porcelain output, and those strings cannot be diffed.
-        process.arguments = GitStatus.arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return .gitMissing }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        if process.terminationStatus != 0 { return .notARepo }
-        let entries = GitStatus.parse(String(decoding: data, as: UTF8.self))
-        return .success(entries.map { Change(code: $0.code, path: $0.path) })
-    }
 }
 
 extension SidePanel {
     /// Bridges the wire enum to the local case list.
     enum Tab: CaseIterable, Identifiable {
-        case terminal, files, changes, browser
+        case terminal, files, changes, sideChat, browser
         var id: Self { self }
 
         init?(_ wire: SidePanelTab) {
@@ -580,6 +384,7 @@ extension SidePanel {
             case .terminal: self = .terminal
             case .files: self = .files
             case .changes: self = .changes
+            case .sideChat: self = .sideChat
             case .browser: self = .browser
             }
         }
@@ -589,6 +394,7 @@ extension SidePanel {
             case .terminal: .terminal
             case .files: .files
             case .changes: .changes
+            case .sideChat: .sideChat
             case .browser: .browser
             }
         }

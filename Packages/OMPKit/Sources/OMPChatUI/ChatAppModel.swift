@@ -87,6 +87,13 @@ public final class ChatAppModel {
     public var selectedMessageIDs: Set<UUID> = []
     public var showSettings = false
 
+    // MARK: - Settings navigation
+
+    /// A settings section to show next (`ProviderSettingsView.SettingsSection`
+    /// raw value). The settings window consumes and clears it; nothing else
+    /// reads it.
+    public var requestedSettingsSection: String?
+
     // MARK: - Side panel
 
     /// The right-hand 终端/文件/改动/浏览器 panel. Lives here rather than in
@@ -108,6 +115,55 @@ public final class ChatAppModel {
         if let tab {
             sidePanelTab = tab
         }
+    }
+
+    // MARK: - Browser tabs
+
+    /// Where a new browser tab starts — the page the 浏览器 tab always opened on.
+    public static let browserHomeURL = "https://example.com"
+
+    /// The side panel 浏览器's tabs. Session-only: not persisted, so a relaunch
+    /// starts with one tab at `browserHomeURL`. The live web views belong to
+    /// the pane; this is the list they mirror, kept here so debug actions and
+    /// the strip drive one truth.
+    public private(set) var browserTabs = BrowserTabList(homeURL: ChatAppModel.browserHomeURL)
+
+    /// Opens a tab right of `id` (at the end when nil) and selects it; a nil
+    /// `url` opens the home page. Returns the new tab's id.
+    @discardableResult
+    public func openBrowserTab(url: String? = nil, rightOf id: UUID? = nil) -> UUID {
+        browserTabs.open(url: url, rightOf: id)
+    }
+
+    public func closeBrowserTab(_ id: UUID) {
+        browserTabs.close(id)
+    }
+
+    /// Copies a tab right of itself and selects the copy; nil for an unknown tab.
+    @discardableResult
+    public func duplicateBrowserTab(_ id: UUID) -> UUID? {
+        browserTabs.duplicate(id)
+    }
+
+    /// A blank name clears the custom title.
+    public func renameBrowserTab(_ id: UUID, to title: String) {
+        browserTabs.rename(id, to: title)
+    }
+
+    public func selectBrowserTab(_ id: UUID) {
+        browserTabs.select(id)
+    }
+
+    /// Points a tab at an already-resolved address; the pane loads it.
+    public func navigateBrowserTab(_ id: UUID, to url: String) {
+        browserTabs.navigate(id, to: url)
+    }
+
+    /// What a tab's web view reports after a load or a title change. Unchanged
+    /// reports are dropped so they do not redraw everything watching the list.
+    public func updateBrowserPage(_ id: UUID, url: String, title: String) {
+        guard let tab = browserTabs.tab(id), tab.url != url || tab.title != title else { return }
+        browserTabs.updatePage(id, url: url, title: title)
     }
 
     // MARK: Dependencies
@@ -370,6 +426,7 @@ public final class ChatAppModel {
         Task { try? await store.delete(id: id) }
         draftsByConversation.removeValue(forKey: id)
         attachmentsByConversation.removeValue(forKey: id)
+        clearSideChat(id)
         if selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
         }
@@ -383,6 +440,21 @@ public final class ChatAppModel {
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
+    }
+
+    // MARK: - Changes review
+
+    /// Bumped after every git write made through `changeWorkingTree`, so the
+    /// side panel's 改动 tab re-reads status even when the write came from a
+    /// debug action rather than the tab itself.
+    public private(set) var workingTreeRevision = 0
+
+    /// Runs one `GitWorkingTree` write off the main actor, then has the 改动
+    /// tab re-read status — after a failure too, since a failed commit may
+    /// still have run hooks that touched files.
+    public func changeWorkingTree<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        defer { workingTreeRevision += 1 }
+        return try await Task.detached(priority: .userInitiated) { try operation() }.value
     }
 
     // MARK: - Thread goal
@@ -1780,6 +1852,118 @@ public final class ChatAppModel {
         updateWorkingDirectory(original.id, plan.path)
         return nil
         #endif
+    }
+
+    // MARK: - Side chat
+
+    /// Side-chat messages per thread (Codex `thread.sidePanel` Side chat).
+    /// Session-only on purpose: a side question is scratch work, and keeping it
+    /// out of `workspace.json` keeps it out of the thread, exports, search and
+    /// the relay snapshot.
+    public private(set) var sideChats: [UUID: [ChatMessage]] = [:]
+    /// The thread whose side chat is streaming, if any. Independent of the
+    /// thread's own stream, so a side question can be asked while it replies.
+    public private(set) var sideChatStreamingID: UUID?
+    @ObservationIgnored private var sideChatTask: Task<Void, Never>?
+
+    public func sideChat(for id: UUID) -> [ChatMessage] {
+        sideChats[id] ?? []
+    }
+
+    /// Asks `text` about a thread (the selected one by default). The thread's
+    /// transcript goes in the system prompt; nothing is added to the thread.
+    /// Returns why it could not be sent, or nil once the reply is streaming.
+    @discardableResult
+    public func sendSideChat(_ text: String, about id: UUID? = nil) -> String? {
+        let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return "问题是空的" }
+        guard sideChatStreamingID == nil else { return "旁聊还在回复" }
+        guard let threadID = id ?? selectedConversationID, let thread = conversation(threadID) else {
+            return "找不到这个对话"
+        }
+        guard let provider = resolveProvider(for: thread),
+              let model = resolveModel(for: thread, provider: provider) else {
+            return "先在设置中添加供应商并选择模型"
+        }
+        let storedKey = (try? secrets.secret(for: provider.keychainAccount)) ?? nil
+        guard let apiKey = storedKey, !apiKey.isEmpty else { return "「\(provider.name)」缺少 API Key" }
+
+        var messages = sideChats[threadID] ?? []
+        messages.append(ChatMessage(role: .user, parts: [.text(question)]))
+        let history = messages
+        let assistant = ChatMessage(role: .assistant, parts: [], status: .streaming)
+        messages.append(assistant)
+        sideChats[threadID] = messages
+
+        let request = GenerationRequest(
+            modelID: model.id,
+            messages: history,
+            systemPrompt: SideChatContext.systemPrompt(title: thread.title, goal: thread.goal, transcript: thread.messages),
+            temperature: settings.temperature,
+            maxOutputTokens: settings.maxOutputTokens ?? model.limits.maxOutputTokens
+        )
+        let adapter = ProviderFactory.makeProvider(
+            profile: provider,
+            apiKey: apiKey,
+            transport: transport,
+            mediaPayloads: { [mediaLibrary] ref in mediaLibrary.loadPayload(for: ref) }
+        )
+        sideChatStreamingID = threadID
+        sideChatTask = Task { [weak self] in
+            await self?.runSideChat(adapter: adapter, request: request, threadID: threadID, assistantID: assistant.id)
+        }
+        return nil
+    }
+
+    public func stopSideChat() {
+        sideChatTask?.cancel()
+    }
+
+    /// Forgets a thread's side chat, stopping its reply first.
+    public func clearSideChat(_ id: UUID) {
+        if sideChatStreamingID == id { sideChatTask?.cancel() }
+        sideChats[id] = nil
+    }
+
+    /// Puts a side-chat answer into the composer so it can be sent to the
+    /// thread on purpose — the only way side-chat text reaches the thread.
+    public func insertSideChatAnswer(_ messageID: UUID, from id: UUID) {
+        guard let text = sideChats[id]?.first(where: { $0.id == messageID })?.concatenatedText,
+              !text.isEmpty else { return }
+        draft = draft.isEmpty ? text : draft + "\n\n" + text
+    }
+
+    private func runSideChat(adapter: any ChatProvider, request: GenerationRequest, threadID: UUID, assistantID: UUID) async {
+        var failure: Error?
+        do {
+            for try await event in adapter.stream(request) {
+                if Task.isCancelled { break }
+                updateSideChatMessage(threadID, assistantID) { $0.apply(event) }
+            }
+        } catch {
+            failure = error
+        }
+        let cancelled = Task.isCancelled
+        if cancelled, sideChats[threadID]?.first(where: { $0.id == assistantID })?.concatenatedText.isEmpty ?? true {
+            // Stopped before a word arrived: drop the empty placeholder.
+            sideChats[threadID]?.removeAll { $0.id == assistantID }
+        } else {
+            updateSideChatMessage(threadID, assistantID) { message in
+                if let failure, !cancelled {
+                    message.status = .failed
+                    message.errorText = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription
+                } else {
+                    message.status = .complete
+                }
+            }
+        }
+        sideChatStreamingID = nil
+        sideChatTask = nil
+    }
+
+    private func updateSideChatMessage(_ threadID: UUID, _ messageID: UUID, _ change: (inout ChatMessage) -> Void) {
+        guard let index = sideChats[threadID]?.firstIndex(where: { $0.id == messageID }) else { return }
+        change(&sideChats[threadID]![index])
     }
 }
 

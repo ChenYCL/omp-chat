@@ -37,7 +37,9 @@ final class DebugActionDecodingTests: XCTestCase {
     }
 
     func testOpenAndCloseSettingsDecode() {
-        XCTAssertEqual(decode(#"{"action":"openSettings"}"#), .openSettings)
+        XCTAssertEqual(decode(#"{"action":"openSettings"}"#), .openSettings(section: nil))
+        XCTAssertEqual(decode(#"{"action":"openSettings","section":"usage"}"#), .openSettings(section: "usage"))
+        XCTAssertNil(decode(#"{"action":"openSettings","section":7}"#))
         XCTAssertEqual(decode(#"{"action":"closeSettings"}"#), .closeSettings)
     }
 
@@ -155,11 +157,64 @@ final class DebugActionDecodingTests: XCTestCase {
         XCTAssertNil(decode(#"{"action":"fork"}"#))
     }
 
+    func testSideChatActions() {
+        XCTAssertEqual(decode(#"{"action":"sideChat","text":"方案是什么"}"#), .sideChat(conversationID: nil, text: "方案是什么"))
+        XCTAssertEqual(
+            decode(#"{"action":"sideChat","conversationID":"abc","text":""}"#),
+            .sideChat(conversationID: "abc", text: ""),
+            "空问题由宿主拒绝并说明原因，不是格式错误"
+        )
+        XCTAssertNil(decode(#"{"action":"sideChat"}"#), "text 必填")
+        XCTAssertNil(decode(#"{"action":"sideChat","conversationID":3,"text":"x"}"#))
+        XCTAssertEqual(decode(#"{"action":"clearSideChat"}"#), .clearSideChat(conversationID: nil))
+        XCTAssertEqual(decode(#"{"action":"stopSideChat"}"#), .stopSideChat)
+    }
+
+    func testBrowserTabActions() {
+        XCTAssertEqual(decode(#"{"action":"browserOpenTab"}"#), .browserOpenTab(url: nil, rightOf: nil), "不带地址就开首页、加到末尾")
+        XCTAssertEqual(
+            decode(#"{"action":"browserOpenTab","url":"http://127.0.0.1:8795","rightOf":"t1"}"#),
+            .browserOpenTab(url: "http://127.0.0.1:8795", rightOf: "t1")
+        )
+        XCTAssertNil(decode(#"{"action":"browserOpenTab","url":5}"#))
+        XCTAssertEqual(decode(#"{"action":"browserRenameTab","tabID":"t1","title":""}"#), .browserRenameTab(tabID: "t1", title: ""))
+        XCTAssertNil(decode(#"{"action":"browserRenameTab","tabID":"t1"}"#), "title 必填，空串才是清除")
+        XCTAssertEqual(
+            decode(#"{"action":"browserNavigate","tabID":"t1","url":"https://example.com"}"#),
+            .browserNavigate(tabID: "t1", url: "https://example.com")
+        )
+        XCTAssertNil(decode(#"{"action":"browserNavigate","tabID":"t1","url":"example dot com"}"#),
+                     "地址栏的搜索/补 https 规则只在界面里，这里只收完整地址")
+        for name in ["browserCloseTab", "browserDuplicateTab", "browserSelectTab"] {
+            XCTAssertNil(decode(#"{"action":"\#(name)"}"#), "\(name) 要 tabID")
+        }
+    }
+
+    func testGitOperations() {
+        XCTAssertEqual(
+            decode(#"{"action":"git","op":"stage","paths":["说明 文档.md","a.txt"]}"#),
+            .git(conversationID: nil, operation: .stage(["说明 文档.md", "a.txt"]))
+        )
+        XCTAssertEqual(decode(#"{"action":"git","op":"unstageAll","conversationID":"abc"}"#),
+                       .git(conversationID: "abc", operation: .unstageAll))
+        XCTAssertEqual(decode(#"{"action":"git","op":"commit","message":""}"#),
+                       .git(conversationID: nil, operation: .commit("")), "空说明交给宿主拒绝并说明原因")
+        XCTAssertEqual(decode(#"{"action":"git","op":"push"}"#), .git(conversationID: nil, operation: .push))
+        XCTAssertNil(decode(#"{"action":"git","op":"stage"}"#), "暂存要给路径")
+        XCTAssertNil(decode(#"{"action":"git","op":"stage","paths":[]}"#), "空列表等于没给")
+        XCTAssertNil(decode(#"{"action":"git","op":"stage","paths":["a",3]}"#), "混进非字符串整条拒绝")
+        XCTAssertNil(decode(#"{"action":"git","op":"discard"}"#))
+        XCTAssertNil(decode(#"{"action":"git","op":"commit"}"#))
+        XCTAssertNil(decode(#"{"action":"git","op":"reset"}"#), "不认识的操作")
+        XCTAssertNil(decode(#"{"action":"git"}"#))
+    }
+
     func testOpenLinkAndDeleteNeedTheirField() {
         XCTAssertEqual(decode(#"{"action":"openLink","url":"ompchat://thread/x"}"#), .openLink(url: "ompchat://thread/x"))
         XCTAssertNil(decode(#"{"action":"openLink"}"#))
         XCTAssertEqual(decode(#"{"action":"delete","conversationID":"abc"}"#), .delete(conversationID: "abc"))
         XCTAssertNil(decode(#"{"action":"delete"}"#))
+        XCTAssertEqual(decode(#"{"action":"dismissError"}"#), .dismissError)
     }
 
     // MARK: - Wire names
@@ -183,6 +238,17 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"fork","mode":"local"}"#,
             #"{"action":"openLink","url":"x"}"#,
             #"{"action":"delete","conversationID":"x"}"#,
+            #"{"action":"dismissError"}"#,
+            #"{"action":"sideChat","text":"x"}"#,
+            #"{"action":"clearSideChat"}"#,
+            #"{"action":"stopSideChat"}"#,
+            #"{"action":"browserOpenTab"}"#,
+            #"{"action":"browserCloseTab","tabID":"x"}"#,
+            #"{"action":"browserDuplicateTab","tabID":"x"}"#,
+            #"{"action":"browserRenameTab","tabID":"x","title":"y"}"#,
+            #"{"action":"browserSelectTab","tabID":"x"}"#,
+            #"{"action":"browserNavigate","tabID":"x","url":"https://x"}"#,
+            #"{"action":"git","op":"push"}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)

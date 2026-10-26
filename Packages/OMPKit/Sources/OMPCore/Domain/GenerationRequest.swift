@@ -11,7 +11,9 @@ public struct TokenUsage: Codable, Hashable, Sendable {
         self.reasoningTokens = reasoningTokens
     }
 
-    public var totalTokens: Int { inputTokens + outputTokens + reasoningTokens }
+    /// Reasoning is already part of `outputTokens` (OpenAI `completion_tokens`
+    /// include `reasoning_tokens`; Anthropic `output_tokens` include thinking).
+    public var totalTokens: Int { inputTokens + outputTokens }
 }
 
 public struct ToolSpec: Codable, Hashable, Sendable {

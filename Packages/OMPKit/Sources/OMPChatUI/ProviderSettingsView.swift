@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, remoteControl, diagnostics, providers, about
+        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, usage, remoteControl, diagnostics, providers, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -31,6 +31,7 @@ public struct ProviderSettingsView: View {
             case .sorting: "会话排序"
             case .git: "Git"
             case .dataControls: "数据控制"
+            case .usage: "用量"
             case .remoteControl: "远程控制"
             case .diagnostics: "诊断"
             case .providers: "连接"
@@ -49,6 +50,7 @@ public struct ProviderSettingsView: View {
             case .sorting: "arrow.up.arrow.down"
             case .git: "arrow.triangle.branch"
             case .dataControls: "externaldrive"
+            case .usage: "chart.bar"
             case .providers: "point.3.connected.trianglepath.dotted"
             case .diagnostics: "stethoscope"
             case .remoteControl: "antenna.radiowaves.left.and.right"
@@ -67,6 +69,13 @@ public struct ProviderSettingsView: View {
             settingsDetail
         }
         .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 720)
+        // A section asked for from outside the window (the automation route);
+        // consumed once so the user's own navigation is not overridden.
+        .onChange(of: model.requestedSettingsSection, initial: true) { _, raw in
+            guard let raw else { return }
+            if let requested = SettingsSection(rawValue: raw) { section = requested }
+            model.requestedSettingsSection = nil
+        }
         #else
         NavigationStack {
             Form {
@@ -229,6 +238,8 @@ public struct ProviderSettingsView: View {
             #endif
         case .dataControls:
             dataControlsContent
+        case .usage:
+            UsageSettingsPane(onSelectConversation: { dismiss() })
         case .remoteControl:
             #if os(macOS)
             settingsCard { remoteControlSection }
@@ -390,11 +401,44 @@ public struct ProviderSettingsView: View {
                 statRow("存储目录", stats.formattedSize)
             }
             Divider()
-            Button {
-                exportAllData()
-            } label: {
-                Label("导出全部数据 (JSON)", systemImage: "square.and.arrow.up.on.square")
+            HStack(spacing: 10) {
+                Button {
+                    exportAllData()
+                } label: {
+                    Label("导出全部数据 (JSON)", systemImage: "square.and.arrow.up.on.square")
+                }
+                Button {
+                    importConversationJSON()
+                } label: {
+                    Label("导入 JSON 对话…", systemImage: "square.and.arrow.down")
+                }
+                .help("导入单个对话导出的 JSON 文件；「导出全部数据」生成的整份工作区文件不能在这里导入")
+                .accessibilityIdentifier("settings.dataControls.importConversation")
             }
+            if let importMessage {
+                Text(importMessage.text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(importMessage.failed ? Color.red : Color.ompTextSecondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("settings.dataControls.importResult")
+            }
+        }
+    }
+
+    /// Outcome of the last 导入 JSON 对话 attempt, shown under the buttons.
+    @State private var importMessage: (text: String, failed: Bool)?
+
+    private func importConversationJSON() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let conversation = try model.importConversation(from: text)
+            importMessage = ("已导入「\(conversation.title)」", false)
+        } catch {
+            importMessage = ("导入失败：\(error.localizedDescription)", true)
         }
     }
 

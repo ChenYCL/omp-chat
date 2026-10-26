@@ -469,7 +469,7 @@ final class RelayDebugRouteTests: XCTestCase {
         XCTAssertEqual(box.all[1], .newChat)
         XCTAssertEqual(box.all[2], .sidePanel(open: true, tab: .browser))
         XCTAssertEqual(box.all[3], .sidePanel(open: false, tab: nil))
-        XCTAssertEqual(box.all[4], .openSettings)
+        XCTAssertEqual(box.all[4], .openSettings(section: nil))
         XCTAssertEqual(box.all[5], .closeSettings)
     }
 

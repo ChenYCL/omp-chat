@@ -53,6 +53,8 @@ public enum SidePanelTab: String, Codable, Sendable, CaseIterable {
     case terminal
     case files
     case changes
+    /// 旁聊: questions about the thread, kept out of it.
+    case sideChat
     case browser
 }
 
@@ -74,6 +76,18 @@ public enum DebugContinueTarget: Sendable, Equatable {
     case worktree
 }
 
+/// One write in the side panel's 改动 tab. Paths are relative to the
+/// repository root, as `GitWorkingTree.status` reports them.
+public enum DebugGitOperation: Sendable, Equatable {
+    case stage([String])
+    case unstage([String])
+    case stageAll
+    case unstageAll
+    case discard(String)
+    case commit(String)
+    case push
+}
+
 /// One automation action for the token-gated `POST /debug/action` route. This
 /// is the black-box test channel: the integrator drives the app without
 /// bringing it to the front, exactly the actions the UI's own menus offer.
@@ -89,8 +103,9 @@ public enum DebugAction: Sendable, Equatable {
     case newChat
     /// Show/hide the side panel and optionally switch its tab.
     case sidePanel(open: Bool, tab: SidePanelTab?)
-    /// Open the app's Settings scene.
-    case openSettings
+    /// Open the app's Settings scene, optionally on one section (the settings
+    /// sidebar's raw names: general, usage, dataControls, git…).
+    case openSettings(section: String?)
     /// Close the Settings scene.
     case closeSettings
     /// Replace the composer draft.
@@ -113,6 +128,26 @@ public enum DebugAction: Sendable, Equatable {
     case openLink(url: String)
     /// Delete a conversation (scenario cleanup).
     case delete(conversationID: String)
+    /// Close the error banner (its × button).
+    case dismissError
+    /// Ask the side chat a question about a thread.
+    case sideChat(conversationID: String?, text: String)
+    /// Forget a thread's side chat.
+    case clearSideChat(conversationID: String?)
+    /// Stop the side chat's reply.
+    case stopSideChat
+    /// Side panel browser: open a tab (home page when `url` is nil), right of
+    /// `rightOf` or at the end.
+    case browserOpenTab(url: String?, rightOf: String?)
+    case browserCloseTab(tabID: String)
+    case browserDuplicateTab(tabID: String)
+    /// A blank title clears the custom name.
+    case browserRenameTab(tabID: String, title: String)
+    case browserSelectTab(tabID: String)
+    /// `url` must be complete; the address bar's search/https rules are UI-side.
+    case browserNavigate(tabID: String, url: String)
+    /// 改动 tab write, in the thread's working directory.
+    case git(conversationID: String?, operation: DebugGitOperation)
 
     /// The wire name of the action.
     public var name: String {
@@ -132,6 +167,17 @@ public enum DebugAction: Sendable, Equatable {
         case .fork: "fork"
         case .openLink: "openLink"
         case .delete: "delete"
+        case .dismissError: "dismissError"
+        case .sideChat: "sideChat"
+        case .clearSideChat: "clearSideChat"
+        case .stopSideChat: "stopSideChat"
+        case .browserOpenTab: "browserOpenTab"
+        case .browserCloseTab: "browserCloseTab"
+        case .browserDuplicateTab: "browserDuplicateTab"
+        case .browserRenameTab: "browserRenameTab"
+        case .browserSelectTab: "browserSelectTab"
+        case .browserNavigate: "browserNavigate"
+        case .git: "git"
         }
     }
 
@@ -169,7 +215,8 @@ public enum DebugAction: Sendable, Equatable {
             }
             return .sidePanel(open: open, tab: nil)
         case "openSettings":
-            return .openSettings
+            guard let section = optionalString("section") else { return nil }
+            return .openSettings(section: section)
         case "closeSettings":
             return .closeSettings
         case "setDraft":
@@ -230,6 +277,65 @@ public enum DebugAction: Sendable, Equatable {
         case "delete":
             guard let id = fields["conversationID"] as? String else { return nil }
             return .delete(conversationID: id)
+        case "dismissError":
+            return .dismissError
+        case "sideChat":
+            guard let id = optionalString("conversationID"), let text = fields["text"] as? String else { return nil }
+            return .sideChat(conversationID: id, text: text)
+        case "clearSideChat":
+            guard let id = optionalString("conversationID") else { return nil }
+            return .clearSideChat(conversationID: id)
+        case "stopSideChat":
+            return .stopSideChat
+        case "browserOpenTab":
+            guard let url = optionalString("url"), let rightOf = optionalString("rightOf") else { return nil }
+            return .browserOpenTab(url: url, rightOf: rightOf)
+        case "browserCloseTab":
+            guard let id = fields["tabID"] as? String else { return nil }
+            return .browserCloseTab(tabID: id)
+        case "browserDuplicateTab":
+            guard let id = fields["tabID"] as? String else { return nil }
+            return .browserDuplicateTab(tabID: id)
+        case "browserRenameTab":
+            guard let id = fields["tabID"] as? String, let title = fields["title"] as? String else { return nil }
+            return .browserRenameTab(tabID: id, title: title)
+        case "browserSelectTab":
+            guard let id = fields["tabID"] as? String else { return nil }
+            return .browserSelectTab(tabID: id)
+        case "browserNavigate":
+            guard let id = fields["tabID"] as? String, let url = fields["url"] as? String,
+                  URL(string: url)?.scheme != nil else { return nil }
+            return .browserNavigate(tabID: id, url: url)
+        case "git":
+            guard let id = optionalString("conversationID"), let op = fields["op"] as? String else { return nil }
+            /// A non-empty list of strings, or nil.
+            func paths() -> [String]? {
+                guard let list = fields["paths"] as? [Any], !list.isEmpty else { return nil }
+                let strings = list.compactMap { $0 as? String }
+                return strings.count == list.count ? strings : nil
+            }
+            let operation: DebugGitOperation
+            switch op {
+            case "stage":
+                guard let paths = paths() else { return nil }
+                operation = .stage(paths)
+            case "unstage":
+                guard let paths = paths() else { return nil }
+                operation = .unstage(paths)
+            case "stageAll": operation = .stageAll
+            case "unstageAll": operation = .unstageAll
+            case "discard":
+                guard let path = fields["path"] as? String, !path.isEmpty else { return nil }
+                operation = .discard(path)
+            case "commit":
+                // A blank message is the host's refusal to report, not a
+                // malformed request.
+                guard let message = fields["message"] as? String else { return nil }
+                operation = .commit(message)
+            case "push": operation = .push
+            default: return nil
+            }
+            return .git(conversationID: id, operation: operation)
         default:
             return nil
         }

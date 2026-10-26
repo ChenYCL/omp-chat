@@ -404,8 +404,15 @@ public struct ComposerBar: View {
             HStack(spacing: 4) {
                 Image(systemName: "folder")
                     .font(.system(size: 10))
+                // One line, truncated: a worktree name such as 新对话-7857391d
+                // wrapped onto two lines once a goal chip shared the row. No
+                // layout priorities in this row — any one item given priority
+                // squeezed the others down to a single character, so the
+                // folder, branch and goal share the width and truncate evenly.
                 Text(projectName)
                     .font(.system(size: 11))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             .help(model.selectedConversation?.workingDirectory.map(GitInfo.tildified) ?? projectName)
             .accessibilityIdentifier("composer.workspace")
@@ -415,16 +422,19 @@ public struct ComposerBar: View {
                 Text("本地")
                     .font(.system(size: 11))
             }
+            .fixedSize()
             if let branch = currentBranch {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 9))
                     Text(branch)
                         .font(.system(size: 10.5, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             goalChip
-            Spacer()
+            Spacer(minLength: 0)
         }
         .foregroundStyle(Color.ompTextTertiary)
         .padding(.horizontal, 6)

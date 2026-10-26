@@ -10,21 +10,36 @@ import Foundation
 /// separate field.
 public enum GitStatus {
     public struct Entry: Equatable, Sendable {
-        /// The XY code with blanks trimmed: `M`, `A`, `D`, `R`, `MM`, `??`.
-        public var code: String
+        /// The raw XY columns, blanks kept: X is the index (staged) side, Y
+        /// the worktree side. `" M"` and `"M "` are different changes.
+        public var xy: String
         /// Path relative to the repository root; the new path for a rename.
         public var path: String
         /// Source path of a rename or copy.
         public var originalPath: String?
 
-        public init(code: String, path: String, originalPath: String? = nil) {
-            self.code = code
+        public init(xy: String, path: String, originalPath: String? = nil) {
+            self.xy = xy
             self.path = path
             self.originalPath = originalPath
         }
+
+        /// The XY code with blanks trimmed: `M`, `A`, `D`, `R`, `MM`, `??`.
+        public var code: String {
+            let code = xy.trimmingCharacters(in: .whitespaces)
+            return code.isEmpty ? "?" : code
+        }
+
+        /// X: what the index holds against HEAD.
+        public var index: Character { xy.first ?? " " }
+        /// Y: what the working tree holds against the index.
+        public var worktree: Character { xy.dropFirst().first ?? " " }
     }
 
-    public static let arguments = ["status", "--porcelain", "-z"]
+    /// `--untracked-files=all` lists every new file on its own row instead of
+    /// folding a new directory into `dir/`, which could be neither diffed nor
+    /// staged file by file.
+    public static let arguments = ["status", "--porcelain", "-z", "--untracked-files=all"]
 
     public static func parse(_ output: String) -> [Entry] {
         var fields = output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)[...]
@@ -36,8 +51,7 @@ public enum GitStatus {
             let path = String(field.dropFirst(3))
             // Renames and copies are followed by their source path.
             let original = xy.contains("R") || xy.contains("C") ? fields.popFirst() : nil
-            let code = xy.trimmingCharacters(in: .whitespaces)
-            entries.append(Entry(code: code.isEmpty ? "?" : code, path: path, originalPath: original))
+            entries.append(Entry(xy: xy, path: path, originalPath: original))
         }
         return entries
     }

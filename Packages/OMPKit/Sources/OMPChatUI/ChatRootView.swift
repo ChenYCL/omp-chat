@@ -246,7 +246,11 @@ public struct ChatDetailView: View {
     /// `MainContentViewport`: everything scrollable, composer pinned at bottom.
     private var mainViewport: some View {
         VStack(spacing: 0) {
-            if model.selectedConversation?.messages.isEmpty == true, model.errorMessage == nil {
+            // The error banner sits above this either way, so it must not
+            // switch the layout: an error over an empty thread used to drop
+            // the centered composer and retitle the page with the provider's
+            // name. Only the setup prompt needs the transcript's empty state.
+            if model.selectedConversation?.messages.isEmpty == true, !model.needsSetup {
                 Spacer(minLength: 24)
                 VStack(spacing: 24) {
                     ChatEmptyStateView()

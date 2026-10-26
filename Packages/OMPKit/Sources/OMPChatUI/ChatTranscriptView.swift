@@ -178,24 +178,12 @@ public struct ChatTranscriptView: View {
 
     // MARK: Empty state
 
+    /// The transcript is only shown for an empty thread while no provider is
+    /// set up; both platforms draw their own empty state otherwise.
     @ViewBuilder
     private var emptyState: some View {
         if model.needsSetup {
             setupPrompt
-        } else {
-            VStack(spacing: 10) {
-                Image(systemName: "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundStyle(Color.ompTextTertiary)
-                (Text("今天想在 ")
-                    + Text(model.activeProvider?.name ?? "OMP Chat").underline()
-                    + Text(" 里聊些什么？"))
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(Color.ompText)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-            }
-            .frame(maxWidth: .infinity)
         }
     }
 

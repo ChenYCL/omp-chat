@@ -87,14 +87,15 @@ python3 tools/ompshot/ompshot.py snap -w 36510 -o y.png          # 指定窗口�
 python3 tools/ompshot/ompshot.py state
 python3 tools/ompshot/ompshot.py act setGoal --goal 发布前补齐文档
 python3 -I tools/ompshot/scenario_codex.py      # 跑完整场景，0 失败才退出 0
+python3 -I tools/ompshot/scenario_codex.py --live   # 另外让旁聊向真实供应商提一个问题
 ```
 
 | 动作 | 字段 | 对应的界面操作 |
 | --- | --- | --- |
 | `select` | `conversationID` | 侧栏点一行 |
 | `newChat` | — | 新聊天 |
-| `sidePanel` | `open`（布尔），可选 `tab` = terminal / files / changes / browser | ⌘J、侧面板标签 |
-| `openSettings` / `closeSettings` | — | 应用菜单 设置…（⌘,）；按窗口是否可见判断 |
+| `sidePanel` | `open`（布尔），可选 `tab` = terminal / files / changes / sideChat / browser | ⌘J、侧面板标签 |
+| `openSettings` / `closeSettings` | `openSettings` 可选 `section`（设置侧栏的分区名：general / usage / dataControls / git …） | 应用菜单 设置…（⌘,）；按窗口是否可见判断 |
 | `setDraft` | `text` | 在输入框里输入 |
 | `format` | `style` = bold / italic / underline / heading1–3 / paragraph / bulletedList / numberedList / link | B / I / U 与 Aa 菜单 |
 | `setGoal` | `goal`（空白即清除），可选 `conversationID` | 设定目标 |
@@ -105,7 +106,17 @@ python3 -I tools/ompshot/scenario_codex.py      # 跑完整场景，0 失败才�
 | `fork` | `mode` = local / sameWorktree / worktree | 顶栏 分叉对话（分叉后选中副本） |
 | `openLink` | `url`（`ompchat://thread/<UUID>`） | 系统打开应用链接 |
 | `delete` | `conversationID` | 行菜单 删除 |
+| `dismissError` | — | 错误提示条的 × |
+| `git` | `op` = stage / unstage（要 `paths`，非空字符串数组）、stageAll / unstageAll、discard（要 `path`）、commit（要 `message`，空白由宿主拒绝）、push；可选 `conversationID` | 侧面板 改动：勾选暂存、丢弃改动、提交、推送。在对话绑定的工作目录里执行，没绑定就报错 |
+| `browserOpenTab` | 可选 `url`（缺省首页）、`rightOf`（标签 id，缺省加到末尾） | 浏览器 + / 在右侧新建标签页 |
+| `browserCloseTab` / `browserDuplicateTab` / `browserSelectTab` | `tabID` | 标签的 × / 复制标签页 / 点标签 |
+| `browserRenameTab` | `tabID`、`title`（空串清掉自定义名） | 重命名… |
+| `browserNavigate` | `tabID`、`url`（必须是完整地址；地址栏的搜索与补 https 规则只在界面里） | 地址栏回车 |
+| `sideChat` | `text`，可选 `conversationID` | 侧面板 旁聊 发送；空问题返回 ok:false 和原因 |
+| `clearSideChat` / `stopSideChat` | `clearSideChat` 可选 `conversationID` | 旁聊 清空 / 停止 |
 
-`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread`）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`sidePanelOpen`、`sidePanelTab`、`settingsOpen`、`windowTitles`（只含可见窗口）。
+浏览器的重新加载、复制网址、在默认浏览器中打开要用到活的网页视图，不在动作里。
 
-`scenario_codex.py` 只在自己新建的对话和临时 git 仓库里操作，结束时删掉它们，并把选中项、侧栏设置、侧面板状态和原有的未读标记都还原。
+`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread / sideChat`，`sideChat` 是 `role / text / status / error` 列表）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`sidePanelOpen`、`sidePanelTab`、`sideChatStreaming`、`errorMessage`、`browserTabs`（`id / title / url / selected`）、`settingsOpen`、`windowTitles`（只含可见窗口）。
+
+`scenario_codex.py` 只在自己新建的对话和临时 git 仓库（带一个本地 bare「上游」）里操作，结束时删掉它们，并把选中项、侧栏设置、侧面板、浏览器标签和原有的未读标记都还原。`--live` 是唯一会调用供应商的部分。
