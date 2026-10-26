@@ -67,6 +67,13 @@ public enum RelayServerError: Error, Sendable {
 ///   `since` (token gated, same as every other route).
 /// - `GET /debug/report` → runs the host's diagnostics and returns the JSON
 ///   report. Answers `503` until the host installs `onDebugReport`.
+/// - `GET /debug/windows` → JSON `{"windows":[…]}` describing the host app's
+///   own windows. Answers `503` until the host installs `onDebugWindows`.
+/// - `GET /debug/snapshot?window=<number>` → `image/png` of one of the host
+///   app's own windows, rendered in process: it works while the app is behind
+///   other windows and never contains another app. Without `window` the host
+///   picks its main window. `400` for a non-numeric `window`, `404` when that
+///   window does not exist, `503` until the host installs `onDebugSnapshot`.
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
@@ -77,6 +84,11 @@ public final class RelayServer: @unchecked Sendable {
     public var onRPC: (@Sendable (HostRPCRequest) async -> HostRPCResponse)?
     /// Host hook for `GET /debug/report`. Returns the report JSON.
     public var onDebugReport: (@Sendable () async -> Data)?
+    /// Host hook for `GET /debug/windows`. Returns the window-list JSON.
+    public var onDebugWindows: (@Sendable () async -> Data)?
+    /// Host hook for `GET /debug/snapshot`. A `nil` argument means the main
+    /// window; returning `nil` answers `404`.
+    public var onDebugSnapshot: (@Sendable (Int?) async -> Data?)?
 
 
     /// Internal: the bound listener, exposed so `RelayAdvertiser` can attach
@@ -418,6 +430,38 @@ public final class RelayServer: @unchecked Sendable {
                 let body = await handler()
                 self.queue.async {
                     self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
+                }
+            }
+        case ("GET", "/debug/windows"):
+            guard let handler = onDebugWindows else {
+                send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
+                return
+            }
+            Task {
+                let body = await handler()
+                self.queue.async {
+                    self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
+                }
+            }
+        case ("GET", "/debug/snapshot"):
+            guard let handler = onDebugSnapshot else {
+                send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
+                return
+            }
+            let raw = Self.queryValue("window", in: request.query)
+            let window = raw.flatMap { Int($0) }
+            if raw != nil, window == nil {
+                send(json(ErrorBody(ok: false), status: "400 Bad Request"), id: id)
+                return
+            }
+            Task {
+                let png = await handler(window)
+                self.queue.async {
+                    if let png {
+                        self.send(self.httpResponse(status: "200 OK", contentType: "image/png", body: png), id: id)
+                    } else {
+                        self.send(self.json(ErrorBody(ok: false), status: "404 Not Found"), id: id)
+                    }
                 }
             }
         default:

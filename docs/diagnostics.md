@@ -55,3 +55,26 @@ tail -f "$CONTAINER/Library/Application Support/OMPChat/diagnostics/events.jsonl
 ```
 
 `OMPCHAT_STORE_DIR` 会同时改存储目录和这份日志的位置。
+
+## 后台截图（ompshot）
+
+OMPChat 自己把窗口画成 PNG（`NSView.cacheDisplay`），不读屏幕像素，所以：应用在后台、被别的窗口挡住也能截；截图里只可能有 OMPChat 自己的窗口，不会带进别的应用；不需要「屏幕录制」权限。前提是 设置 → 远程控制 已打开（复用中继和它的令牌）。
+
+```bash
+python3 tools/ompshot/ompshot.py windows                      # 列出窗口编号、类型、尺寸
+python3 tools/ompshot/ompshot.py snap -o .artifacts/shots/x.png  # 主窗口
+python3 tools/ompshot/ompshot.py snap -w 36510 -o y.png          # 指定窗口（表单、弹层各是一个窗口）
+```
+
+令牌依次取 `--token`、`$OMP_RELAY_TOKEN`、应用自己的 `secrets.json`（`relay-host.token`），不会打印出来。底层是两条路由，同样要求 `X-OMP-Token`：
+
+| 路由 | 返回 |
+| --- | --- |
+| `GET /debug/windows` | `{"windows":[{number,title,kind,width,height,visible,main,key}]}`；`kind` 为 window / sheet / popover / panel |
+| `GET /debug/snapshot?window=<编号>` | `image/png`；不带 `window` 时取主窗口（应用在后台时 `mainWindow` 为空，退而取最大的可见标题窗口）。编号不是数字 `400`，没有这个窗口 `404` |
+
+限制：
+
+- 打开中的菜单（`NSMenu`）不在应用的窗口列表里，截不到；弹层（popover）和表单（sheet）是单独的窗口，可以按编号截。
+- 只在 macOS 上提供；iOS 应用上这两条路由返回 `503`。模拟器本来就能在后台截：`xcrun simctl io booted screenshot x.png`。
+- 对照系统按窗口截图（`screencapture -l <编号>`），内容和布局一致，只有约 0.05% 的像素在文字、图标边缘的抗锯齿上略有差别。

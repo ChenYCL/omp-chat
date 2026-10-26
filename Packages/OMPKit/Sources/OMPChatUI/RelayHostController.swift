@@ -65,6 +65,16 @@ public final class RelayHostController {
             guard let report = await self?.model?.runDiagnostics() else { return Data("{}".utf8) }
             return (try? report.jsonData()) ?? Data("{}".utf8)
         }
+        #if os(macOS)
+        // In-process window capture: works while the app is in the background
+        // and can only ever contain this app's windows.
+        server.onDebugWindows = {
+            await MainActor.run { AppSnapshot.windowListJSON() }
+        }
+        server.onDebugSnapshot = { number in
+            await MainActor.run { AppSnapshot.png(windowNumber: number) }
+        }
+        #endif
     }
 
     deinit {

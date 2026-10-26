@@ -340,9 +340,70 @@ final class RelayDebugRouteTests: XCTestCase {
     }
 
     func testDebugRoutesRejectWithoutToken() async throws {
-        for path in ["/debug/events", "/debug/report"] {
+        for path in ["/debug/events", "/debug/report", "/debug/windows", "/debug/snapshot"] {
             let (_, response) = try await get(path, token: nil)
             XCTAssertEqual(response.statusCode, 401, path)
         }
+    }
+
+    // MARK: - Window snapshots
+
+    /// Records which window each snapshot call asked for.
+    private final class Calls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Int?] = []
+        func append(_ value: Int?) { lock.lock(); values.append(value); lock.unlock() }
+        var all: [Int?] { lock.lock(); defer { lock.unlock() }; return values }
+    }
+
+    private let fakePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+    func testSnapshotRoutesWithoutHooksReturn503() async throws {
+        for path in ["/debug/windows", "/debug/snapshot"] {
+            let (_, response) = try await get(path, token: token)
+            XCTAssertEqual(response.statusCode, 503, path)
+        }
+    }
+
+    func testSnapshotReturnsThePNGForTheRequestedWindow() async throws {
+        let calls = Calls()
+        let png = fakePNG
+        server.onDebugSnapshot = { window in
+            calls.append(window)
+            return png
+        }
+        let (data, response) = try await get("/debug/snapshot?window=42", token: token)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Type"), "image/png")
+        XCTAssertEqual(data, png, "PNG 字节应原样返回")
+
+        _ = try await get("/debug/snapshot", token: token)
+        XCTAssertEqual(calls.all, [42, nil], "带 window 传编号，不带则交给宿主选默认窗口")
+    }
+
+    func testSnapshotRejectsANonNumericWindow() async throws {
+        let calls = Calls()
+        server.onDebugSnapshot = { window in
+            calls.append(window)
+            return Data()
+        }
+        let (_, response) = try await get("/debug/snapshot?window=main", token: token)
+        XCTAssertEqual(response.statusCode, 400)
+        XCTAssertTrue(calls.all.isEmpty, "参数不合法时不应去截图")
+    }
+
+    func testSnapshotOfAMissingWindowReturns404() async throws {
+        server.onDebugSnapshot = { _ in nil }
+        let (_, response) = try await get("/debug/snapshot?window=7", token: token)
+        XCTAssertEqual(response.statusCode, 404)
+    }
+
+    func testWindowsReturnsTheHostList() async throws {
+        let list = Data(#"{"windows":[{"number":7,"title":"OMPChat"}]}"#.utf8)
+        server.onDebugWindows = { list }
+        let (data, response) = try await get("/debug/windows", token: token)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(data, list)
     }
 }
