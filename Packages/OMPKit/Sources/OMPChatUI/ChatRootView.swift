@@ -32,7 +32,7 @@ public struct ChatRootView: View {
             .sheet(isPresented: $bindable.showSettings) {
                 ProviderSettingsView().environment(model)
             }
-            .preferredColorScheme(colorScheme)
+            .preferredColorScheme(model.settings.appearance.colorScheme)
             .task { await model.bootstrap() }
         #else
         macOSRoot
@@ -42,7 +42,7 @@ public struct ChatRootView: View {
             .sheet(isPresented: $showSwitcher) {
                 QuickSwitcherView().environment(model)
             }
-            .preferredColorScheme(colorScheme)
+            .preferredColorScheme(model.settings.appearance.colorScheme)
             .task { await model.bootstrap() }
             .onReceive(NotificationCenter.default.publisher(for: .ompQuickSwitch)) { _ in showSwitcher = true }
             .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in model.newConversation() }
@@ -56,14 +56,6 @@ public struct ChatRootView: View {
                 model.discardTemporaryConversations()
             }
         #endif
-    }
-
-    private var colorScheme: ColorScheme? {
-        switch model.settings.appearance {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
     }
 
     // MARK: - macOS (official ChatGPT desktop: single sidebar + main content)
@@ -106,6 +98,19 @@ public struct ChatRootView: View {
         sidebarVisible.toggle()
     }
     #endif
+}
+
+extension AppearancePreference {
+    /// The SwiftUI scheme for 设置 → 外观 → 主题; nil follows the system. Every
+    /// window applies this one mapping — the Settings window used not to, and
+    /// stayed light while the main window was dark.
+    public var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
 }
 
 

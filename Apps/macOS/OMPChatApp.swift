@@ -100,8 +100,12 @@ struct OMPChatApp: App {
         }
 
         Settings {
+            // Same theme and accent as the main window; without these the
+            // Settings window followed the system and stayed light in 深色.
             ProviderSettingsView()
                 .environment(model)
+                .tint(customAccent)
+                .preferredColorScheme(model.settings.appearance.colorScheme)
         }
     }
 
