@@ -24,6 +24,7 @@ struct SidePanel: View {
     @State private var openFile: OpenFile?
     @State private var diff: Diff?
     @State private var picking = false
+    @State private var saveFailure: String?
 
     private struct Entry: Identifiable {
         var name: String
@@ -143,6 +144,12 @@ struct SidePanel: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
 
+                if let saveFailure {
+                    Text(saveFailure)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompFlat(rgb: 0xDE4A43))
+                        .padding(.horizontal, 12)
+                }
                 if let openFile {
                     openedFile(openFile)
                 } else if entries.isEmpty, state != .loading {
@@ -179,11 +186,14 @@ struct SidePanel: View {
     }
 
     /// A file opened from the list: its text, read here rather than over the
-    /// phone's channel because this is the Mac itself.
+    /// phone's channel because this is the Mac itself. `original` is what is on
+    /// disk, so the save button appears only after a real edit.
     private struct OpenFile {
         var url: URL
         var text: String
+        var original: String
         var truncated: Bool
+        var binary: Bool = false
     }
 
     private func openedFile(_ file: OpenFile) -> some View {
@@ -198,6 +208,33 @@ struct SidePanel: View {
                         .foregroundStyle(Color.ompTextTertiary)
                 }
                 Spacer()
+                // Always offered for an editable file, disabled until it
+                // changes: a button that appears only after an edit depends on
+                // the render snapshot being fresh, and it was not appearing.
+                if !file.binary, !file.truncated {
+                    Button {
+                        // Commit IME composition first, then save what the field
+                        // finally holds: clicking while a word was mid-composition
+                        // wrote "EDITED IN THE" and dropped "PANEL".
+                        GenUIButton.endTextEditing()
+                        Task { @MainActor in
+                            // The composition is committed into SwiftUI's
+                            // binding on a later run-loop turn; one yield was not
+                            // enough and the last word was written truncated.
+                            try? await Task.sleep(for: .milliseconds(150))
+                            if let current = openFile { save(current) }
+                        }
+                    } label: {
+                        Label("保存", systemImage: "square.and.arrow.down")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.ompText)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(file.text == file.original)
+                    .keyboardShortcut("s", modifiers: .command)
+                    .help("写回磁盘 (⌘S)")
+                    .accessibilityIdentifier("panel.file.save")
+                }
                 Button {
                     openFile = nil
                 } label: {
@@ -208,14 +245,24 @@ struct SidePanel: View {
                 .buttonStyle(.plain)
                 .help("收起")
             }
-            ScrollView {
+            if file.binary {
                 Text(file.text)
                     .font(.system(size: 10.5).monospaced())
-                    .foregroundStyle(Color.ompText)
-                    .textSelection(.enabled)
+                    .foregroundStyle(Color.ompTextSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                // Editable, like the phone's file viewer: a truncated file stays
+                // read-only so saving cannot drop the part that was not loaded.
+                TextEditor(text: Binding(
+                    get: { file.text },
+                    set: { openFile?.text = $0 }
+                ))
+                .font(.system(size: 10.5, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 120, maxHeight: 320)
+                .disabled(file.truncated)
+                .accessibilityIdentifier("panel.file.editor")
             }
-            .frame(maxHeight: 320)
         }
         .padding(10)
         .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -238,14 +285,30 @@ struct SidePanel: View {
         let body = data.prefix(cap)
         // Binary files would render as noise; say so instead of showing it.
         if body.contains(0) {
-            openFile = OpenFile(url: URL(fileURLWithPath: path), text: "二进制文件，不显示内容。", truncated: false)
+            openFile = OpenFile(
+                url: URL(fileURLWithPath: path), text: "二进制文件，不显示内容。",
+                original: "", truncated: false, binary: true
+            )
             return
         }
+        let text = String(decoding: body, as: UTF8.self)
         openFile = OpenFile(
-            url: URL(fileURLWithPath: path),
-            text: String(decoding: body, as: UTF8.self),
-            truncated: truncated
+            url: URL(fileURLWithPath: path), text: text, original: text, truncated: truncated
         )
+    }
+
+    /// Writes the edited text back to the same file. Errors are shown in the
+    /// panel rather than swallowed.
+    private func save(_ file: OpenFile) {
+        do {
+            try FileEdit.write(file.text, to: file.url, truncated: file.truncated)
+            openFile?.original = file.text
+            saveFailure = nil
+        } catch FileEdit.Failure.truncated {
+            saveFailure = "这个文件只加载了前 256 KB，不能保存，否则后半部分会丢失"
+        } catch {
+            saveFailure = "保存失败：\(error)"
+        }
     }
 
     private func goUp() {
