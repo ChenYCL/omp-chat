@@ -317,6 +317,7 @@ public struct MacShellSidebar: View {
                     if filtered.isEmpty { emptyHint }
                 } else {
                     prioritySection
+                    temporarySection
                     pinnedSection
                     customSections
                     projectSections
@@ -423,6 +424,21 @@ public struct MacShellSidebar: View {
     private var priorityItems: [Conversation] {
         let ids = model.priorityConversationIDs()
         return model.sortedConversations.filter { ids.contains($0.id) }
+    }
+
+    /// Temporary chats: no icon clutter, just the list, and a hint that they are
+    /// dropped when the app closes. Without this section a temporary chat
+    /// disappeared from the sidebar the moment it stopped being selected.
+    private var temporarySection: some View {
+        let items = model.temporaryConversations
+        return Group {
+            if !items.isEmpty {
+                sectionHeader("临时")
+                ForEach(items) { conversation in
+                    row(conversation)
+                }
+            }
+        }
     }
 
     private var prioritySection: some View {

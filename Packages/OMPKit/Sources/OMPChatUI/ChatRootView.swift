@@ -47,6 +47,14 @@ public struct ChatRootView: View {
             .onReceive(NotificationCenter.default.publisher(for: .ompQuickSwitch)) { _ in showSwitcher = true }
             .onReceive(NotificationCenter.default.publisher(for: .ompNewChat)) { _ in model.newConversation() }
             .onReceive(NotificationCenter.default.publisher(for: .ompToggleSidebar)) { _ in toggleSidebar() }
+            // Temporary chats are not saved; dropping them when the only window
+            // goes away is what owning a temporary chat means. The function
+            // existed and was never called, so they survived until quit.
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSApplication.willTerminateNotification
+            )) { _ in
+                model.discardTemporaryConversations()
+            }
         #endif
     }
 

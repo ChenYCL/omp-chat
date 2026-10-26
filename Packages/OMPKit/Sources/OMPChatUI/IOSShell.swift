@@ -953,12 +953,14 @@ struct ShellDrawer: View {
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // While the 待处理 group is shown, its rows are not repeated below.
         let shown = Set(search.isEmpty ? priorityConversations.map(\.id) : [])
+        // Temporary chats come first: they are not saved, so they are the ones
+        // you must not lose sight of while switching around.
+        let ranked = model.temporaryConversations + model.sortedConversations
+        let candidates = ranked.filter { !shown.contains($0.id) }
         if q.isEmpty {
-            return Array(model.sortedConversations.filter { !shown.contains($0.id) }.prefix(20))
+            return Array(candidates.prefix(20))
         }
-        return ConversationSearch.filter(
-            model.sortedConversations.filter { !shown.contains($0.id) }, query: search
-        )
+        return ConversationSearch.filter(candidates, query: search)
     }
 
     private func drawerItem(icon: String, title: String, badge: String? = nil) -> some View {

@@ -131,6 +131,16 @@ public final class ChatAppModel {
             }
     }
 
+    /// Temporary chats: not saved, and dropped when the window closes. They are
+    /// excluded from `sortedConversations` (so history and search stay clean) but
+    /// have to be listed somewhere or a chat vanishes the moment you switch away
+    /// from it, which is what used to happen.
+    public var temporaryConversations: [Conversation] {
+        conversations
+            .filter(\.isTemporary)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     public var archivedConversations: [Conversation] {
         conversations.filter(\.isArchived).sorted { $0.updatedAt > $1.updatedAt }
     }
