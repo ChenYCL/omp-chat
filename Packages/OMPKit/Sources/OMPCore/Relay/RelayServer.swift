@@ -42,6 +42,12 @@ public enum RelayCommand: Sendable, Equatable {
     /// it applies; a refusal is echoed under `requestID` in
     /// `RelaySnapshot.commandFailures`.
     case approve(approvalID: String, decision: RelayApprovalDecision, requestID: String?)
+    /// 立即发送 on a follow-up queued in the conversation: interrupts the
+    /// running reply there and sends it now.
+    case sendQueuedNow(conversationID: String, queuedID: String)
+    /// 删除 / 编辑 on a queued follow-up: drops it from the host's queue (the
+    /// phone keeps the text in its own composer for 编辑).
+    case removeQueued(conversationID: String, queuedID: String)
 }
 
 /// Errors thrown by [`RelayServer.start(port:token:)`].
@@ -90,6 +96,39 @@ public enum DebugGitOperation: Sendable, Equatable {
     case discard(String)
     case commit(String)
     case push
+}
+
+/// What a queued follow-up chip's buttons do.
+public enum DebugQueuedOperation: String, Sendable, Equatable {
+    case sendNow, edit, delete
+}
+
+/// 定时任务 writes, as the sidebar section and its editor offer them.
+public enum DebugScheduledTaskOperation: Sendable, Equatable {
+    /// The editor's 保存 for a new task; refused with the editor's own
+    /// validation text when a field is invalid.
+    case add(title: String, prompt: String, schedule: TaskSchedule, target: ScheduledTask.Target,
+             workingDirectory: String?, permissionMode: String?)
+    case pause(taskID: String)
+    case resume(taskID: String)
+    case delete(taskID: String)
+    case runNow(taskID: String)
+}
+
+/// One sidebar write: what a conversation row's menu and the project /
+/// section menus offer. Conversation ids default to the selected one.
+public enum DebugSidebarOperation: Sendable, Equatable {
+    case toggleArchive(conversationID: String?)
+    case togglePin(conversationID: String?)
+    case rename(conversationID: String?, title: String)
+    /// Into a project or custom section; nil moves it out of any group.
+    case move(conversationID: String?, groupID: String?)
+    case createSection(name: String)
+    /// A project or a custom section.
+    case renameGroup(groupID: String, name: String)
+    case deleteGroup(groupID: String)
+    /// 全部归档 of a custom section.
+    case archiveSection(groupID: String)
 }
 
 /// One automation action for the token-gated `POST /debug/action` route. This
@@ -152,6 +191,8 @@ public enum DebugAction: Sendable, Equatable {
     case browserNavigate(tabID: String, url: String)
     /// 改动 tab write, in the thread's working directory.
     case git(conversationID: String?, operation: DebugGitOperation)
+    /// Archive, pin, rename, move, and project / section edits.
+    case sidebarOp(DebugSidebarOperation)
     /// Send a user message in a conversation (the composer's send button).
     case send(conversationID: String?, text: String)
     /// Stop the reply, the running tool and every pending approval (⌘.).
@@ -162,6 +203,17 @@ public enum DebugAction: Sendable, Equatable {
     case setPermissionMode(conversationID: String?, mode: PermissionMode?)
     /// Tools on/off for a thread; nil follows its working directory.
     case setToolsEnabled(conversationID: String?, enabled: Bool?)
+    /// The composer's 「工具与权限」 pick, both fields in one write.
+    case setAccess(conversationID: String?, access: AgentAccess)
+    case scheduledTask(DebugScheduledTaskOperation)
+    /// A file reference's 打开文件: the side panel's 文件 tab at `line`.
+    case openFile(path: String, line: Int?)
+    /// 用 Codex 审查: a read-only review thread for the working directory.
+    case codeReview(conversationID: String?)
+    /// A queued follow-up chip: 立即发送 / 编辑 / 删除.
+    case queued(conversationID: String?, queuedID: String, op: DebugQueuedOperation)
+    /// 压缩上下文 (the + menu and `/compact`).
+    case compact(conversationID: String?)
     /// 设置 → MCP 服务器 → 目录 → 安装: the entry's answers by input id.
     case mcpInstall(entryID: String, values: [String: [String]])
     /// Remove a server from settings (and its vault secrets).
@@ -175,6 +227,10 @@ public enum DebugAction: Sendable, Equatable {
     /// 设置 → 远程控制 → 允许手机访问文件与终端. Loopback-only like every
     /// debug action, so a phone cannot use it to grant itself access.
     case setPhoneAccess(enabled: Bool)
+    /// The toast's 撤销: undoes the newest undoable sidebar action.
+    case undo
+    /// Hides the undo toast; the history is kept.
+    case dismissUndo
 
     /// The wire name of the action.
     public var name: String {
@@ -205,16 +261,25 @@ public enum DebugAction: Sendable, Equatable {
         case .browserSelectTab: "browserSelectTab"
         case .browserNavigate: "browserNavigate"
         case .git: "git"
+        case .sidebarOp: "sidebarOp"
         case .send: "send"
         case .stop: "stop"
         case .approve: "approve"
         case .setPermissionMode: "setPermissionMode"
         case .setToolsEnabled: "setToolsEnabled"
+        case .setAccess: "setAccess"
+        case .scheduledTask: "scheduledTask"
+        case .openFile: "openFile"
+        case .codeReview: "codeReview"
+        case .queued: "queued"
+        case .compact: "compact"
         case .mcpInstall: "mcpInstall"
         case .mcpRemove: "mcpRemove"
         case .setWebSearch: "setWebSearch"
         case .computerUseAdd: "computerUseAdd"
         case .setPhoneAccess: "setPhoneAccess"
+        case .undo: "undo"
+        case .dismissUndo: "dismissUndo"
         }
     }
 
@@ -380,6 +445,38 @@ public enum DebugAction: Sendable, Equatable {
             default: return nil
             }
             return .git(conversationID: id, operation: operation)
+        case "sidebarOp":
+            guard let op = fields["op"] as? String, let id = optionalString("conversationID") else { return nil }
+            func text(_ key: String) -> String? { fields[key] as? String }
+            switch op {
+            case "toggleArchive": return .sidebarOp(.toggleArchive(conversationID: id))
+            case "togglePin": return .sidebarOp(.togglePin(conversationID: id))
+            case "rename":
+                guard let title = text("title") else { return nil }
+                return .sidebarOp(.rename(conversationID: id, title: title))
+            case "move":
+                // Absent or null moves out of the group; anything but a
+                // string is a caller error, not "out of the group".
+                switch fields["groupID"] {
+                case nil, is NSNull: return .sidebarOp(.move(conversationID: id, groupID: nil))
+                case let group as String: return .sidebarOp(.move(conversationID: id, groupID: group))
+                default: return nil
+                }
+            case "createSection":
+                guard let name = text("name") else { return nil }
+                return .sidebarOp(.createSection(name: name))
+            case "renameGroup":
+                guard let group = text("groupID"), let name = text("name") else { return nil }
+                return .sidebarOp(.renameGroup(groupID: group, name: name))
+            case "deleteGroup":
+                guard let group = text("groupID") else { return nil }
+                return .sidebarOp(.deleteGroup(groupID: group))
+            case "archiveSection":
+                guard let group = text("groupID") else { return nil }
+                return .sidebarOp(.archiveSection(groupID: group))
+            default:
+                return nil
+            }
         case "send":
             guard let id = optionalString("conversationID"), let text = fields["text"] as? String else { return nil }
             return .send(conversationID: id, text: text)
@@ -413,6 +510,66 @@ public enum DebugAction: Sendable, Equatable {
             default:
                 return nil
             }
+        case "setAccess":
+            guard let id = optionalString("conversationID"),
+                  let raw = fields["access"] as? String,
+                  let access = AgentAccess(wireValue: raw) else { return nil }
+            return .setAccess(conversationID: id, access: access)
+        case "scheduledTask":
+            guard let op = fields["op"] as? String else { return nil }
+            if op == "add" {
+                // Schedule and target use the workspace file's own JSON
+                // shapes, ISO-8601 dates included.
+                func decoded<T: Decodable>(_ key: String, as type: T.Type) -> T? {
+                    guard let object = fields[key], JSONSerialization.isValidJSONObject(object),
+                          let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+                    let decoder = JSONDecoder()
+                    decoder.dateDecodingStrategy = .iso8601
+                    return try? decoder.decode(type, from: data)
+                }
+                guard let title = fields["title"] as? String, let prompt = fields["prompt"] as? String,
+                      let schedule = decoded("schedule", as: TaskSchedule.self),
+                      let directory = optionalString("workingDirectory"),
+                      let mode = optionalString("permissionMode") else { return nil }
+                var target = ScheduledTask.Target.newThread
+                if fields["target"] != nil {
+                    guard let explicit = decoded("target", as: ScheduledTask.Target.self) else { return nil }
+                    target = explicit
+                }
+                return .scheduledTask(.add(title: title, prompt: prompt, schedule: schedule, target: target,
+                                           workingDirectory: directory, permissionMode: mode))
+            }
+            guard let id = fields["taskID"] as? String else { return nil }
+            switch op {
+            case "pause": return .scheduledTask(.pause(taskID: id))
+            case "resume": return .scheduledTask(.resume(taskID: id))
+            case "delete": return .scheduledTask(.delete(taskID: id))
+            case "runNow": return .scheduledTask(.runNow(taskID: id))
+            default: return nil
+            }
+        case "openFile":
+            guard let path = fields["path"] as? String, !path.isEmpty else { return nil }
+            switch fields["line"] {
+            case nil, is NSNull:
+                return .openFile(path: path, line: nil)
+            case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID() && number.intValue >= 1
+                && Double(number.intValue) == number.doubleValue:
+                return .openFile(path: path, line: number.intValue)
+            default:
+                return nil
+            }
+        case "codeReview":
+            guard let id = optionalString("conversationID") else { return nil }
+            return .codeReview(conversationID: id)
+        case "queued":
+            guard let id = optionalString("conversationID"),
+                  let queuedID = fields["queuedID"] as? String,
+                  let raw = fields["op"] as? String,
+                  let op = DebugQueuedOperation(rawValue: raw) else { return nil }
+            return .queued(conversationID: id, queuedID: queuedID, op: op)
+        case "compact":
+            guard let id = optionalString("conversationID") else { return nil }
+            return .compact(conversationID: id)
         case "mcpInstall":
             guard let entry = fields["entryID"] as? String else { return nil }
             var values: [String: [String]] = [:]
@@ -439,6 +596,10 @@ public enum DebugAction: Sendable, Equatable {
         case "setPhoneAccess":
             guard let enabled = boolean(fields["enabled"]) else { return nil }
             return .setPhoneAccess(enabled: enabled)
+        case "undo":
+            return .undo
+        case "dismissUndo":
+            return .dismissUndo
         default:
             return nil
         }
@@ -472,7 +633,8 @@ public struct DebugActionOutcome: Codable, Sendable, Equatable {
 ///   state has been idle for 15 seconds.
 /// - `POST /command` → flat [`RelayCommandWire`] body; the full action
 ///   surface (select/new/rename/delete/regenerate/edit/branch/feedback/
-///   setModel/pin/archive/lock/unread/approve) goes through this one route.
+///   setModel/pin/archive/lock/unread/approve/sendQueuedNow/removeQueued)
+///   goes through this one route.
 ///   A body whose `command` does not parse (unknown kind, an `approve` without
 ///   `approvalID` or with a decision other than `allowOnce`/`deny`) is `400`.
 /// - `POST /rpc` → [`HostRPCRequest`] JSON; answered with [`HostRPCResponse`]
@@ -584,13 +746,30 @@ public final class RelayServer: @unchecked Sendable {
                 self?.accept(connection)
             }
             listener.stateUpdateHandler = { state in
+                // The first ready / failed answers `start`. Later changes used
+                // to be dropped: the listener could go away (a scenario saw
+                // connections refused with no stop logged) and nothing said so.
                 switch state {
                 case .ready:
-                    box.failure = nil
-                    ready.signal()
+                    if box.settled {
+                        DiagnosticsCenter.shared.record("relay", .info, "listener ready again", fields: ["port": String(requested)])
+                    } else {
+                        box.failure = nil
+                        box.settled = true
+                        ready.signal()
+                    }
                 case .failed(let error):
-                    box.failure = error
-                    ready.signal()
+                    if box.settled {
+                        DiagnosticsCenter.shared.record("relay", .error, "listener failed",
+                            fields: ["port": String(requested), "error": String(describing: error)])
+                    } else {
+                        box.failure = error
+                        box.settled = true
+                        ready.signal()
+                    }
+                case .waiting(let error):
+                    DiagnosticsCenter.shared.record("relay", .warn, "listener waiting",
+                        fields: ["port": String(requested), "error": String(describing: error)])
                 case .cancelled:
                     break
                 default:
@@ -1028,4 +1207,6 @@ public final class RelayServer: @unchecked Sendable {
 /// semaphore whose waiter runs on a different thread than the listener queue.
 private final class FailureBox: @unchecked Sendable {
     var failure: Error?
+    /// Set once `start` has been answered; later states are only logged.
+    var settled = false
 }

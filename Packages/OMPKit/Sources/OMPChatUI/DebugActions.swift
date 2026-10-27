@@ -158,15 +158,29 @@ enum DebugActions {
             }
             return await runGit(operation, in: directory, model: model)
 
+        case .sidebarOp(let operation):
+            return sidebar(operation, model: model)
+
         case .send(let raw, let text):
             guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure("消息是空的") }
-            guard !model.isStreaming else { return .failure("还在回复") }
+            // Same rule as the desktop composer: a reply in another
+            // conversation blocks; one in this conversation (or a compaction
+            // of it) takes the message as a queued follow-up.
+            if model.isStreaming, model.streamingConversationID != id {
+                return .failure("另一个对话正在回复")
+            }
             if model.selectedConversationID != id { model.selectedConversationID = id }
+            let busy = model.isStreaming || model.isCompacting(id)
             let before = model.selectedConversation?.messages.count ?? 0
+            let queuedBefore = model.queuedMessages(for: id).count
             // Not awaited: with tools on, the reply can stop at an approval
             // card that only a later `approve` action resolves.
             Task { await model.sendNow(text: text, attachments: []) }
+            if busy {
+                let queued = await waitUntil { model.queuedMessages(for: id).count > queuedBefore }
+                return queued ? .success : .failure(model.errorMessage ?? "没有排进队列")
+            }
             let sent = await waitUntil { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
             if sent, (model.selectedConversation?.messages.count ?? 0) > before { return .success }
             return .failure(model.errorMessage ?? "没有发出")
@@ -191,6 +205,46 @@ enum DebugActions {
             guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
             model.setToolsEnabled(enabled, for: id)
             return .success
+
+        case .setAccess(let raw, let access):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.setAgentAccess(access, for: id)
+            return .success
+
+        case .scheduledTask(let operation):
+            return await scheduledTask(operation, model: model)
+
+        case .openFile(let path, let line):
+            model.openFileInSidePanel(path, line: line)
+            return .success
+
+        case .codeReview(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(await model.startCodeReview(for: id))
+
+        case .queued(let raw, let queuedRaw, let op):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            guard let queuedID = UUID(uuidString: queuedRaw),
+                  model.queuedMessages(for: id).contains(where: { $0.id == queuedID }) else {
+                return .failure("no such queued message")
+            }
+            switch op {
+            case .sendNow:
+                // Refused (and left queued) while another conversation replies.
+                if model.isStreaming, model.streamingConversationID != id { return .failure("另一个对话正在回复") }
+                Task { await model.sendQueuedNow(queuedID, in: id) }
+                let gone = await waitUntil { !model.queuedMessages(for: id).contains { $0.id == queuedID } }
+                return gone ? .success : .failure(model.errorMessage ?? "没有发出")
+            case .edit:
+                model.editQueued(queuedID, in: id)
+            case .delete:
+                model.removeQueued(queuedID, in: id)
+            }
+            return .success
+
+        case .compact(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(await model.compactConversation(id))
 
         case .mcpInstall(let entryID, let values):
             guard let entry = MCPCatalog.entries.first(where: { $0.id == entryID }) else {
@@ -236,6 +290,18 @@ enum DebugActions {
             var settings = model.settings
             settings.relayAllowShell = enabled
             await model.saveSettings(settings)
+            return .success
+
+        case .undo:
+            // undoLast returns the entry's confirmation when it restored
+            // something, and the reason otherwise (target since deleted).
+            // The confirmation stays readable as `undoToast` in /debug/state.
+            guard let confirmation = model.undoStack.top?.confirmation else { return .failure("nothing to undo") }
+            let text = model.undoLast() ?? ""
+            return text == confirmation ? .success : .failure(text)
+
+        case .dismissUndo:
+            model.dismissUndoToast()
             return .success
 
         case .computerUseAdd(let raw):
@@ -294,14 +360,52 @@ enum DebugActions {
             var workingDirectory: String?
             var messageCount: Int
             var hasUnread: Bool
+            var isPinned: Bool
+            var isArchived: Bool
+            /// Project or custom section it is filed under.
+            var groupID: String?
             /// The selected thread's side chat; never part of the thread.
             var sideChat: [SideChatLine]
             var permissionMode: String
             var toolsEnabled: Bool
+            /// The entry the 「工具与权限」 menu checks (`AgentAccess.wireValue`).
+            var access: String
+            /// What the composer button reads, e.g. 仅聊天 or 完全访问.
+            var accessLabel: String
             /// The reply to the last user message. An agent reply spans one
             /// assistant message per model turn, so this covers all of them:
             /// every tool call in order, and the last message's text.
             var lastReply: ReplyLine?
+            /// A 用 Codex 审查 thread, and how its review ended.
+            var isCodeReview: Bool
+            /// running / reported / unreported; nil for other threads.
+            var reviewOutcome: String?
+            /// Follow-ups waiting for the running reply, oldest first.
+            var queued: [QueuedLine]
+            var isCompacting: Bool
+            /// The summary that stands in for the earlier messages, if any.
+            var compaction: CompactionLine?
+            /// Every message in order, text trimmed; notes such as the
+            /// unanswered-follow-up one are in `error`.
+            var transcript: [MessageLine]
+        }
+        struct QueuedLine: Encodable {
+            var id: String
+            var text: String
+            var held: Bool
+        }
+        struct CompactionLine: Encodable {
+            var summary: String
+            var coveredThroughID: String
+            var tokensBefore: Int
+            var tokensAfter: Int
+        }
+        struct MessageLine: Encodable {
+            var id: String
+            var role: String
+            var text: String
+            var status: String
+            var error: String?
         }
         struct ReplyLine: Encodable {
             var text: String
@@ -350,6 +454,31 @@ enum DebugActions {
             var url: String
             var selected: Bool
         }
+        struct UndoToastLine: Encodable {
+            var message: String
+            var offersUndo: Bool
+        }
+        struct ScheduledTaskLine: Encodable {
+            var id: String
+            var title: String
+            /// active / paused / completed
+            var status: String
+            var summary: String
+            /// 今天 09:00 / 明天 09:00 / 未安排 …
+            var nextRunLabel: String
+            var nextRunAt: Date?
+            var runCount: Int
+            var lastRunConversationID: String?
+            var lastSkipReason: String?
+            var running: Bool
+        }
+        struct GroupLine: Encodable {
+            var id: String
+            var name: String
+            /// A custom section rather than a project.
+            var isSection: Bool
+            var conversationIDs: [String]
+        }
         struct State: Encodable {
             var selectedID: String?
             var selected: Selected?
@@ -365,6 +494,16 @@ enum DebugActions {
             var webSearchEnabled: Bool
             /// 设置 → 远程控制 → 允许手机访问文件与终端.
             var phoneAccess: Bool
+            /// The undo toast on screen: its text and whether it offers 撤销.
+            var undoToast: UndoToastLine?
+            /// Undoable actions left, newest first (their toast texts).
+            var undoHistory: [String]
+            /// Projects and custom sections in sidebar order, with members.
+            var groups: [GroupLine]
+            /// 定时任务, in sidebar order.
+            var scheduledTasks: [ScheduledTaskLine]
+            /// A file the 文件 tab was asked to show and has not picked up yet.
+            var pendingFileRequest: String?
             var sidePanelOpen: Bool
             var sidePanelTab: String?
             var sideChatStreaming: Bool
@@ -409,12 +548,41 @@ enum DebugActions {
                 workingDirectory: $0.workingDirectory,
                 messageCount: $0.messages.count,
                 hasUnread: $0.hasUnread,
+                isPinned: $0.isPinned,
+                isArchived: $0.isArchived,
+                groupID: $0.projectID?.uuidString,
                 sideChat: model.sideChat(for: $0.id).map {
                     SideChatLine(role: $0.role.rawValue, text: $0.concatenatedText, status: $0.status.rawValue, error: $0.errorText)
                 },
                 permissionMode: model.permissionMode(for: $0.id).rawValue,
                 toolsEnabled: model.toolsEnabled(for: $0.id),
-                lastReply: replyLine($0.messages)
+                access: model.agentAccess(for: $0.id).wireValue,
+                accessLabel: model.effectiveAgentAccess(for: $0.id).title,
+                lastReply: replyLine($0.messages),
+                isCodeReview: $0.isCodeReview,
+                reviewOutcome: model.codeReviewOutcome($0.id).map {
+                    switch $0 {
+                    case .running: "running"
+                    case .reported: "reported"
+                    case .unreported: "unreported"
+                    }
+                },
+                queued: model.queuedMessages(for: $0.id).map {
+                    QueuedLine(id: $0.id.uuidString, text: $0.text, held: $0.isHeld)
+                },
+                isCompacting: model.isCompacting($0.id),
+                compaction: model.compaction(for: $0.id).map {
+                    CompactionLine(
+                        summary: $0.summary, coveredThroughID: $0.coveredThroughID.uuidString,
+                        tokensBefore: $0.tokensBefore, tokensAfter: $0.tokensAfter
+                    )
+                },
+                transcript: $0.messages.map {
+                    MessageLine(
+                        id: $0.id.uuidString, role: $0.role.rawValue, text: String($0.concatenatedText.prefix(400)),
+                        status: $0.status.rawValue, error: $0.errorText
+                    )
+                }
             )
         }
         let state = State(
@@ -428,6 +596,27 @@ enum DebugActions {
             sidebarFilter: model.settings.sidebarFilter,
             webSearchEnabled: model.webSearchEnabled,
             phoneAccess: model.settings.relayAllowShell,
+            undoToast: model.undoToast.map { UndoToastLine(message: $0.message, offersUndo: $0.offersUndo) },
+            undoHistory: model.undoStack.entries.reversed().map(\.message),
+            groups: model.projects.map { group in
+                GroupLine(
+                    id: group.id.uuidString, name: group.name, isSection: group.isCustomSection,
+                    conversationIDs: model.conversations.filter { $0.projectID == group.id }.map(\.id.uuidString)
+                )
+            },
+            scheduledTasks: model.scheduledTasks.map { task in
+                ScheduledTaskLine(
+                    id: task.id.uuidString, title: task.title, status: task.status.rawValue,
+                    summary: task.schedule.summary(now: Date(), calendar: model.scheduleCalendar),
+                    nextRunLabel: TaskSchedule.nextRunLabel(task.nextRunAt, now: Date(), calendar: model.scheduleCalendar),
+                    nextRunAt: task.nextRunAt, runCount: task.runCount,
+                    lastRunConversationID: task.lastRunConversationID?.uuidString,
+                    lastSkipReason: task.lastSkipReason, running: model.isScheduledTaskRunning(task.id)
+                )
+            },
+            pendingFileRequest: model.sidePanelFileRequest.map { request in
+                request.line.map { "\(request.path):\($0)" } ?? request.path
+            },
             sidePanelOpen: model.sidePanelOpen,
             sidePanelTab: model.sidePanelOpen ? model.sidePanelTab.rawValue : nil,
             sideChatStreaming: model.sideChatStreamingID != nil,
@@ -466,6 +655,7 @@ enum DebugActions {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         return (try? encoder.encode(state)) ?? Data("{}".utf8)
     }
 
@@ -489,6 +679,88 @@ enum DebugActions {
     private static func targetID(_ raw: String?, in model: ChatAppModel) -> UUID? {
         guard let raw else { return model.selectedConversationID }
         return existingID(raw, in: model)
+    }
+
+    private static func scheduledTask(_ operation: DebugScheduledTaskOperation, model: ChatAppModel) async -> DebugActionOutcome {
+        func task(_ raw: String) -> UUID? {
+            UUID(uuidString: raw).flatMap { id in model.scheduledTasks.contains { $0.id == id } ? id : nil }
+        }
+        switch operation {
+        case .add(let title, let prompt, let schedule, let target, let directory, let mode):
+            if let mode, PermissionMode(rawValue: mode) == nil { return .failure("unknown permission mode") }
+            let draft = ScheduledTask(
+                title: title, prompt: prompt, schedule: schedule, target: target,
+                workingDirectory: directory, permissionMode: mode
+            )
+            // The editor's own checks, in the order its fields appear.
+            let errors = draft.validationErrors(now: Date())
+            let order: [ScheduledTask.Field] = [.title, .prompt, .schedule, .workingDirectory]
+            let messages = order.compactMap { errors[$0] }
+            guard messages.isEmpty else { return .failure(messages.joined(separator: "；")) }
+            model.addScheduledTask(draft)
+            return .success
+        case .pause(let raw):
+            guard let id = task(raw) else { return .failure("no such scheduled task") }
+            model.pauseScheduledTask(id)
+            return .success
+        case .resume(let raw):
+            guard let id = task(raw) else { return .failure("no such scheduled task") }
+            return outcome(model.resumeScheduledTask(id))
+        case .delete(let raw):
+            guard let id = task(raw) else { return .failure("no such scheduled task") }
+            model.deleteScheduledTask(id)
+            return .success
+        case .runNow(let raw):
+            guard let id = task(raw) else { return .failure("no such scheduled task") }
+            return outcome(await model.runScheduledTaskNow(id))
+        }
+    }
+
+    private static func sidebar(_ operation: DebugSidebarOperation, model: ChatAppModel) -> DebugActionOutcome {
+        func group(_ raw: String) -> Project? {
+            UUID(uuidString: raw).flatMap { id in model.projects.first { $0.id == id } }
+        }
+        switch operation {
+        case .toggleArchive(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.toggleArchive(id)
+        case .togglePin(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            model.togglePin(id)
+        case .rename(let raw, let title):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure("名称是空的") }
+            model.renameConversation(id, title: title)
+        case .move(let raw, let groupID):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            var destination: UUID?
+            if let groupID {
+                guard let target = group(groupID) else { return .failure("no such project or section") }
+                destination = target.id
+            }
+            model.moveConversation(id, to: destination)
+        case .createSection(let name):
+            model.createCustomSection(name: name)
+        case .renameGroup(let raw, let name):
+            guard let target = group(raw) else { return .failure("no such project or section") }
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure("名称是空的") }
+            if target.isCustomSection {
+                model.renameCustomSection(target.id, name: name)
+            } else {
+                model.renameProject(target.id, name: name)
+            }
+        case .deleteGroup(let raw):
+            guard let target = group(raw) else { return .failure("no such project or section") }
+            if target.isCustomSection {
+                model.deleteCustomSection(target.id)
+            } else {
+                model.deleteProject(target.id)
+            }
+        case .archiveSection(let raw):
+            guard let target = group(raw), target.isCustomSection else { return .failure("no such section") }
+            model.archiveConversations(inCustomSection: target.id)
+        }
+        return .success
     }
 
     /// Model methods report failure as an optional message.

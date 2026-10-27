@@ -20,6 +20,7 @@ public struct ChatTranscriptView: View {
                         if conversation.messages.isEmpty {
                             emptyState
                         }
+                        let compaction = model.compaction(for: conversation.id)
                         ForEach(conversation.messages) { message in
                             MessageRow(
                                 message: message,
@@ -27,6 +28,12 @@ public struct ChatTranscriptView: View {
                                 actions: actions(for: message)
                             )
                             .id(message.id)
+                            if let compaction, message.id == compaction.coveredThroughID {
+                                CompactionDivider(compaction: compaction)
+                            }
+                        }
+                        if model.isCompacting(conversation.id) {
+                            CompactingIndicator()
                         }
                     }
                     Color.clear
@@ -177,7 +184,7 @@ public struct ChatTranscriptView: View {
         let textCount = last.parts.reduce(0) { $0 + $1.plainText.count }
         let waiting = model.pendingApprovals.filter { $0.conversationID == conversation.id }.map(\.id.uuidString)
         return "\(conversation.id)-\(conversation.messages.count)-\(last.id)-\(textCount / 40)-\(last.parts.count)"
-            + "-\(last.status.rawValue)-\(waiting.joined(separator: ","))"
+            + "-\(last.status.rawValue)-\(waiting.joined(separator: ","))-\(model.isCompacting(conversation.id))"
     }
 
     // MARK: Empty state
@@ -253,10 +260,14 @@ public struct ErrorBanner: View {
     }
 }
 
-/// Toast-style status line (model sync, export success, …).
+/// Toast-style status line (model sync, export done, compaction notices…).
+/// Goes away on its own after a few seconds or on tap; it used to stay until
+/// tapped, so a notice outlived what it described.
 public struct StatusToast: View {
     let message: String
     let onDismiss: () -> Void
+
+    static let lifetime: Duration = .seconds(5)
 
     public init(message: String, onDismiss: @escaping () -> Void) {
         self.message = message
@@ -265,9 +276,11 @@ public struct StatusToast: View {
 
     public var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
+            // Neutral: the lines are notices (「还没有足够早的内容可以压缩」,
+            // 「压缩时不能插话…」) as often as successes.
+            Image(systemName: "info.circle.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.ompTextSecondary)
             Text(message)
                 .font(.system(size: 12))
             Spacer()
@@ -279,5 +292,75 @@ public struct StatusToast: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .onTapGesture(perform: onDismiss)
+        // Keyed on the text: a newer message restarts the clock.
+        .task(id: message) {
+            try? await Task.sleep(for: Self.lifetime)
+            if !Task.isCancelled { onDismiss() }
+        }
+        .accessibilityIdentifier("status.toast")
+    }
+}
+
+/// Where a compaction's summary ends. Everything above stays in the
+/// transcript; requests send the summary in its place. Tapping shows the
+/// summary itself.
+struct CompactionDivider: View {
+    let compaction: ConversationCompaction
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(Theme.Motion.quick) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    rule
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text("以上内容已压缩为摘要")
+                        .font(.system(size: 11.5, weight: .medium))
+                    Text("约 \(TokenFormat.compact(compaction.tokensBefore)) → \(TokenFormat.compact(compaction.tokensAfter))")
+                        .font(.system(size: 10.5).monospacedDigit())
+                    rule
+                }
+                .foregroundStyle(Color.ompTextTertiary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("transcript.compaction.divider")
+            .accessibilityHint(expanded ? "收起摘要" : "展开摘要")
+            if expanded {
+                Text(compaction.summary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .textSelection(.enabled)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
+                    .accessibilityIdentifier("transcript.compaction.summary")
+            }
+        }
+    }
+
+    private var rule: some View {
+        Rectangle()
+            .fill(Color.ompBorder)
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// The transcript's last row while the earlier turns are being summarised.
+struct CompactingIndicator: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("正在压缩上下文…")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color.ompTextSecondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("transcript.compacting")
     }
 }

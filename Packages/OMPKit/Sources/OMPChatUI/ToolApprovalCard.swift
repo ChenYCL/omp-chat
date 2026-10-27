@@ -90,43 +90,36 @@ struct ToolApprovalCard: View {
     }
 }
 
-/// Composer menu for how freely the agent may act in this thread, and whether
-/// it gets tools at all. Both default to following settings / the thread's
-/// working directory, shown as 「跟随默认」 / 「自动」.
+/// Composer menu for whether the agent gets tools in this thread and how
+/// freely they run: one radio list (`AgentAccess`), like Codex's Chat /
+/// Agent / Agent (full access) picker, so exactly one entry is checked and
+/// every pick changes what the button shows.
 struct AgentModeMenu: View {
     let conversationID: UUID
     @Environment(ChatAppModel.self) private var model
 
     var body: some View {
-        let mode = model.permissionMode(for: conversationID)
-        let toolsOn = model.toolsEnabled(for: conversationID)
+        let access = model.agentAccess(for: conversationID)
+        // What 跟随默认 gives right now, shown next to that entry.
+        let fallback = model.defaultAgentAccess(for: conversationID)
+        let effective = model.effectiveAgentAccess(for: conversationID)
         Menu {
-            Section("工具") {
-                Toggle("允许使用工具", isOn: Binding(
-                    get: { toolsOn },
-                    set: { model.setToolsEnabled($0, for: conversationID) }
-                ))
-                Button("跟随工作目录（有目录时开启）") { model.setToolsEnabled(nil, for: conversationID) }
-            }
-            Section("权限") {
-                ForEach(PermissionMode.allCases, id: \.self) { option in
-                    Button {
-                        model.setPermissionMode(option, for: conversationID)
-                    } label: {
-                        if option == mode {
-                            Label(option.title, systemImage: "checkmark")
-                        } else {
-                            Text(option.title)
-                        }
-                    }
+            Picker("工具与权限", selection: Binding(
+                get: { access },
+                set: { model.setAgentAccess($0, for: conversationID) }
+            )) {
+                ForEach(AgentAccess.allChoices, id: \.self) { choice in
+                    Text(choice == .followDefault ? "跟随默认（\(fallback.title)）" : choice.title)
+                        .tag(choice)
                 }
-                Button("跟随默认") { model.setPermissionMode(nil, for: conversationID) }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: toolsOn ? "hammer" : "bubble.left")
+                Image(systemName: effective == .chatOnly ? "bubble.left" : "hammer")
                     .font(.system(size: 10))
-                Text(toolsOn ? mode.title : "仅聊天")
+                Text(effective.title)
                     .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
             }
@@ -135,7 +128,8 @@ struct AgentModeMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("工具与权限：只读 / 每次询问 / 自动 / 完全访问")
+        .help("仅聊天：不调用工具。只读：只能读。每次询问：读直接执行，改文件和运行命令先问你。自动：改工作目录里的文件不问，运行命令先问。完全访问：文件和命令都不问，控制电脑仍要问。跟随默认：有工作目录时用设置里的默认权限，没有时仅聊天。")
         .accessibilityIdentifier("composer.agentMode")
+        .accessibilityValue(effective.title)
     }
 }

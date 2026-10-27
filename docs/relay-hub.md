@@ -61,6 +61,9 @@ body：`{"kind":"input","conversationID":"…"|null,"text":"…"}`、`{"kind":"s
 - Mac 拒绝时在下一份快照的 `commandFailures`（`requestID` + `error`）里回报，`error` 为
   `not_found`（卡片不存在或已处理）或 `shell_disabled`（非读取类调用需要 Mac 打开
   「允许手机访问文件与终端」）。
+- 排队追问：`{"kind":"sendQueuedNow"|"removeQueued","conversationID":"…","queuedID":"<RelayQueuedMessage.id>"}`
+  （立即发送 / 删除 Mac 上排队的追问，语义见 relay-protocol.md「排队的追问与压缩状态」）。Hub 校验
+  `conversationID`、`queuedID` 都是非空字符串，否则 `400 {"error":"bad command"}`，不下发。
 
 ### 拉全量
 

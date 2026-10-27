@@ -86,6 +86,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// `PermissionMode` raw value applied to conversations that have not chosen
     /// their own. "ask" unless the user changed it.
     public var defaultPermissionMode: String
+    /// macOS: `OpenInTarget.id` the header's Open-in button used last; empty
+    /// until one is used.
+    public var openInTargetID: String = ""
 
     public init(
         version: Int = 1,
@@ -207,6 +210,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = try container.decodeIfPresent(String.self, forKey: .worktreeBranchPrefix) ?? ""
         mcpServers = try container.decodeIfPresent([MCPServerConfig].self, forKey: .mcpServers) ?? []
         defaultPermissionMode = try container.decodeIfPresent(String.self, forKey: .defaultPermissionMode) ?? "ask"
+        openInTargetID = try container.decodeIfPresent(String.self, forKey: .openInTargetID) ?? ""
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -221,5 +225,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case relayAllowShell, pairedDevices
         case worktreeBaseDirectory, worktreeBranchPrefix
         case mcpServers, defaultPermissionMode
+        case openInTargetID
     }
 }

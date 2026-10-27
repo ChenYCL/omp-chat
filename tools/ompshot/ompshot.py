@@ -15,9 +15,10 @@ app, and needs no Screen Recording permission.
     ompshot.py act setGoal --goal 发布前补齐文档
     ompshot.py act continueIn --mode folder --path /path/to/repo
 
-Actions: select, newChat, sidePanel, openSettings, closeSettings, setDraft,
-format, setGoal, sidebar, markAllRead, setUnread, continueIn, fork, openLink,
-delete. Field names and values are listed in docs/diagnostics.md.
+Actions include select, newChat, send, stop, approve, queued, compact,
+setAccess, sidebarOp, undo, scheduledTask, openFile, codeReview, sidePanel,
+openSettings, git and more; every action with its fields is listed in
+docs/diagnostics.md.
 `act` prints the reply JSON and exits non-zero when the app answers ok:false.
 
 Needs 设置 → 远程控制 enabled in OMPChat. The token comes from --token, then

@@ -448,22 +448,28 @@ final class AgentLoopModelTests: XCTestCase {
     // MARK: - Reply ownership
 
     /// A message arriving while a reply waits on a card (the phone can send
-    /// at any time) cancels the old reply. The old loop used to clear the new
-    /// reply's state as it wound down, so 停止 could no longer reach the new
-    /// reply and its card waited forever.
-    func testANewMessageWhileACardWaitsLeavesTheNewReplyStoppable() async throws {
+    /// at any time) waits in the queue and leaves the card alone. 立即发送
+    /// then cancels the old reply, as sending used to. The old loop used to
+    /// clear the new reply's state as it wound down, so 停止 could no longer
+    /// reach the new reply and its card waited forever.
+    func testAMessageWhileACardWaitsQueuesAndSendNowLeavesTheNewReplyStoppable() async throws {
         let transport = ScriptedTransport([SSE.call("c1", "poke"), SSE.call("c2", "poke")])
         let probe = ProbeProvider()
-        let (model, _) = try await makeModel(transport, probe: probe)
+        let (model, id) = try await makeModel(transport, probe: probe)
 
         await model.sendNow(text: "第一条", attachments: [])
         try await waitUntil { model.pendingApprovals.map(\.callID) == ["c1"] }
         await model.sendNow(text: "第二条", attachments: [])
+        XCTAssertEqual(model.pendingApprovals.map(\.callID), ["c1"], "排队不取消正在等的卡片")
+        XCTAssertEqual(model.queuedMessages(for: id).map(\.text), ["第二条"])
+
+        await model.sendQueuedNow(try XCTUnwrap(model.queuedMessages(for: id).first).id, in: id)
         try await waitUntil { model.pendingApprovals.map(\.callID) == ["c2"] }
         // Give the cancelled first loop time to wind down.
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(model.isStreaming, "旧回复收尾不能把新回复的停止按钮关掉")
         XCTAssertEqual(model.pendingApprovals.map(\.callID), ["c2"], "旧卡片被取消，新卡片还在")
+        XCTAssertTrue(model.queuedMessages(for: id).isEmpty)
 
         model.stop()
         try await waitUntil { !model.isStreaming && model.pendingApprovals.isEmpty }

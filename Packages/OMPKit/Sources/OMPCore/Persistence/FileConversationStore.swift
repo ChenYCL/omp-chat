@@ -13,6 +13,7 @@ public actor FileConversationStore: ConversationStoring {
         public var models: [ModelDescriptor]
         public var settings: AppSettings
         public var projects: [Project]
+        public var scheduledTasks: [ScheduledTask]
 
         public init(
             version: Int = 1,
@@ -20,7 +21,8 @@ public actor FileConversationStore: ConversationStoring {
             providers: [ProviderProfile] = [],
             models: [ModelDescriptor] = [],
             settings: AppSettings = AppSettings(),
-            projects: [Project] = []
+            projects: [Project] = [],
+            scheduledTasks: [ScheduledTask] = []
         ) {
             self.version = version
             self.conversations = conversations
@@ -28,6 +30,7 @@ public actor FileConversationStore: ConversationStoring {
             self.models = models
             self.settings = settings
             self.projects = projects
+            self.scheduledTasks = scheduledTasks
         }
 
         public init(from decoder: Decoder) throws {
@@ -38,6 +41,7 @@ public actor FileConversationStore: ConversationStoring {
             models = try container.decodeIfPresent([ModelDescriptor].self, forKey: .models) ?? []
             settings = try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
             projects = try container.decodeIfPresent([Project].self, forKey: .projects) ?? []
+            scheduledTasks = try ScheduledTask.decodeList(from: container, forKey: .scheduledTasks)
         }
     }
 
@@ -133,6 +137,16 @@ public actor FileConversationStore: ConversationStoring {
     public func saveProjects(_ projects: [Project]) async throws {
         var snapshot = try current()
         snapshot.projects = projects
+        try commit(snapshot)
+    }
+
+    public func loadScheduledTasks() async throws -> [ScheduledTask] {
+        try current().scheduledTasks
+    }
+
+    public func saveScheduledTasks(_ tasks: [ScheduledTask]) async throws {
+        var snapshot = try current()
+        snapshot.scheduledTasks = tasks
         try commit(snapshot)
     }
 

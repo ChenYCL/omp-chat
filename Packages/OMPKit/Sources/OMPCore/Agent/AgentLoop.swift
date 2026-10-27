@@ -56,9 +56,10 @@ public struct AgentToolHooks: Sendable {
 
 /// The agent loop without UI or networking: run a model turn; when it ends
 /// with tool calls, run them in order through the registry, the approval
-/// policy and the user; hand the results back; repeat, at most `maxTurns`
-/// model turns per user message. The host (the app model, or a test) streams
-/// the turns, shows approval cards and records results.
+/// policy and the user; hand the results back; let the host add the user's
+/// follow-ups; repeat, at most `maxTurns` model turns per user message. The
+/// host (the app model, or a test) streams the turns, shows approval cards
+/// and records results.
 public struct AgentLoop: Sendable {
     public static let maxModelTurns = 25
 
@@ -126,6 +127,12 @@ public struct AgentLoop: Sendable {
         /// refused, failed or skipped — so no call is left without a result.
         public var didRun: @Sendable (ToolCall, Execution) async -> Void
         public var hooks: AgentToolHooks?
+        /// Runs after every call of a turn has its result and before the next
+        /// model turn: the one point where the host may append user messages
+        /// (follow-ups sent while the reply ran) for the next request to
+        /// carry. Returns whether it appended any; each delivery starts a new
+        /// `maxTurns` budget, the cap being per user message.
+        public var betweenTurns: @Sendable () async -> Bool
 
         public init(
             modelTurn: @escaping @Sendable (_ turn: Int) async -> TurnOutcome,
@@ -134,7 +141,8 @@ public struct AgentLoop: Sendable {
             requestApproval: @escaping @Sendable (ToolApprovalRequest) async -> ToolApprovalDecision,
             willRun: @escaping @Sendable (ToolCall) async -> Void = { _ in },
             didRun: @escaping @Sendable (ToolCall, Execution) async -> Void,
-            hooks: AgentToolHooks? = nil
+            hooks: AgentToolHooks? = nil,
+            betweenTurns: @escaping @Sendable () async -> Bool = { false }
         ) {
             self.modelTurn = modelTurn
             self.environment = environment
@@ -143,6 +151,7 @@ public struct AgentLoop: Sendable {
             self.willRun = willRun
             self.didRun = didRun
             self.hooks = hooks
+            self.betweenTurns = betweenTurns
         }
     }
 
@@ -154,11 +163,12 @@ public struct AgentLoop: Sendable {
 
     public func run(_ host: Host) async -> Ending {
         var turn = 1
+        var lastTurn = maxTurns
         while true {
             guard case .finished(let calls, let registry) = await host.modelTurn(turn) else { return .stopped }
             // Nothing was offered: whatever the model claims to call is not ours to run.
             if calls.isEmpty || registry.isEmpty { return .answered }
-            if turn >= maxTurns {
+            if turn >= lastTurn {
                 for call in calls { await host.didRun(call, Self.failure(call, Self.turnLimitText)) }
                 return .turnLimit
             }
@@ -171,6 +181,7 @@ public struct AgentLoop: Sendable {
                 await host.didRun(call, execution)
             }
             if Task.isCancelled { return .cancelled }
+            if await host.betweenTurns() { lastTurn = turn + maxTurns }
             turn += 1
         }
     }

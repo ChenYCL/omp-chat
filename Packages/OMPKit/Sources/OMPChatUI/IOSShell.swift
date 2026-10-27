@@ -1064,6 +1064,8 @@ struct PaseoComposerBar: View {
                 .accessibilityLabel("目标：\(goal)")
                 .padding(.horizontal, 12)
             }
+            QueuedMessagesStrip()
+                .padding(.horizontal, 12)
             composerRow
         }
         .sheet(isPresented: $showVoiceSheet) {
@@ -1140,6 +1142,15 @@ struct PaseoComposerBar: View {
                     Label("设定目标", systemImage: "target")
                 }
                 .accessibilityIdentifier("composer.goal.set")
+                Button {
+                    if let id = model.selectedConversationID {
+                        Task { _ = await model.compactConversation(id) }
+                    }
+                } label: {
+                    Label("压缩上下文", systemImage: "arrow.down.right.and.arrow.up.left")
+                }
+                .disabled(model.selectedConversationID == nil)
+                .accessibilityIdentifier("composer.compact")
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 16, weight: .medium))
@@ -1192,7 +1203,10 @@ struct PaseoComposerBar: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("composer.stop")
             .accessibilityLabel("停止生成")
-        } else {
+        }
+        // While this conversation replies, a typed message goes in as a
+        // follow-up, so send shows beside stop.
+        if !model.isStreaming || queuesFollowUp {
             Button {
                 model.send()
             } label: {
@@ -1215,6 +1229,10 @@ struct PaseoComposerBar: View {
 
     private var canSend: Bool {
         !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.draftAttachments.isEmpty
+    }
+
+    private var queuesFollowUp: Bool {
+        canSend && model.streamingConversationID == model.selectedConversationID
     }
 }
 #endif

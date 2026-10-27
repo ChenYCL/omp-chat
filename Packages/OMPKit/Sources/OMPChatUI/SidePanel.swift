@@ -62,7 +62,13 @@ struct SidePanel: View {
         // threads re-points it. The terminal keeps its own cwd once running.
         .onChange(of: model.selectedConversationID) { _, _ in followThread() }
         .onChange(of: model.selectedConversation?.workingDirectory) { _, _ in followThread() }
-        .task { followThread() }
+        // Shown after following the thread, so the requested file's folder
+        // is what stays listed.
+        .task {
+            followThread()
+            showRequestedFile()
+        }
+        .onChange(of: model.sidePanelFileRequest) { _, _ in showRequestedFile() }
         // The panel starts in the app's own directory, which is usually not a
         // repository; this lets it point at one.
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
@@ -217,6 +223,10 @@ struct SidePanel: View {
         var original: String
         var truncated: Bool
         var binary: Bool = false
+        /// Line to scroll to and select, once per `revealID`: a file opened
+        /// from a message's `src/a.swift:12`.
+        var line: Int? = nil
+        var revealID = UUID()
     }
 
     private func openedFile(_ file: OpenFile) -> some View {
@@ -276,14 +286,13 @@ struct SidePanel: View {
             } else {
                 // Editable, like the phone's file viewer: a truncated file stays
                 // read-only so saving cannot drop the part that was not loaded.
-                TextEditor(text: Binding(
-                    get: { file.text },
-                    set: { openFile?.text = $0 }
-                ))
-                .font(.system(size: 10.5, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 120, maxHeight: 320)
-                .disabled(file.truncated)
+                FileTextView(
+                    text: Binding(get: { file.text }, set: { openFile?.text = $0 }),
+                    editable: !file.truncated,
+                    line: file.line,
+                    revealID: file.revealID
+                )
+                .frame(minHeight: 120, idealHeight: 320, maxHeight: 320)
                 .accessibilityIdentifier("panel.file.editor")
             }
         }
@@ -300,9 +309,18 @@ struct SidePanel: View {
             Task { await refresh() }
             return
         }
+        load(path, line: nil)
+    }
+
+    /// Reads the file at `path` into the editor, scrolled to `line`.
+    private func load(_ path: String, line: Int?) {
         let cap = 256 * 1024
-        guard let handle = FileHandle(forReadingAtPath: path) else { return }
+        guard let handle = FileHandle(forReadingAtPath: path) else {
+            saveFailure = "无法打开“\(path)”"
+            return
+        }
         defer { try? handle.close() }
+        saveFailure = nil
         let data = (try? handle.read(upToCount: cap + 1)) ?? Data()
         let truncated = data.count > cap
         let body = data.prefix(cap)
@@ -316,8 +334,29 @@ struct SidePanel: View {
         }
         let text = String(decoding: body, as: UTF8.self)
         openFile = OpenFile(
-            url: URL(fileURLWithPath: path), text: text, original: text, truncated: truncated
+            url: URL(fileURLWithPath: path), text: text, original: text, truncated: truncated, line: line
         )
+    }
+
+    /// Shows the file a message reference asked for (`openFileInSidePanel`):
+    /// lists its folder and opens it at the line; a folder is just listed.
+    private func showRequestedFile() {
+        guard let request = model.sidePanelFileRequest else { return }
+        model.finishSidePanelFileRequest(request.id)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: request.path, isDirectory: &isDirectory) else {
+            saveFailure = "“\(request.path)”不存在"
+            return
+        }
+        if isDirectory.boolValue {
+            openFile = nil
+            directory = request.path
+        } else {
+            let parent = (request.path as NSString).deletingLastPathComponent
+            directory = parent.isEmpty ? "/" : parent
+            load(request.path, line: request.line)
+        }
+        Task { await refresh() }
     }
 
     /// Writes the edited text back to the same file. Errors are shown in the
@@ -348,6 +387,8 @@ struct SidePanel: View {
         let listing = await Task.detached(priority: .userInitiated) {
             Self.list(dir)
         }.value
+        // A listing that finished after the panel moved on is stale.
+        guard dir == directory else { return }
         entries = listing
         state = .idle
     }

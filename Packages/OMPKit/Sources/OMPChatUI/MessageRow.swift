@@ -124,6 +124,10 @@ public struct MessageRow: View {
                 } else {
                     bubble
                 }
+                // A follow-up the reply took in but ended without answering.
+                if let note = message.errorText, !note.isEmpty {
+                    errorView(note)
+                }
                 HStack(spacing: 8) {
                     if !message.alternativeVersions.isEmpty {
                         userVersionPicker
@@ -391,6 +395,7 @@ public struct MessageRow: View {
                 MarkdownText(value)
                     .foregroundStyle(Color.ompText)
                     .environment(\.genUISend, genUISend)
+                    .environment(\.ompFileReferencesEnabled, true)
             }
         case .thinking, .thinkingSeal:
             EmptyView()

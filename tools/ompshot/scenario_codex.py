@@ -44,6 +44,11 @@ class Relay:
         self.base = f"http://{host}:{port}"
         self.token = token
 
+    # A refused connection never reached the app, so retrying cannot run an
+    # action twice. The relay once refused for a moment mid-run (no stop was
+    # logged); without the retry the script also skipped its own cleanup.
+    refused_retry_seconds = 30
+
     def call(self, path, body=None):
         """Returns (status, bytes, content type); HTTP errors are values here."""
         headers = {"X-OMP-Token": self.token}
@@ -51,12 +56,19 @@ class Relay:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(self.base + path, data=data, headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return response.status, response.read(), response.headers.get("Content-Type", "")
-        except urllib.error.HTTPError as error:
-            return error.code, error.read(), error.headers.get("Content-Type", "")
+        deadline = time.time() + self.refused_retry_seconds
+        while True:
+            request = urllib.request.Request(self.base + path, data=data, headers=headers)
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    return response.status, response.read(), response.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as error:
+                return error.code, error.read(), error.headers.get("Content-Type", "")
+            except urllib.error.URLError as error:
+                if not isinstance(error.reason, ConnectionRefusedError) or time.time() > deadline:
+                    raise
+                print(f"  (relay refused {path}, retrying)", flush=True)
+                time.sleep(1)
 
     def state(self):
         status, body, _ = self.call("/debug/state")
@@ -367,6 +379,32 @@ def run(relay, shots, check, live=False):
         check("解除绑定", relay.state()["selected"].get("workingDirectory") is None)
         reply = relay.act("git", op="push")
         check("没绑定目录时 git 操作报错", not reply.get("ok") and "工作目录" in (reply.get("error") or ""))
+
+        print("工具与权限：一个单选，每次切换都看得见")
+        def access():
+            selected = relay.state()["selected"]
+            return selected["access"], selected["accessLabel"], selected["toolsEnabled"]
+
+        # The reported state: 完全访问 saved while tools follow the (missing)
+        # working directory. The menu used to check 完全访问 under 仅聊天.
+        relay.act("setToolsEnabled", enabled=None)
+        relay.act("setPermissionMode", mode="full")
+        check("旧状态下菜单勾的就是按钮上写的（仅聊天）", access() == ("chat", "仅聊天", False), str(access()))
+        for wire, label in (("full", "完全访问"), ("readOnly", "只读"), ("auto", "自动"), ("ask", "每次询问")):
+            relay.act("setAccess", access=wire)
+            check(f"切到{label}：勾选、按钮、工具都跟着变", access() == (wire, label, True), str(access()))
+        settle()
+        relay.snap(os.path.join(shots, "10-access-ask.png"))
+        relay.act("setAccess", access="chat")
+        check("切到仅聊天", access() == ("chat", "仅聊天", False), str(access()))
+        relay.act("setAccess", access="default")
+        check("跟随默认（没有工作目录）= 仅聊天", access() == ("default", "仅聊天", False), str(access()))
+        relay.act("continueIn", mode="folder", path=repo)
+        check("跟随默认（有工作目录）= 默认权限、开工具",
+              access()[0] == "default" and access()[2] and access()[1] != "仅聊天", str(access()))
+        relay.act("continueIn", mode="local")
+        status, _, _ = relay.call("/debug/action", {"action": "setAccess", "access": "agent"})
+        check("不认识的选项返回 400", status == 400)
 
         print("错误输入")
         status, _, _ = relay.call("/debug/action", {"action": "format", "style": "heading4"})

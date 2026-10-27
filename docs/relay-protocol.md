@@ -112,6 +112,38 @@ Mac 的 agent 等用户批准工具调用时，快照顶层带可选 `approvals`
   手机端 `RemoteApprovalTracker` + `RemoteApprovalCard`（RemoteConsoleScreen.swift），
   会话列表行显示「待批准」角标。
 
+## 排队的追问与压缩状态（v1 增量字段，向后兼容）
+
+Mac 上某个对话正在回复（或正在压缩上下文）时，发到该对话的消息（Mac 输入框、手机 `input`、
+`/debug/action send`）不再打断回复，而是排进该对话的队列，在回复的下一个安全点（本轮工具结果
+写回之后、下一次模型请求之前）作为用户消息交给模型；回复结束时还没送出的，自动开始下一次回复。
+停止（`stop`）后队列保留并标成 `held`，不会自动发出。快照里每个 `RelayConversation` 多两个可选字段：
+
+```json
+{
+  "queued": [
+    {"id": "QueuedMessage.id", "text": "追问原文", "hasAttachments": false, "held": false}
+  ],
+  "isCompacting": true
+}
+```
+
+- `queued` 为空、`isCompacting` 为 `false` 时整个字段不编码，老客户端照常解码。
+- `text` 只含文字；带附件或折叠粘贴的条目 `hasAttachments: true`，手机不提供「编辑」。
+- 压缩摘要本身不进快照（手机已有原始消息；摘要只影响 Mac 发给模型的请求）。
+
+### 手机操作：`sendQueuedNow` / `removeQueued`
+
+- `{"kind":"sendQueuedNow","conversationID":"UUID","queuedID":"<queued id>"}`：立即发送，等价于 Mac 上的
+  「立即发送」：打断该对话正在跑的回复，用这条消息开始新回复；其余排队条目继续等新回复。另一个对话正在
+  回复时 Mac 拒绝（不打断别的对话）。手机发起的这次回复照常受「允许手机访问文件与终端」限制。
+- `{"kind":"removeQueued","conversationID":"UUID","queuedID":"<queued id>"}`：从 Mac 的队列删掉这条。
+  手机的「编辑」= 把文字放回手机输入框 + `removeQueued`。
+- 缺 `conversationID` 或 `queuedID` 的 body 是 `400`；中继 hub 的 kind 白名单同样包含这两个。
+- Swift：`RelayQueuedMessage`、`RelayConversation.queued` / `isCompacting`、`RelayCommandWire.queuedID`
+  （RelayModels.swift）；`RelayCommand.sendQueuedNow` / `.removeQueued`（RelayServer.swift）；Mac 端
+  `ChatAppModel.sendQueuedNow(_:in:remote:)` / `removeQueued(_:in:)`。
+
 ## 实时通知（SSE）
 
 `GET /state` → `text/event-stream`：
@@ -124,7 +156,8 @@ Mac 的 agent 等用户批准工具调用时，快照顶层带可选 `approvals`
 ## 指令（手机 → Mac）
 
 - `POST /input` `{"conversationID":"UUID或null","text":"..."}` → `{"ok":true,"conversationID":"UUID"}`。
-  `null` 表示在 Mac 上新建对话发送。主机端串行执行，复用 `ChatAppModel.sendNow`。
+  `null` 表示在 Mac 上新建对话发送。主机端串行执行，复用 `ChatAppModel.sendNow`；该对话正在回复时
+  这条消息进队列（见上文「排队的追问与压缩状态」），不打断回复。
 - `POST /stop` `{"conversationID":"UUID"}` → `{"ok":true}`，等价于主机端 `stop()`。
 - `POST /command` 还接受完整指令面（选会话、重命名、置顶、模型切换等）与 `approve`
   批准卡片答复，见上文「待批准卡片与手机答复」；解析不了的 body 是 `400`。

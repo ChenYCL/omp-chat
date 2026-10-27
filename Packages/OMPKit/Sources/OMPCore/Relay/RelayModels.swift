@@ -191,6 +191,38 @@ public struct RelayMessage: Codable, Sendable, Equatable {
     }
 }
 
+/// A follow-up waiting on the host (sent while a reply ran there), mirrored
+/// so the phone can show it above its composer and send or drop it.
+public struct RelayQueuedMessage: Codable, Sendable, Equatable, Identifiable {
+    /// The host's `QueuedMessage.id`.
+    public var id: String
+    public var text: String
+    /// It also carries attachments or folded pastes the phone cannot edit,
+    /// so the phone offers no 编辑 for it.
+    public var hasAttachments: Bool
+    /// Held after 停止: it goes out only on 立即发送.
+    public var held: Bool
+
+    public init(id: String, text: String, hasAttachments: Bool = false, held: Bool = false) {
+        self.id = id
+        self.text = text
+        self.hasAttachments = hasAttachments
+        self.held = held
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, hasAttachments, held
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        hasAttachments = try container.decodeIfPresent(Bool.self, forKey: .hasAttachments) ?? false
+        held = try container.decodeIfPresent(Bool.self, forKey: .held) ?? false
+    }
+}
+
 /// Wire representation of one conversation mirrored to a remote controller.
 public struct RelayConversation: Codable, Sendable, Equatable {
     /// Stable identifier; mirrors the originating `Conversation.id`.
@@ -204,10 +236,16 @@ public struct RelayConversation: Codable, Sendable, Equatable {
     public var isStreaming: Bool
     /// Most recent messages (host caps at the latest 100 per conversation).
     public var messages: [RelayMessage]
+    /// Follow-ups waiting on the host, oldest first. Omitted when empty.
+    public var queued: [RelayQueuedMessage]
+    /// True while the host summarises the earlier turns (压缩上下文).
+    /// Omitted when false.
+    public var isCompacting: Bool
 
     public init(
         id: String, title: String, updatedAt: Date, project: String?,
-        isStreaming: Bool, messages: [RelayMessage]
+        isStreaming: Bool, messages: [RelayMessage],
+        queued: [RelayQueuedMessage] = [], isCompacting: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -215,10 +253,12 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         self.project = project
         self.isStreaming = isStreaming
         self.messages = messages
+        self.queued = queued
+        self.isCompacting = isCompacting
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, updatedAt, project, isStreaming, messages
+        case id, title, updatedAt, project, isStreaming, messages, queued, isCompacting
     }
 
     public init(from decoder: Decoder) throws {
@@ -234,6 +274,8 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         project = try container.decodeIfPresent(String.self, forKey: .project)
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         messages = try container.decodeIfPresent([RelayMessage].self, forKey: .messages) ?? []
+        queued = (try? container.decodeIfPresent([RelayQueuedMessage].self, forKey: .queued)) ?? []
+        isCompacting = (try? container.decodeIfPresent(Bool.self, forKey: .isCompacting)) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -244,6 +286,8 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         try container.encodeIfPresent(project, forKey: .project)
         try container.encode(isStreaming, forKey: .isStreaming)
         try container.encode(messages, forKey: .messages)
+        if !queued.isEmpty { try container.encode(queued, forKey: .queued) }
+        if isCompacting { try container.encode(true, forKey: .isCompacting) }
     }
 }
 
@@ -434,6 +478,8 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
     /// `approve`: chosen by the phone, echoed in `RelaySnapshot.commandFailures`
     /// when the host refuses the command.
     public var requestID: String?
+    /// `sendQueuedNow` / `removeQueued`: the `RelayQueuedMessage.id`.
+    public var queuedID: String?
 
     public init(
         kind: String,
@@ -446,7 +492,8 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
         unread: Bool? = nil,
         approvalID: String? = nil,
         decision: String? = nil,
-        requestID: String? = nil
+        requestID: String? = nil,
+        queuedID: String? = nil
     ) {
         self.kind = kind
         self.conversationID = conversationID
@@ -459,6 +506,7 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
         self.approvalID = approvalID
         self.decision = decision
         self.requestID = requestID
+        self.queuedID = queuedID
     }
 
     public init(_ command: RelayCommand) {
@@ -497,6 +545,10 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
             self.init(kind: "setUnread", conversationID: conversationID, unread: unread)
         case .approve(let approvalID, let decision, let requestID):
             self.init(kind: "approve", approvalID: approvalID, decision: decision.rawValue, requestID: requestID)
+        case .sendQueuedNow(let conversationID, let queuedID):
+            self.init(kind: "sendQueuedNow", conversationID: conversationID, queuedID: queuedID)
+        case .removeQueued(let conversationID, let queuedID):
+            self.init(kind: "removeQueued", conversationID: conversationID, queuedID: queuedID)
         }
     }
 
@@ -538,6 +590,12 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
             guard let approvalID, !approvalID.isEmpty,
                   let decision = self.decision.flatMap(RelayApprovalDecision.init(rawValue:)) else { return nil }
             return .approve(approvalID: approvalID, decision: decision, requestID: requestID)
+        case "sendQueuedNow":
+            guard let conversationID, let queuedID, !queuedID.isEmpty else { return nil }
+            return .sendQueuedNow(conversationID: conversationID, queuedID: queuedID)
+        case "removeQueued":
+            guard let conversationID, let queuedID, !queuedID.isEmpty else { return nil }
+            return .removeQueued(conversationID: conversationID, queuedID: queuedID)
         default: return nil
         }
     }

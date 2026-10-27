@@ -30,6 +30,7 @@ public struct ChatRootView: View {
         Group {
         #if os(iOS)
         IOSShell()
+            .overlay { UndoToast() }
             .sheet(isPresented: $bindable.showSettings) {
                 ProviderSettingsView().environment(model)
             }
@@ -37,6 +38,7 @@ public struct ChatRootView: View {
             .task { await model.bootstrap() }
         #else
         macOSRoot
+            .overlay { UndoToast() }
             .sheet(isPresented: $bindable.showSettings) {
                 ProviderSettingsView().environment(model)
             }
@@ -155,6 +157,9 @@ public struct ChatDetailView: View {
             #if os(macOS)
             header
             #endif
+            if let id = model.selectedConversationID, let outcome = model.codeReviewOutcome(id) {
+                CodeReviewNote(outcome: outcome)
+            }
 
             if showInChatSearch { inChatSearchBar }
 
@@ -356,6 +361,21 @@ public struct ChatDetailView: View {
                         Label("继续于", systemImage: "arrow.right.circle")
                     }
 
+                    // Official codeReview.menu.review, for a thread in a git checkout.
+                    if let directory = conversation.workingDirectory,
+                       GitInfo.branch(at: URL(fileURLWithPath: directory)) != nil {
+                        Button {
+                            Task {
+                                if let failure = await model.startCodeReview(for: conversation.id) {
+                                    model.showError(failure)
+                                }
+                            }
+                        } label: {
+                            Label("用 Codex 审查", systemImage: "checklist")
+                        }
+                        .disabled(model.isStreaming)
+                    }
+
                     // Official threadHeader.copyActions.
                     Menu {
                         Button {
@@ -466,6 +486,7 @@ public struct ChatDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .help(directory)
+                    OpenInControl(directory: directory)
                 }
             }
 
@@ -554,6 +575,7 @@ public struct ChatDetailView: View {
             .environment(\.ompBodyFontSize, model.settings.fontSize)
             .environment(\.ompCodeFontName, model.settings.codeFontName)
             .environment(\.ompShowLineNumbers, model.settings.showLineNumbers)
+            .environment(\.ompFileReferenceDirectory, model.selectedConversation?.workingDirectory)
     }
 
     /// The term to highlight: only while the search bar is open and non-empty.

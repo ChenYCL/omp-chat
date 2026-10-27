@@ -14,12 +14,21 @@ extension EnvironmentValues {
     /// In-chat search term. Text matching it is drawn with a highlight so the
     /// jumped-to message shows *where* the hit is, not just that it exists.
     @Entry var ompSearchHighlight: String? = nil
+    /// The thread's working directory, which relative file references in
+    /// assistant text resolve against.
+    @Entry var ompFileReferenceDirectory: String? = nil
+    /// Set on assistant text: inline code and links naming an existing file
+    /// become references that open it.
+    @Entry var ompFileReferencesEnabled: Bool = false
 }
 
 public struct MarkdownText: View {
     private let segments: [Segment]
     @Environment(\.ompSearchHighlight) private var highlight
     @Environment(\.ompBodyFontSize) private var bodySize
+    @Environment(\.ompFileReferencesEnabled) private var referencesEnabled
+    @Environment(\.ompFileReferenceDirectory) private var referenceDirectory
+    @Environment(ChatAppModel.self) private var model: ChatAppModel?
 
     private var bodyFont: Font { .system(size: bodySize) }
 
@@ -32,21 +41,15 @@ public struct MarkdownText: View {
             ForEach(segments) { segment in
                 switch segment.kind {
                 case .text(let value):
-                    if let attributed = Self.inlineAttributed(value, highlighting: highlight) {
-                        Text(attributed)
+                    if let inline = rendered(value) {
+                        Text(inline.text)
                             .font(bodyFont)
                             .lineSpacing(10)
                             .textSelection(.enabled)
                             .tint(Color.ompDynamic(light: 0x3A83F7, dark: 0x63A8F8))
-                            .environment(\.openURL, OpenURLAction { url in
-                                #if os(macOS)
-                                NSWorkspace.shared.open(url)
-                                #else
-                                return .systemAction
-                                #endif
-                                return .handled
-                            })
+                            .environment(\.openURL, OpenURLAction { openLink($0) })
                             .fixedSize(horizontal: false, vertical: true)
+                            .fileReferenceMenu(inline.references, model: model)
                     } else {
                         Text(value)
                             .font(bodyFont)
@@ -55,7 +58,8 @@ public struct MarkdownText: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .heading(let level, let text):
-                    Text(Self.inlineAttributed(text, highlighting: highlight) ?? AttributedString(text))
+                    let inline = rendered(text)
+                    Text(inline?.text ?? AttributedString(text))
                         .font(.system(size: Self.headingSize(level), weight: .semibold))
                         .foregroundStyle(Color.ompText)
                         .lineSpacing(Self.headingSize(level) * 0.2)
@@ -63,6 +67,7 @@ public struct MarkdownText: View {
                         .padding(.top, 16)
                         .padding(.bottom, 2)
                         .fixedSize(horizontal: false, vertical: true)
+                        .fileReferenceMenu(inline?.references ?? [], model: model)
                 case .bulletList(let items):
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -110,6 +115,9 @@ public struct MarkdownText: View {
                 }
             }
         }
+        // Headings, list items and quotes: a file reference opens in the side
+        // panel there too.
+        .environment(\.openURL, OpenURLAction { openLink($0) })
     }
 
     private static func headingSize(_ level: Int) -> CGFloat {
@@ -124,9 +132,10 @@ public struct MarkdownText: View {
     /// Inline-styled body text (bold/italic/code/link) at the official 16pt/1.625.
     @ViewBuilder
     private func inlineText(_ value: String, color: Color = .ompText) -> some View {
+        let inline = rendered(value)
         Group {
-            if let attributed = Self.inlineAttributed(value, highlighting: highlight) {
-                Text(attributed)
+            if let inline {
+                Text(inline.text)
             } else {
                 Text(value)
             }
@@ -136,17 +145,65 @@ public struct MarkdownText: View {
         .lineSpacing(10)
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
+        .fileReferenceMenu(inline?.references ?? [], model: model)
     }
 
-    private static func inlineAttributed(_ value: String, highlighting query: String?) -> AttributedString? {
+    /// A block's inline markdown, ready to draw.
+    private struct Inline {
+        var text: AttributedString
+        /// The existing files the block mentions, for its context menu.
+        var references: [FileReferenceResolver.Resolved]
+    }
+
+    /// Parses `value`, links its file references (assistant text on the
+    /// Mac) and highlights the search term.
+    private func rendered(_ value: String) -> Inline? {
         guard var attributed = try? AttributedString(
             markdown: value,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) else { return nil }
-        if let query, !query.isEmpty {
-            applyHighlight(query, to: &attributed)
+        var references: [FileReferenceResolver.Resolved] = []
+        #if os(macOS)
+        if referencesEnabled, let resolver = model?.fileReferences {
+            references = Self.linkReferences(in: &attributed, resolver: resolver, workingDirectory: referenceDirectory)
         }
-        return attributed
+        #endif
+        if let highlight, !highlight.isEmpty {
+            Self.applyHighlight(highlight, to: &attributed)
+        }
+        return Inline(text: attributed, references: references)
+    }
+
+    /// Points every mention of an existing file at its `FileReferenceLink`
+    /// and returns those files once each. Missing files, URLs and anything
+    /// else stay exactly as they were. The resolver's cache keeps this off
+    /// the disk after the first look at each path.
+    private static func linkReferences(
+        in text: inout AttributedString, resolver: FileReferenceResolver, workingDirectory: String?
+    ) -> [FileReferenceResolver.Resolved] {
+        var found: [FileReferenceResolver.Resolved] = []
+        for mention in FileReference.mentions(in: text) {
+            guard let resolved = resolver.resolve(mention.reference, workingDirectory: workingDirectory),
+                  let url = FileReferenceLink.url(path: resolved.path, line: mention.reference.line) else { continue }
+            text[mention.range].link = url
+            if !found.contains(resolved) { found.append(resolved) }
+        }
+        return found
+    }
+
+    /// A file reference opens in the side panel's 文件 tab at its line; any
+    /// other link opens as it always did.
+    private func openLink(_ url: URL) -> OpenURLAction.Result {
+        if let target = FileReferenceLink.target(of: url) {
+            model?.openFileInSidePanel(target.path, line: target.line)
+            return .handled
+        }
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        return .handled
+        #else
+        return .systemAction
+        #endif
     }
 
     /// Marks every occurrence of `query` (case-insensitive) with a soft accent
@@ -808,3 +865,46 @@ func copyToPasteboard(_ value: String) {
     UIPasteboard.general.string = value
 }
 #endif
+
+/// The link a file reference carries inside rendered message text.
+/// `MarkdownText` opens it in the side panel instead of handing it to the
+/// system, which knows no such scheme.
+enum FileReferenceLink {
+    static let scheme = "omp-file"
+
+    static func url(path: String, line: Int?) -> URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.path = path
+        if let line {
+            components.queryItems = [URLQueryItem(name: "line", value: String(line))]
+        }
+        return components.url
+    }
+
+    static func target(of url: URL) -> (path: String, line: Int?)? {
+        guard url.scheme == scheme, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let line = components.queryItems?.first { $0.name == "line" }?.value.flatMap { Int($0) }
+        return (components.path, line)
+    }
+}
+
+extension View {
+    /// Right-click actions for the files a block of message text mentions
+    /// (official `markdown.fileReference.*`); the block is untouched when it
+    /// mentions none, so its text selection menu stays.
+    @ViewBuilder
+    func fileReferenceMenu(_ references: [FileReferenceResolver.Resolved], model: ChatAppModel?) -> some View {
+        #if os(macOS)
+        if let model, !references.isEmpty {
+            contextMenu { FileReferenceMenu(model: model, references: references) }
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+}

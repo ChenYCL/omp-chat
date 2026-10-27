@@ -194,6 +194,7 @@ public struct MacShellSidebar: View {
                 .environment(model)
                 .environment(RemoteSession())
         }
+        .scheduledTaskEditorHost()
         .alert("重命名对话", isPresented: Binding(
             get: { renamingID != nil },
             set: { if !$0 { renamingID = nil } }
@@ -319,6 +320,7 @@ public struct MacShellSidebar: View {
                     prioritySection
                     temporarySection
                     pinnedSection
+                    ScheduledTasksSidebarSection()
                     customSections
                     projectSections
                     ungroupedSection
@@ -363,6 +365,7 @@ public struct MacShellSidebar: View {
                         customSectionName = ""
                         creatingCustomSection = true
                     }
+                    moreMenuItem("添加定时任务…") { NotificationCenter.default.post(name: .ompAddScheduledTask, object: nil) }
                     Divider()
                     moreMenuItem("折叠全部分组") {
                         let ids = model.orderedProjects.map(\.id) + model.orderedCustomSections.map(\.id)

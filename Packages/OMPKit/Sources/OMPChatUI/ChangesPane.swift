@@ -334,6 +334,21 @@ struct ChangesPane: View {
                     .accessibilityIdentifier("changes.push")
                 }
                 Spacer(minLength: 0)
+                // Official codeReview.menu.review: a read-only thread reviews
+                // everything listed here.
+                Button(action: review) {
+                    Label("用 Codex 审查", systemImage: "checklist")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .opacity(canReview ? 1 : 0.35)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canReview)
+                .help("在新对话里只读审查这些改动")
+                .accessibilityIdentifier("changes.review")
             }
             if let outcome {
                 switch outcome {
@@ -468,6 +483,26 @@ struct ChangesPane: View {
         let dir = directory
         Task {
             await perform { "已推送到 \(try GitWorkingTree.push(in: dir))" }
+        }
+    }
+
+    /// Something to review, and no git write or reply in the way.
+    private var canReview: Bool {
+        !busy && !status.isClean && !model.isStreaming && model.selectedConversationID != nil
+    }
+
+    /// Starts a read-only review thread over this checkout's changes; why it
+    /// could not start shows under the buttons.
+    private func review() {
+        guard canReview, let id = model.selectedConversationID else { return }
+        let dir = directory
+        busy = true
+        outcome = nil
+        Task {
+            defer { busy = false }
+            if let failure = await model.startCodeReview(for: id, directory: dir) {
+                outcome = .failure(failure)
+            }
         }
     }
 

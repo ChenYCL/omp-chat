@@ -54,6 +54,15 @@ private final class Recorder: @unchecked Sendable {
     func isAllowed(_ name: String) -> Bool { lock.lock(); defer { lock.unlock() }; return alwaysAllowed.contains(name) }
 }
 
+/// What the loop did, in order.
+private final class Timeline: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _events: [String] = []
+
+    func add(_ event: String) { lock.lock(); _events.append(event); lock.unlock() }
+    var events: [String] { lock.lock(); defer { lock.unlock() }; return _events }
+}
+
 final class AgentLoopTests: XCTestCase {
     private let conversationID = UUID()
 
@@ -227,6 +236,59 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertEqual(provider.calls.count, AgentLoop.maxModelTurns - 1, "最后一轮的调用不再执行")
         XCTAssertEqual(recorder.results.count, AgentLoop.maxModelTurns, "每个调用都有结果")
         XCTAssertEqual(recorder.results.last?.outputText, AgentLoop.turnLimitText)
+    }
+
+    // MARK: Follow-ups
+
+    func testFollowUpsAreAddedAfterTheTurnsResultsAndBeforeTheNextTurn() async {
+        let provider = FakeProvider([("lookup", .read)])
+        let recorder = Recorder()
+        let timeline = Timeline()
+        var host = await host(script: [[call("c1", "lookup"), call("c2", "lookup")]], provider: provider, recorder: recorder)
+        let modelTurn = host.modelTurn
+        let didRun = host.didRun
+        host.modelTurn = { turn in
+            timeline.add("turn \(turn)")
+            return await modelTurn(turn)
+        }
+        host.didRun = { call, execution in
+            timeline.add("result \(call.id)")
+            await didRun(call, execution)
+        }
+        host.betweenTurns = {
+            timeline.add("follow-ups")
+            return true
+        }
+        let ending = await AgentLoop().run(host)
+        XCTAssertEqual(ending, .answered)
+        XCTAssertEqual(timeline.events, ["turn 1", "result c1", "result c2", "follow-ups", "turn 2"],
+                       "追问在本轮结果都写回之后、下一轮请求之前加入；回答之后不再调用")
+    }
+
+    func testADeliveredFollowUpGetsItsOwnTurnBudget() async {
+        let provider = FakeProvider([("lookup", .read)])
+        let recorder = Recorder()
+        let timeline = Timeline()
+        var host = await host(script: [[call("x", "lookup")]], provider: provider, recorder: recorder, repeatLast: true)
+        // One follow-up arrives after turn 2.
+        host.betweenTurns = {
+            timeline.add("between")
+            return timeline.events.count == 2
+        }
+        let ending = await AgentLoop(maxTurns: 3).run(host)
+        XCTAssertEqual(ending, .turnLimit)
+        XCTAssertEqual(recorder.turns, 5, "上限按每条用户消息算：第 2 轮后的追问再给 3 轮")
+        XCTAssertEqual(timeline.events.count, 4, "最后一轮的调用没执行，也就不再收追问")
+    }
+
+    func testWithoutFollowUpsTheTurnCapIsUnchanged() async {
+        let provider = FakeProvider([("lookup", .read)])
+        let recorder = Recorder()
+        var host = await host(script: [[call("x", "lookup")]], provider: provider, recorder: recorder, repeatLast: true)
+        host.betweenTurns = { false }
+        let ending = await AgentLoop(maxTurns: 3).run(host)
+        XCTAssertEqual(ending, .turnLimit)
+        XCTAssertEqual(recorder.turns, 3)
     }
 
     func testNoToolsOfferedEndsAfterOneTurn() async {

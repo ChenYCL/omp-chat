@@ -300,6 +300,7 @@ public final class ChatAppModel {
             models = try await store.loadModelCatalog()
             settings = try await store.loadSettings()
             projects = try await store.loadProjects()
+            scheduledTasks = try await store.loadScheduledTasks()
             let folded = settings.foldLegacyConnection()
             let vaulted = PairedDeviceVault.hydrate(settings.pairedDevices, secrets: secrets)
             settings.pairedDevices = vaulted.devices
@@ -312,6 +313,7 @@ public final class ChatAppModel {
             models = []
             settings = AppSettings()
             projects = []
+            scheduledTasks = []
             DiagnosticsCenter.shared.record("workspace", .error, "workspace load failed",
                 fields: ["error": error.localizedDescription])
         }
@@ -448,10 +450,12 @@ public final class ChatAppModel {
     public func renameConversation(_ id: UUID, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, var conversation = conversation(id) else { return }
+        let entry = AppUndoEntry.renamed(conversation, to: trimmed)
         conversation.title = trimmed
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
+        registerUndo(entry)
     }
 
     // MARK: - Changes review
@@ -467,6 +471,176 @@ public final class ChatAppModel {
     public func changeWorkingTree<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
         defer { workingTreeRevision += 1 }
         return try await Task.detached(priority: .userInitiated) { try operation() }.value
+    }
+
+    // MARK: - Open in
+
+    /// Which paths assistant messages mention exist, checked once per
+    /// (working directory, path) so re-rendering a message stays off the disk.
+    @ObservationIgnored public let fileReferences = FileReferenceResolver(home: HostExecutor.realHomeDirectory())
+
+    /// A file the side panel's 文件 tab is asked to show. `id` makes asking
+    /// for the same file again count as a new request.
+    public struct SidePanelFileRequest: Equatable, Sendable {
+        public let id: UUID
+        public let path: String
+        /// 1-based line to scroll to and select.
+        public let line: Int?
+    }
+
+    /// The file the 文件 tab shows next; the panel clears it once shown.
+    public private(set) var sidePanelFileRequest: SidePanelFileRequest?
+
+    /// A mentioned file's 打开文件: shows `path` in the side panel's 文件 tab,
+    /// scrolled to `line`. A directory is listed instead.
+    public func openFileInSidePanel(_ path: String, line: Int? = nil) {
+        sidePanelFileRequest = SidePanelFileRequest(id: UUID(), path: path, line: line)
+        toggleSidePanel(open: true, tab: .files)
+    }
+
+    /// The panel took request `id`; a later request is left in place.
+    public func finishSidePanelFileRequest(_ id: UUID) {
+        if sidePanelFileRequest?.id == id { sidePanelFileRequest = nil }
+    }
+
+    /// The most 拷贝文件内容 copies.
+    public static let fileCopyLimit = 1024 * 1024
+
+    /// 拷贝文件内容: the file's text on the pasteboard. A file over 1 MB, a
+    /// binary file or a folder is refused; the reason is returned and shown.
+    @discardableResult
+    public func copyFileContents(_ path: String) -> String? {
+        do {
+            copyToPasteboard(try FileReference.readText(at: path, limit: Self.fileCopyLimit))
+            return nil
+        } catch {
+            showError(error.localizedDescription)
+            return error.localizedDescription
+        }
+    }
+
+    /// 拷贝路径.
+    public func copyFilePath(_ path: String) {
+        copyToPasteboard(path)
+    }
+
+    #if os(macOS)
+    /// Installed apps of `OpenInTarget.catalog`, looked up once per launch.
+    @ObservationIgnored private var installedOpenInApps: [OpenInApps.Installed]?
+
+    /// With icons, for the menus.
+    var openInApps: [OpenInApps.Installed] {
+        if let installedOpenInApps { return installedOpenInApps }
+        let found = OpenInApps.installed()
+        installedOpenInApps = found
+        return found
+    }
+
+    /// The catalog's apps installed on this Mac, in menu order.
+    public var openInTargets: [OpenInTarget] { openInApps.map(\.target) }
+
+    /// The header's primary Open-in app: the last one used while it is still
+    /// installed, otherwise the first installed.
+    public var preferredOpenInTarget: OpenInTarget? {
+        OpenInTarget.preferred(lastUsedID: settings.openInTargetID, installed: openInTargets)
+    }
+
+    /// Opens `path` — the thread's folder or a mentioned file — in the app
+    /// `targetID` names, the preferred one when nil, and remembers that app
+    /// for the header's primary button. Returns why it failed, which also
+    /// shows in the error banner.
+    @discardableResult
+    public func open(_ path: String, in targetID: String? = nil) async -> String? {
+        let failure = await openFailure(path, in: targetID ?? preferredOpenInTarget?.id)
+        if let failure { showError(failure) }
+        return failure
+    }
+
+    private func openFailure(_ path: String, in targetID: String?) async -> String? {
+        guard let app = openInApps.first(where: { $0.target.id == targetID }) else {
+            let name = OpenInTarget.catalog.first { $0.id == targetID }?.name ?? targetID ?? "应用"
+            return "这台 Mac 上没有安装\(name)"
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return "“\(path)”不存在"
+        }
+        do {
+            try await OpenInApps.perform(app.target.action(for: path, isDirectory: isDirectory.boolValue), with: app.url)
+        } catch {
+            return "无法在\(app.target.name)中打开：\(error.localizedDescription)"
+        }
+        if settings.openInTargetID != app.target.id {
+            var updated = settings
+            updated.openInTargetID = app.target.id
+            await saveSettings(updated)
+        }
+        return nil
+    }
+
+    /// 在访达中显示: selects `path` in its Finder folder.
+    @discardableResult
+    public func revealInFinder(_ path: String) -> String? {
+        guard FileManager.default.fileExists(atPath: path) else {
+            showError("“\(path)”不存在")
+            return "“\(path)”不存在"
+        }
+        OpenInApps.reveal(path)
+        return nil
+    }
+    #endif
+
+    // MARK: - Code review
+
+    /// 「用 Codex 审查」: reviews the uncommitted changes of the thread's
+    /// working directory — or `directory`, the 改动 tab's checkout — in a new
+    /// thread 「审查：<分支>」 bound to that directory, 只读 with tools on, so
+    /// the reviewer can read files for context but change nothing. Selects
+    /// it and sends the request. Returns why no review started.
+    @discardableResult
+    public func startCodeReview(for conversationID: UUID, directory: String? = nil) async -> String? {
+        guard let source = conversation(conversationID) else { return "找不到这个对话" }
+        guard let directory = directory ?? source.workingDirectory, !directory.isEmpty else {
+            return "这个对话没有绑定工作目录"
+        }
+        guard !isStreaming else { return "当前回复结束后再开始审查" }
+        guard resolveProvider(for: source) != nil else { return "先在设置中添加供应商" }
+        let material: CodeReviewPrompt.Material
+        do {
+            material = try await Task.detached(priority: .userInitiated) {
+                try CodeReviewPrompt.collect(in: directory)
+            }.value
+        } catch {
+            return error.localizedDescription
+        }
+        guard let request = CodeReviewPrompt.build(material) else { return "没有可审查的改动" }
+        // A reply may have started while git ran.
+        guard !isStreaming else { return "当前回复结束后再开始审查" }
+        var review = Conversation(
+            title: CodeReviewPrompt.title(for: material),
+            providerID: source.providerID,
+            modelID: source.modelID,
+            projectID: source.projectID,
+            workingDirectory: directory
+        )
+        review.permissionMode = PermissionMode.readOnly.rawValue
+        review.toolsEnabled = true
+        review.isCodeReview = true
+        conversations.append(review)
+        selectedConversationID = review.id
+        persist(review)
+        await sendNow(text: request, attachments: [])
+        return nil
+    }
+
+    /// How the review thread's request ended, for the note above it; nil
+    /// for any other thread.
+    public func codeReviewOutcome(_ conversationID: UUID) -> CodeReviewPrompt.Outcome? {
+        guard let conversation = conversation(conversationID) else { return nil }
+        return CodeReviewPrompt.outcome(
+            of: conversation,
+            isStreaming: isStreaming && streamingConversationID == conversationID
+        )
     }
 
     // MARK: - Thread goal
@@ -502,17 +676,25 @@ public final class ChatAppModel {
     public func renameProject(_ id: UUID, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        let entry = AppUndoEntry.renamedGroup(projects[index], to: trimmed)
         projects[index].name = trimmed
         persistProjects()
+        registerUndo(entry)
     }
 
     public func deleteProject(_ id: UUID) {
+        let position = projects.firstIndex(where: { $0.id == id })
+        let group = position.map { projects[$0] }
+        let members = conversations.filter { $0.projectID == id }.map(\.id)
         projects.removeAll { $0.id == id }
         for index in conversations.indices where conversations[index].projectID == id {
             conversations[index].projectID = nil
             persist(conversations[index])
         }
         persistProjects()
+        if let group, let position {
+            registerUndo(.deletedGroup(group, position: position, memberIDs: members))
+        }
     }
 
     // MARK: Custom sections (ChatGPT sidebarElectron.customSections)
@@ -535,17 +717,20 @@ public final class ChatAppModel {
         )
         projects.append(section)
         persistProjects()
+        registerUndo(.createdGroup(section))
         return section
     }
 
     /// Archives every conversation in a custom section (bulk `archiveAll`).
     public func archiveConversations(inCustomSection sectionID: UUID) {
+        let archived = conversations.filter { $0.projectID == sectionID && !$0.isArchived }
         for index in conversations.indices
         where conversations[index].projectID == sectionID && !conversations[index].isArchived {
             conversations[index].isArchived = true
             conversations[index].isPinned = false
             persist(conversations[index])
         }
+        registerUndo(.archived(archived))
     }
 
     /// Clears unread state for every conversation in a custom section.
@@ -560,17 +745,25 @@ public final class ChatAppModel {
     public func renameCustomSection(_ id: UUID, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        let entry = AppUndoEntry.renamedGroup(projects[index], to: trimmed)
         projects[index].name = trimmed
         persistProjects()
+        registerUndo(entry)
     }
 
     public func deleteCustomSection(_ id: UUID) {
+        let position = projects.firstIndex(where: { $0.id == id })
+        let group = position.map { projects[$0] }
+        let members = conversations.filter { $0.projectID == id }.map(\.id)
         projects.removeAll { $0.id == id }
         for index in conversations.indices where conversations[index].projectID == id {
             conversations[index].projectID = nil
             persist(conversations[index])
         }
         persistProjects()
+        if let group, let position {
+            registerUndo(.deletedGroup(group, position: position, memberIDs: members))
+        }
     }
 
     public func conversations(inCustomSection sectionID: UUID) -> [Conversation] {
@@ -584,9 +777,13 @@ public final class ChatAppModel {
     /// Moves a conversation into a project, or out of one when `projectID` is nil.
     public func moveConversation(_ id: UUID, to projectID: UUID?) {
         guard var conversation = conversation(id) else { return }
+        let destination = projectID.flatMap { target in projects.first { $0.id == target } }
+        // A move into a group that does not exist has no honest message.
+        let entry = projectID == nil || destination != nil ? AppUndoEntry.moved(conversation, to: destination) : nil
         conversation.projectID = projectID
         replace(conversation)
         persist(conversation)
+        registerUndo(entry)
     }
 
     public func newConversation(in projectID: UUID?) -> Conversation {
@@ -634,10 +831,12 @@ public final class ChatAppModel {
 
     public func toggleArchive(_ id: UUID) {
         guard var conversation = conversation(id) else { return }
+        let before = conversation
         conversation.isArchived.toggle()
         if conversation.isArchived { conversation.isPinned = false }
         replace(conversation)
         persist(conversation)
+        registerUndo(.toggledArchive(before))
         if conversation.isArchived, selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
         }
@@ -654,19 +853,28 @@ public final class ChatAppModel {
     }
 
     public func reorderConversations(_ ordered: [Conversation]) {
+        let before = ordered.compactMap { conversation($0.id) }
+        let newIndexes = Dictionary(
+            ordered.enumerated().map { ($1.id, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
+        let entry = AppUndoEntry.reordered(before, newIndexes: newIndexes)
         for (index, item) in ordered.enumerated() {
             guard var conversation = conversation(item.id) else { continue }
             conversation.sortIndex = index
             replace(conversation)
             persist(conversation)
         }
+        registerUndo(entry)
     }
 
     public func togglePin(_ id: UUID) {
         guard var conversation = conversation(id) else { return }
+        let before = conversation
         conversation.isPinned.toggle()
         replace(conversation)
         persist(conversation)
+        registerUndo(.toggledPin(before))
     }
 
     public func setUnread(_ id: UUID, unread: Bool) {
@@ -674,6 +882,77 @@ public final class ChatAppModel {
         conversation.hasUnread = unread
         replace(conversation)
         persist(conversation)
+    }
+
+    // MARK: - Undo
+
+    /// Sidebar actions 撤销 / ⌘Z can take back, newest last (Codex `appUndo.*`).
+    /// The actions register themselves, so the desktop sidebar, the phone
+    /// drawer, the sheets and debug actions all record them alike.
+    public private(set) var undoStack = AppUndoStack()
+    /// The bottom toast: the newest action with 撤销, or an undo's result.
+    /// Dismissing it keeps the history, so the Edit menu can still undo.
+    public private(set) var undoToast: AppUndoToast?
+    /// Off while a paired phone's command runs. The phone shows no toast and
+    /// has no undo of its own; recording its actions here would announce on
+    /// the Mac something its user did not do, and let a ⌘Z at the Mac
+    /// silently revert what was done on the phone.
+    @ObservationIgnored private var recordsUndo = true
+
+    private func registerUndo(_ entry: AppUndoEntry?) {
+        guard recordsUndo, let entry else { return }
+        undoStack.push(entry)
+        undoToast = AppUndoToast(message: entry.message, offersUndo: true)
+    }
+
+    /// Takes the newest action back and returns what the toast then shows:
+    /// the confirmation, or why it could not be undone (the entry is dropped
+    /// either way). Nil when there is nothing to undo.
+    @discardableResult
+    public func undoLast() -> String? {
+        guard let entry = undoStack.pop() else { return nil }
+        var workspace = AppUndoWorkspace(
+            conversations: conversations,
+            projects: projects,
+            composerConversationID: selectedConversationID,
+            composerAttachments: draftAttachments,
+            parkedAttachments: attachmentsByConversation
+        )
+        let text: String
+        switch entry.inverse.apply(to: &workspace) {
+        case .failed(let reason):
+            text = reason
+        case .restored(let changes):
+            if !changes.conversationIDs.isEmpty {
+                conversations = workspace.conversations
+                let changed = Set(changes.conversationIDs)
+                for conversation in conversations where changed.contains(conversation.id) {
+                    persist(conversation)
+                }
+            }
+            if changes.projects {
+                projects = workspace.projects
+                persistProjects()
+            }
+            if changes.attachments {
+                draftAttachments = workspace.composerAttachments
+                attachmentsByConversation = workspace.parkedAttachments
+            }
+            text = entry.confirmation
+        }
+        undoToast = AppUndoToast(message: text, offersUndo: false)
+        return text
+    }
+
+    public func dismissUndoToast() {
+        undoToast = nil
+    }
+
+    private func withoutUndo(_ body: () -> Void) {
+        let previous = recordsUndo
+        recordsUndo = false
+        defer { recordsUndo = previous }
+        body()
     }
 
     // MARK: - Sidebar organization
@@ -703,7 +982,15 @@ public final class ChatAppModel {
     public func send() {
         let text = draft
         let attachments = draftAttachments
-        guard !isStreaming else { return }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == Self.compactCommand, attachments.isEmpty, pastedTexts.isEmpty,
+           let id = selectedConversationID {
+            draft = ""
+            Task { _ = await compactConversation(id) }
+            return
+        }
+        // A reply running in this conversation takes the message as a
+        // follow-up; one running elsewhere still blocks the composer.
+        guard !isStreaming || streamingConversationID == selectedConversationID else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || !pastedTexts.isEmpty else { return }
         draft = ""
         draftAttachments = []
@@ -724,16 +1011,19 @@ public final class ChatAppModel {
             return
         }
 
-        var parts: [ContentPart] = []
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(text)) }
-        for paste in pastes {
-            parts.append(.text("\n\n```\n\(paste.text)\n```"))
-        }
-        parts.append(contentsOf: attachments.map { .media($0) })
-
-        conversation.messages.append(ChatMessage(role: .user, parts: parts, replyToID: replyingTo?.id))
+        let queued = QueuedMessage(
+            text: text, attachments: attachments, pastes: pastes.map(\.text),
+            replyToID: replyingTo?.id, remote: remote
+        )
         replyingTo = nil
         AudioFeedback.playSend(enabled: settings.soundEffects)
+        // A reply (or a compaction) is running here: the message waits for
+        // the next point the model can read it instead of cancelling it.
+        if streamingConversationID == conversation.id {
+            enqueue(queued, in: conversation.id)
+            return
+        }
+        conversation.messages.append(queued.message)
         if conversation.title == "新对话" {
             let seed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             conversation.title = seed.isEmpty ? "图片消息" : String(seed.prefix(28))
@@ -782,6 +1072,14 @@ public final class ChatAppModel {
         // owns the state now; appending a placeholder here would leave one
         // spinning forever.
         guard currentReplyID == replyID else { return }
+        // Near the window: summarise the older turns first, inside the
+        // reply's task so 停止 reaches it and follow-ups queue meanwhile.
+        if generation == stopGeneration, needsAutoCompaction(conversationID) {
+            streamTask = Task { [weak self] in
+                await self?.compactThenReply(conversationID: conversationID, registry: registry, replyID: replyID, generation: generation)
+            }
+            return
+        }
         guard generation == stopGeneration, let first = prepareTurn(conversationID: conversationID, registry: registry) else {
             currentReplyID = nil
             isStreaming = false
@@ -820,10 +1118,11 @@ public final class ChatAppModel {
 
         let offered = registry.specs()
         offeredToolCounts[conversationID] = offered.count
-        let history = conversation.messages.dropLast()
+        // A compacted thread sends its summary in place of the older turns.
+        let history = ContextCompaction.requestMessages(Array(conversation.messages.dropLast()), compaction: conversation.compaction)
         var request = GenerationRequest(
             modelID: model.id,
-            messages: Array(history),
+            messages: history,
             systemPrompt: systemPrompt(for: conversation),
             temperature: settings.temperature,
             maxOutputTokens: settings.maxOutputTokens ?? model.limits.maxOutputTokens
@@ -851,8 +1150,10 @@ public final class ChatAppModel {
 
     /// Stops the reply: cancels the stream or the running tool (its whole
     /// process tree), and refuses every approval card still waiting.
+    /// Follow-ups queued for it stay queued, held: the user decides.
     public func stop() {
         stopGeneration += 1
+        if let id = streamingConversationID { holdQueue(in: id) }
         streamTask?.cancel()
         streamTask = nil
         for request in pendingApprovals {
@@ -1058,7 +1359,11 @@ public final class ChatAppModel {
     public func exportJSON(_ conversation: Conversation) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(conversation.withoutThinkingSeals),
+        // Queued follow-ups were never sent; the compaction summary stays, so
+        // an imported copy (message ids kept) still sends it.
+        var exported = conversation.withoutThinkingSeals
+        exported.queuedMessages = []
+        guard let data = try? encoder.encode(exported),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
         }
@@ -1133,14 +1438,11 @@ public final class ChatAppModel {
 
     // MARK: - Context budget
 
-    /// Rough token estimate (CJK ≈ 1 token/char, latin ≈ 1 token/4 chars).
+    /// Rough token estimate (CJK ≈ 1 token/char, latin ≈ 1 token/4 chars) of
+    /// what the next request sends: text and tool traffic, with a compacted
+    /// thread's summary in place of the turns it covers.
     public func estimatedTokens(_ conversation: Conversation) -> Int {
-        conversation.messages.reduce(0) { total, message in
-            let text = message.concatenatedText
-            let wide = text.unicodeScalars.filter { $0.value > 0x2E80 }.count
-            let narrow = max(0, text.count - wide)
-            return total + wide + narrow / 4
-        }
+        ContextCompaction.estimatedTokens(of: conversation)
     }
 
     public func contextUsage(_ conversation: Conversation) -> (used: Int, limit: Int)? {
@@ -1269,7 +1571,9 @@ public final class ChatAppModel {
     }
 
     public func removeAttachment(_ id: UUID) {
-        draftAttachments.removeAll { $0.id == id }
+        guard let position = draftAttachments.firstIndex(where: { $0.id == id }) else { return }
+        let ref = draftAttachments.remove(at: position)
+        registerUndo(.removedAttachment(ref, position: position, conversationID: selectedConversationID))
     }
 
     // MARK: Image generation
@@ -1697,7 +2001,18 @@ public final class ChatAppModel {
                 updatedAt: conversation.updatedAt,
                 project: conversation.projectID.flatMap { projectNameByID[$0] },
                 isStreaming: conversation.id == streamingConversationID,
-                messages: messages
+                messages: messages,
+                // Text only: attachments stay on the Mac, and the compaction
+                // summary only shapes what the Mac sends to the model.
+                queued: conversation.queuedMessages.map { queued in
+                    RelayQueuedMessage(
+                        id: queued.id.uuidString,
+                        text: queued.text,
+                        hasAttachments: !queued.attachments.isEmpty || !queued.pastes.isEmpty,
+                        held: queued.isHeld
+                    )
+                },
+                isCompacting: compactingConversationIDs.contains(conversation.id)
             )
         }
         return RelaySnapshot(
@@ -1744,7 +2059,8 @@ public final class ChatAppModel {
         case .rename(let conversationID, let title):
             let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, let id = uuid(conversationID) else { return }
-            renameConversation(id, title: trimmed)
+            // Phone-originated: no undo entry on the Mac (see `recordsUndo`).
+            withoutUndo { renameConversation(id, title: trimmed) }
 
         case .delete(let conversationID):
             guard let id = uuid(conversationID) else { return }
@@ -1797,11 +2113,11 @@ public final class ChatAppModel {
 
         case .togglePin(let conversationID):
             guard let id = uuid(conversationID) else { return }
-            togglePin(id)
+            withoutUndo { togglePin(id) }
 
         case .toggleArchive(let conversationID):
             guard let id = uuid(conversationID) else { return }
-            toggleArchive(id)
+            withoutUndo { toggleArchive(id) }
 
         case .toggleLock(let conversationID):
             guard let id = uuid(conversationID) else { return }
@@ -1813,6 +2129,14 @@ public final class ChatAppModel {
 
         case .approve(let approvalID, let decision, let requestID):
             answerRemoteApproval(approvalID, decision, requestID: requestID)
+
+        case .sendQueuedNow(let conversationID, let queuedID):
+            guard let id = uuid(conversationID), let queued = uuid(queuedID) else { return }
+            await sendQueuedNow(queued, in: id, remote: true)
+
+        case .removeQueued(let conversationID, let queuedID):
+            guard let id = uuid(conversationID), let queued = uuid(queuedID) else { return }
+            removeQueued(queued, in: id)
         }
     }
 
@@ -1991,11 +2315,12 @@ public final class ChatAppModel {
     /// Bumped by `stop()`, so a reply still looking up its tools knows not to start.
     @ObservationIgnored private var stopGeneration = 0
     /// The reply that owns `isStreaming`, `streamingConversationID`,
-    /// `streamTask` and `runningToolCallIDs`. A message sent while a reply runs
-    /// (from the phone; the composer waits) cancels the old one, and the old
-    /// loop must not clear the new reply's state when it winds down: it used
-    /// to, which left the new reply running with no stop button and its
-    /// approval cards unreachable by 停止.
+    /// `streamTask` and `runningToolCallIDs`. A message sent while a reply
+    /// runs here waits in the queue, but 立即发送 (and a phone send to another
+    /// conversation) cancels the old reply, and the old loop must not clear
+    /// the new reply's state when it winds down: it used to, which left the
+    /// new reply running with no stop button and its approval cards
+    /// unreachable by 停止.
     @ObservationIgnored private var currentReplyID: UUID?
     @ObservationIgnored private var readableRootsByOwner: [String: [String]] = [:]
     @ObservationIgnored private var reportedToolProblems: Set<String> = []
@@ -2039,6 +2364,45 @@ public final class ChatAppModel {
         conversation.toolsEnabled = enabled
         replace(conversation)
         persist(conversation)
+    }
+
+    /// The composer's 「工具与权限」 choice for this conversation.
+    public func agentAccess(for id: UUID) -> AgentAccess {
+        guard let conversation = conversation(id) else { return .followDefault }
+        return AgentAccess.current(
+            toolsEnabled: conversation.toolsEnabled,
+            permissionMode: conversation.permissionMode.flatMap(PermissionMode.init(rawValue:)),
+            hasWorkingDirectory: !(conversation.workingDirectory ?? "").isEmpty,
+            defaultMode: defaultPermissionMode
+        )
+    }
+
+    /// What the thread gets now; the composer button shows this.
+    public func effectiveAgentAccess(for id: UUID) -> AgentAccess {
+        let access = agentAccess(for: id)
+        return access == .followDefault ? defaultAgentAccess(for: id) : access
+    }
+
+    /// What 跟随默认 currently gives this conversation (never followDefault).
+    public func defaultAgentAccess(for id: UUID) -> AgentAccess {
+        AgentAccess.followDefault.resolved(
+            hasWorkingDirectory: !(conversation(id)?.workingDirectory ?? "").isEmpty,
+            defaultMode: defaultPermissionMode
+        )
+    }
+
+    /// Stores both fields of the choice in one write.
+    public func setAgentAccess(_ access: AgentAccess, for id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        let stored = access.stored
+        conversation.toolsEnabled = stored.toolsEnabled
+        conversation.permissionMode = stored.permissionMode?.rawValue
+        replace(conversation)
+        persist(conversation)
+    }
+
+    private var defaultPermissionMode: PermissionMode {
+        PermissionMode(rawValue: settings.defaultPermissionMode) ?? .ask
     }
 
     /// Answers an approval card. 始终允许 also allows the tool for the rest of
@@ -2125,16 +2489,21 @@ public final class ChatAppModel {
     private final class ReplyProgress {
         var first: PreparedTurn?
         var lastAssistantID: UUID?
+        /// Follow-ups delivered into this reply that no model turn has
+        /// answered yet.
+        var unansweredFollowUps: [UUID]
 
-        init(first: PreparedTurn) {
+        init(first: PreparedTurn, followUps: [UUID]) {
             self.first = first
+            self.unansweredFollowUps = followUps
         }
     }
 
     /// The whole reply: model turns and their tool calls, through `AgentLoop`.
     /// `isStreaming` stays true throughout, so the stop button shows.
-    private func runReply(conversationID: UUID, first: PreparedTurn, replyID: UUID) async {
-        let progress = ReplyProgress(first: first)
+    /// `followUps` are queued messages delivered just before the first turn.
+    private func runReply(conversationID: UUID, first: PreparedTurn, replyID: UUID, followUps: [UUID] = []) async {
+        let progress = ReplyProgress(first: first, followUps: followUps)
         let fallback = AgentLoop.Environment(mode: .readOnly, context: AgentToolContext(conversationID: conversationID, workingDirectory: nil))
         let host = AgentLoop.Host(
             modelTurn: { [weak self] turn in
@@ -2155,7 +2524,10 @@ public final class ChatAppModel {
             didRun: { [weak self] call, execution in
                 await self?.recordToolResult(call, execution, conversationID: conversationID)
             },
-            hooks: toolHooks
+            hooks: toolHooks,
+            betweenTurns: { [weak self] in
+                await self?.deliverFollowUps(conversationID: conversationID, replyID: replyID, progress: progress) ?? false
+            }
         )
         let ending = await AgentLoop().run(host)
         if ending == .turnLimit, let id = progress.lastAssistantID {
@@ -2163,7 +2535,13 @@ public final class ChatAppModel {
                 message.errorText = "已达到每条消息 \(AgentLoop.maxModelTurns) 轮模型调用的上限，已停止。发送新消息可以让它继续。"
             }
         }
+        // Follow-ups still waiting start the next reply, unless 停止 ended
+        // this one or a newer reply took over (it carries them).
+        let owner = currentReplyID == replyID
+        let continues = owner && !Task.isCancelled && hasDeliverableQueue(conversationID)
+        if owner, !continues { markUnanswered(progress.unansweredFollowUps, in: conversationID) }
         finishReply(conversationID: conversationID, answered: ending == .answered, replyID: replyID)
+        if continues { await startQueuedReply(conversationID) }
     }
 
     private func agentModelTurn(_ turn: Int, conversationID: UUID, progress: ReplyProgress) async -> AgentLoop.TurnOutcome {
@@ -2200,6 +2578,8 @@ public final class ChatAppModel {
             for call in calls { recordToolResult(call, AgentLoop.failure(call, unrun), conversationID: conversationID) }
         }
         guard report.failure == nil, !report.cancelled else { return .stopped }
+        // A finished turn read every follow-up before it.
+        settleFollowUps(progress, in: conversationID)
         return .finished(calls: calls, registry: prepared.registry)
     }
 
@@ -2235,6 +2615,8 @@ public final class ChatAppModel {
     /// images are stored in the media library and ride in `result.media`.
     private func recordToolResult(_ call: ToolCall, _ execution: AgentLoop.Execution, conversationID: UUID) {
         runningToolCallIDs.remove(call.id)
+        // The tool may have created a file a message already mentioned.
+        fileReferences.forgetMissing()
         var result = execution.result
         for image in execution.images {
             let subtype = image.mimeType.split(separator: "/").last.map(String.init) ?? "png"
@@ -2257,6 +2639,535 @@ public final class ChatAppModel {
         conversations[conversationIndex].messages[messageIndex].parts.append(.toolResult(result))
         conversations[conversationIndex].updatedAt = Date()
         persist(conversations[conversationIndex])
+    }
+
+    // MARK: - Steering
+
+    /// Typed into the composer, runs compaction instead of sending.
+    public static let compactCommand = "/compact"
+    /// Under a follow-up the running reply took in and then ended without
+    /// answering (Codex `responseError.unansweredSteering`).
+    public static let unansweredFollowUpText = "你的追问没有收到回复，请重试"
+    /// Codex `composer.queuedSteerDuringCompaction`.
+    public static let queuedDuringCompactionText = "压缩时不能插话，消息会在压缩完成后发送"
+
+    /// Follow-ups waiting in this conversation, oldest first.
+    public func queuedMessages(for id: UUID) -> [QueuedMessage] {
+        conversation(id)?.queuedMessages ?? []
+    }
+
+    /// 立即发送: sends the queued message now, the way sending used to work
+    /// while a reply ran: the running reply (or compaction) here is cancelled
+    /// and a new one starts with this message. The rest of the queue keeps
+    /// waiting for the new reply. Refused while another conversation replies.
+    public func sendQueuedNow(_ queuedID: UUID, in id: UUID, remote: Bool = false) async {
+        guard var conversation = conversation(id),
+              let index = conversation.queuedMessages.firstIndex(where: { $0.id == queuedID }) else { return }
+        if isStreaming, streamingConversationID != id {
+            errorMessage = "另一个对话正在回复，结束后再发送"
+            return
+        }
+        guard resolveProvider(for: conversation) != nil else {
+            errorMessage = "先在设置中添加供应商"
+            showSettings = true
+            return
+        }
+        let queued = conversation.queuedMessages.remove(at: index)
+        conversation.messages.append(queued.message)
+        conversation.updatedAt = Date()
+        replace(conversation)
+        persist(conversation)
+        // startReply cancels the running task and claims the reply before
+        // awaiting, so the old loop's wind-down leaves the new state alone.
+        await startReply(conversationID: id, remote: remote || queued.remote)
+    }
+
+    /// 删除: drops a queued message unsent.
+    public func removeQueued(_ queuedID: UUID, in id: UUID) {
+        guard var conversation = conversation(id),
+              let index = conversation.queuedMessages.firstIndex(where: { $0.id == queuedID }) else { return }
+        conversation.queuedMessages.remove(at: index)
+        replace(conversation)
+        persist(conversation)
+    }
+
+    /// 编辑: takes a queued message out of the queue and back into the
+    /// conversation's draft, after whatever the draft already holds.
+    public func editQueued(_ queuedID: UUID, in id: UUID) {
+        guard let queued = queuedMessages(for: id).first(where: { $0.id == queuedID }) else { return }
+        removeQueued(queuedID, in: id)
+        if selectedConversationID != id { selectedConversationID = id }
+        draft = draft.isEmpty ? queued.text : draft + "\n" + queued.text
+        draftAttachments += queued.attachments
+        pastedTexts += queued.pastes.map { PastedTextAttachment(text: $0) }
+    }
+
+    private func enqueue(_ message: QueuedMessage, in id: UUID) {
+        guard var conversation = conversation(id) else { return }
+        conversation.queuedMessages.append(message)
+        replace(conversation)
+        persist(conversation)
+        if compactingConversationIDs.contains(id) { statusMessage = Self.queuedDuringCompactionText }
+    }
+
+    /// After 停止 the queue stays, but nothing in it goes out on its own.
+    private func holdQueue(in id: UUID) {
+        guard var conversation = conversation(id),
+              conversation.queuedMessages.contains(where: { !$0.isHeld }) else { return }
+        for index in conversation.queuedMessages.indices { conversation.queuedMessages[index].isHeld = true }
+        replace(conversation)
+        persist(conversation)
+    }
+
+    private func hasDeliverableQueue(_ id: UUID) -> Bool {
+        queuedMessages(for: id).contains { !$0.isHeld }
+    }
+
+    /// Appends every queued message that is not held as a user message, in
+    /// order, and returns their message ids. A phone's follow-up holds the
+    /// rest of the reply to the phone's permission limit.
+    private func deliverQueue(in id: UUID) -> (messageIDs: [UUID], remote: Bool) {
+        guard var conversation = conversation(id) else { return ([], false) }
+        let ready = conversation.queuedMessages.filter { !$0.isHeld }
+        guard !ready.isEmpty else { return ([], false) }
+        conversation.queuedMessages.removeAll { !$0.isHeld }
+        let messages = ready.map(\.message)
+        conversation.messages += messages
+        conversation.updatedAt = Date()
+        replace(conversation)
+        persist(conversation)
+        let remote = ready.contains(where: \.remote)
+        if remote { remoteDrivenConversations.insert(id) }
+        return (messages.map(\.id), remote)
+    }
+
+    /// The loop's safe point: the turn's tool results are in, the next
+    /// request is not built yet.
+    private func deliverFollowUps(conversationID: UUID, replyID: UUID, progress: ReplyProgress) -> Bool {
+        guard currentReplyID == replyID, !Task.isCancelled else { return false }
+        let delivered = deliverQueue(in: conversationID).messageIDs
+        progress.unansweredFollowUps += delivered
+        return !delivered.isEmpty
+    }
+
+    /// A reply ended with follow-ups still waiting: they start the next one.
+    private func startQueuedReply(_ id: UUID) async {
+        let delivered = deliverQueue(in: id)
+        guard !delivered.messageIDs.isEmpty else { return }
+        await startReply(conversationID: id, remote: delivered.remote)
+    }
+
+    /// A model turn finished: the follow-ups before it were read, and a
+    /// note left by an earlier reply no longer applies.
+    private func settleFollowUps(_ progress: ReplyProgress, in id: UUID) {
+        progress.unansweredFollowUps = []
+        guard var conversation = conversation(id) else { return }
+        var changed = false
+        for index in conversation.messages.indices
+        where conversation.messages[index].role == .user && conversation.messages[index].errorText == Self.unansweredFollowUpText {
+            conversation.messages[index].errorText = nil
+            changed = true
+        }
+        guard changed else { return }
+        replace(conversation)
+        persist(conversation)
+    }
+
+    /// The reply ended (failed, stopped or cut off) before any turn read
+    /// these follow-ups, and nothing after it will.
+    private func markUnanswered(_ messageIDs: [UUID], in id: UUID) {
+        guard !messageIDs.isEmpty, var conversation = conversation(id) else { return }
+        for index in conversation.messages.indices where messageIDs.contains(conversation.messages[index].id) {
+            conversation.messages[index].errorText = Self.unansweredFollowUpText
+        }
+        replace(conversation)
+        persist(conversation)
+    }
+
+    /// Clears the reply state if `replyID` still owns it.
+    private func releaseReply(_ replyID: UUID) {
+        guard currentReplyID == replyID else { return }
+        currentReplyID = nil
+        isStreaming = false
+        streamingConversationID = nil
+        streamTask = nil
+        runningToolCallIDs = []
+    }
+
+    // MARK: - Compaction
+
+    /// Conversations whose earlier turns are being summarised right now;
+    /// the transcript shows 正在压缩上下文… for them.
+    public private(set) var compactingConversationIDs: Set<UUID> = []
+
+    public func isCompacting(_ id: UUID) -> Bool {
+        compactingConversationIDs.contains(id)
+    }
+
+    /// The compaction this conversation's requests use, if any still applies.
+    public func compaction(for id: UUID) -> ConversationCompaction? {
+        guard let conversation = conversation(id),
+              ContextCompaction.coveredIndex(of: conversation.compaction, in: conversation.messages) != nil else { return nil }
+        return conversation.compaction
+    }
+
+    /// 压缩上下文 / `/compact`: summarises the earlier turns in one model
+    /// request (no tools) with the conversation's own provider and model,
+    /// keeping the newest `ContextCompaction.keptTurns` verbatim. Returns
+    /// nil on success, else the reason, also shown to the user. Follow-ups
+    /// sent meanwhile are queued and go out afterwards, success or not;
+    /// 停止 cancels it and holds them.
+    public func compactConversation(_ id: UUID) async -> String? {
+        guard let conversation = conversation(id) else { return "找不到这个对话" }
+        if isStreaming {
+            let text = streamingConversationID == id ? "回复进行中，结束后再压缩" : "另一个对话正在回复，结束后再压缩"
+            errorMessage = text
+            return text
+        }
+        guard ContextCompaction.boundary(in: conversation.messages, after: conversation.compaction) != nil else {
+            let text = "还没有足够早的内容可以压缩"
+            statusMessage = text
+            return text
+        }
+        guard let provider = resolveProvider(for: conversation), resolveModel(for: conversation, provider: provider) != nil else {
+            let text = "先在设置中添加供应商并选择模型"
+            errorMessage = text
+            return text
+        }
+        isStreaming = true
+        streamingConversationID = id
+        errorMessage = nil
+        let replyID = UUID()
+        currentReplyID = replyID
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            streamTask = Task { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let error = await self.runCompaction(id)
+                continuation.resume(returning: error)
+                let owner = self.currentReplyID == replyID
+                self.releaseReply(replyID)
+                guard owner, !Task.isCancelled else { return }
+                // Starting the reply clears the banner; a failed compaction's
+                // error must stay in sight while the queued messages go out.
+                let shown = self.errorMessage
+                await self.startQueuedReply(id)
+                if self.errorMessage == nil { self.errorMessage = shown }
+            }
+        }
+    }
+
+    /// Whether the next request of this conversation would reach
+    /// `ContextCompaction.autoThreshold` of its model's window.
+    private func needsAutoCompaction(_ id: UUID) -> Bool {
+        guard let conversation = conversation(id),
+              let provider = resolveProvider(for: conversation),
+              let model = resolveModel(for: conversation, provider: provider) else { return false }
+        return ContextCompaction.shouldAutoCompact(
+            conversation.messages, compaction: conversation.compaction, contextWindow: model.limits.contextWindow
+        )
+    }
+
+    /// Automatic compaction ahead of a reply that already owns the reply
+    /// state. A failure leaves the thread as it was; the reply goes on
+    /// either way, with the follow-ups queued meanwhile, unless 停止.
+    private func compactThenReply(conversationID: UUID, registry: AgentToolRegistry, replyID: UUID, generation: Int) async {
+        _ = await runCompaction(conversationID)
+        guard !Task.isCancelled, currentReplyID == replyID, generation == stopGeneration else {
+            releaseReply(replyID)
+            return
+        }
+        let followUps = deliverQueue(in: conversationID).messageIDs
+        guard let first = prepareTurn(conversationID: conversationID, registry: registry) else {
+            releaseReply(replyID)
+            return
+        }
+        await runReply(conversationID: conversationID, first: first, replyID: replyID, followUps: followUps)
+    }
+
+    static let compactionNotSmallerText = "较早的内容还很少，摘要不比原文短，已保留原文"
+
+    /// Streams the summary and stores the compaction. Returns nil on
+    /// success, else the reason; a failure is also shown as an error, a
+    /// summary that would not shrink anything only as a status line.
+    private func runCompaction(_ id: UUID) async -> String? {
+        compactingConversationIDs.insert(id)
+        defer {
+            compactingConversationIDs.remove(id)
+            // 「压缩时不能插话…」 describes the compaction, not the message;
+            // it stayed on screen after the compaction had finished.
+            if compactingConversationIDs.isEmpty, statusMessage == Self.queuedDuringCompactionText {
+                statusMessage = nil
+            }
+        }
+        guard let conversation = conversation(id),
+              let boundary = ContextCompaction.boundary(in: conversation.messages, after: conversation.compaction) else {
+            return "还没有足够早的内容可以压缩"
+        }
+        guard let provider = resolveProvider(for: conversation),
+              let model = resolveModel(for: conversation, provider: provider),
+              let apiKey = (try? secrets.secret(for: provider.keychainAccount)) ?? nil, !apiKey.isEmpty else {
+            return compactionFailed("没有可用的供应商、模型或 API Key")
+        }
+        let request = ContextCompaction.summaryRequest(
+            modelID: model.id,
+            messages: conversation.messages,
+            boundary: boundary,
+            previous: conversation.compaction,
+            contextWindow: model.limits.contextWindow,
+            maxOutputTokens: model.limits.maxOutputTokens
+        )
+        let adapter = ProviderFactory.makeProvider(
+            profile: provider,
+            apiKey: apiKey,
+            transport: transport,
+            mediaPayloads: { [mediaLibrary] ref in mediaLibrary.loadPayload(for: ref) }
+        )
+        var summary = ""
+        var failure: Error?
+        do {
+            for try await event in adapter.stream(request) {
+                if Task.isCancelled { break }
+                if case .textDelta(let delta) = event { summary += delta }
+            }
+        } catch {
+            failure = error
+        }
+        if Task.isCancelled { return "已停止压缩" }
+        if let failure {
+            return compactionFailed((failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription)
+        }
+        guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return compactionFailed("模型没有返回摘要")
+        }
+        // Messages can be deleted while the summary streams; the cut follows
+        // the covered message, and is dropped if that message is gone.
+        let coveredID = conversation.messages[boundary - 1].id
+        guard var latest = self.conversation(id),
+              let covered = latest.messages.firstIndex(where: { $0.id == coveredID }) else {
+            return compactionFailed("压缩期间对话被改动了")
+        }
+        let made = ContextCompaction.compaction(
+            summary: summary, messages: latest.messages, boundary: covered + 1, previous: latest.compaction
+        )
+        // A summary no shorter than the turns it replaces would make every
+        // later request bigger (a short thread: 167 → 325 tokens was seen).
+        guard made.shrinksRequest else {
+            statusMessage = Self.compactionNotSmallerText
+            return Self.compactionNotSmallerText
+        }
+        latest.compaction = made
+        replace(latest)
+        persist(latest)
+        DiagnosticsCenter.shared.record("compaction", .info, "context compacted", fields: [
+            "model": model.id, "before": String(made.tokensBefore), "after": String(made.tokensAfter),
+        ])
+        return nil
+    }
+
+    private func compactionFailed(_ reason: String) -> String {
+        let text = "压缩上下文失败：\(reason)"
+        errorMessage = text
+        DiagnosticsCenter.shared.record("compaction", .error, "compaction failed", fields: ["error": reason])
+        return text
+    }
+
+    // MARK: - Scheduled tasks
+
+    /// Codex scheduled tasks (`inbox.mode.automations`). Saved in the
+    /// workspace document; `scheduledTaskScheduler` runs them while the app
+    /// runs on the Mac. Every change goes through `scheduledTasksChanged()`.
+    public private(set) var scheduledTasks: [ScheduledTask] = []
+    /// The calendar schedules are read in: the system's, following time-zone
+    /// changes. Tests pin a zone.
+    @ObservationIgnored var scheduleCalendar: Calendar = .autoupdatingCurrent
+    @ObservationIgnored private var schedulerStorage: ScheduledTaskScheduler?
+    /// The reply each task's latest run started, so its row can say
+    /// 正在运行… only while that reply (not a later one) streams.
+    @ObservationIgnored private var scheduledRunReplyIDs: [UUID: UUID] = [:]
+
+    public var scheduledTaskScheduler: ScheduledTaskScheduler {
+        if let schedulerStorage { return schedulerStorage }
+        let scheduler = ScheduledTaskScheduler(model: self)
+        schedulerStorage = scheduler
+        return scheduler
+    }
+
+    /// Starts firing due tasks; on iOS this does nothing, tasks run on the
+    /// Mac. Call once after `bootstrap()`; later calls do nothing.
+    public func startScheduledTasks() {
+        scheduledTaskScheduler.start()
+    }
+
+    /// Adds `task` as an active task with its first slot after `now`.
+    @discardableResult
+    public func addScheduledTask(_ task: ScheduledTask, now: Date = Date()) -> ScheduledTask {
+        var task = task
+        task.title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        task.activate(now: now, calendar: scheduleCalendar)
+        scheduledTasks.append(task)
+        scheduledTasksChanged()
+        return task
+    }
+
+    /// Applies an edited copy of a stored task; see `ScheduledTask.applyEdit`.
+    public func updateScheduledTask(_ task: ScheduledTask, now: Date = Date()) {
+        guard let index = scheduledTasks.firstIndex(where: { $0.id == task.id }) else { return }
+        var edited = task
+        edited.title = edited.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        scheduledTasks[index].applyEdit(edited, now: now, calendar: scheduleCalendar)
+        scheduledTasksChanged()
+    }
+
+    /// Deletes the task. Conversations its runs created stay.
+    public func deleteScheduledTask(_ id: UUID) {
+        scheduledTasks.removeAll { $0.id == id }
+        scheduledRunReplyIDs.removeValue(forKey: id)
+        scheduledTasksChanged()
+    }
+
+    public func pauseScheduledTask(_ id: UUID) {
+        guard let index = scheduledTasks.firstIndex(where: { $0.id == id }) else { return }
+        scheduledTasks[index].pause()
+        scheduledTasksChanged()
+    }
+
+    /// Resumes a paused task from its next slot. Returns why it cannot, e.g.
+    /// a one-time task whose time has passed.
+    @discardableResult
+    public func resumeScheduledTask(_ id: UUID, now: Date = Date()) -> String? {
+        guard let index = scheduledTasks.firstIndex(where: { $0.id == id }) else { return "找不到这个定时任务" }
+        if let failure = scheduledTasks[index].resume(now: now, calendar: scheduleCalendar) { return failure }
+        scheduledTasksChanged()
+        return nil
+    }
+
+    /// 立即运行: sends the prompt now, whatever the schedule says, without
+    /// moving a slot that is not due yet. Returns why it could not start.
+    @discardableResult
+    public func runScheduledTaskNow(_ id: UUID, now: Date = Date()) async -> String? {
+        switch await startScheduledRun(id, now: now, manual: true) {
+        case .started, .notDue:
+            return nil
+        case .skipped(let reason), .failed(let reason):
+            return "无法启动定时任务：\(reason)"
+        case .waiting:
+            return "无法启动定时任务：另一个对话正在回复，等它结束再运行"
+        }
+    }
+
+    /// Whether the reply the task's latest run started is still streaming.
+    public func isScheduledTaskRunning(_ id: UUID) -> Bool {
+        guard isStreaming, let replyID = scheduledRunReplyIDs[id] else { return false }
+        return replyID == currentReplyID
+    }
+
+    /// True when an attached task's conversation is gone, so its runs go to
+    /// new conversations instead.
+    public func scheduledTaskTargetMissing(_ task: ScheduledTask) -> Bool {
+        if case .attached(let id) = task.target { return conversation(id) == nil }
+        return false
+    }
+
+    /// Opens the conversation of the task's latest run. False when there is
+    /// none, it was deleted, or it is locked (opening it here would bypass
+    /// the lock).
+    @discardableResult
+    public func openScheduledTaskRun(_ id: UUID) -> Bool {
+        guard let conversationID = scheduledTasks.first(where: { $0.id == id })?.lastRunConversationID,
+              let run = conversation(conversationID), !run.isLocked else { return false }
+        selectedConversationID = conversationID
+        return true
+    }
+
+    /// Clears the unread flag of every task's latest run (Codex
+    /// `sidebarElectron.automationsMarkAllRead`).
+    public func markScheduledTaskRunsRead() {
+        for id in Set(scheduledTasks.compactMap(\.lastRunConversationID)) where conversation(id)?.hasUnread == true {
+            setUnread(id, unread: false)
+        }
+    }
+
+    /// One attempt to run task `id` at `now`. The scheduler's path runs only
+    /// a due task and books a slot it cannot run as skipped; 立即运行
+    /// (`manual`) runs regardless and books nothing it could not start.
+    func startScheduledRun(_ id: UUID, now: Date, manual: Bool = false) async -> ScheduledRunOutcome {
+        guard let task = scheduledTasks.first(where: { $0.id == id }) else { return .failed("找不到这个定时任务") }
+        guard manual || task.isDue(at: now) else { return .notDue }
+        func refuse(_ reason: String) -> ScheduledRunOutcome {
+            guard !manual else { return .failed(reason) }
+            if let index = scheduledTasks.firstIndex(where: { $0.id == id }) {
+                scheduledTasks[index].recordSkip(at: now, reason: reason, calendar: scheduleCalendar)
+                scheduledTasksChanged()
+            }
+            return .skipped(reason)
+        }
+        let target = task.resolvedTarget { conversation($0) != nil }
+        if case .attached(let conversationID) = target, isStreaming, streamingConversationID == conversationID {
+            // Never queue a prompt into a reply that is still working.
+            return refuse("对话仍在回复")
+        }
+        // One reply streams at a time and starting another cancels it.
+        if isStreaming { return manual ? .failed("另一个对话正在回复，等它结束再运行") : .waiting }
+
+        var run: Conversation
+        if case .attached(let conversationID) = target, let existing = conversation(conversationID) {
+            run = existing
+        } else {
+            run = Conversation(title: task.runTitle(at: now, calendar: scheduleCalendar))
+            if let projectID = task.projectID, projects.contains(where: { $0.id == projectID }) {
+                run.projectID = projectID
+            }
+        }
+        guard let provider = resolveProvider(for: run), resolveModel(for: run, provider: provider) != nil else {
+            return refuse("先在设置中添加供应商并选择模型")
+        }
+        guard let key = (try? secrets.secret(for: provider.keychainAccount)) ?? nil, !key.isEmpty else {
+            return refuse("「\(provider.name)」缺少 API Key")
+        }
+        if let directory = task.workingDirectory, !directory.isEmpty { run.workingDirectory = directory }
+        if let mode = task.permissionMode, PermissionMode(rawValue: mode) != nil { run.permissionMode = mode }
+        run.messages.append(ChatMessage(role: .user, parts: [.text(task.prompt)]))
+        run.updatedAt = Date()
+        replace(run)
+        persist(run)
+        // Booked before the reply starts: the slot is spent even if the app
+        // quits mid-reply, so it can never run twice.
+        if let index = scheduledTasks.firstIndex(where: { $0.id == id }) {
+            scheduledTasks[index].recordRun(at: now, conversationID: run.id, calendar: scheduleCalendar)
+        }
+        scheduledTasksChanged()
+        await startReply(conversationID: run.id, remote: false)
+        if isStreaming, streamingConversationID == run.id, let replyID = currentReplyID {
+            scheduledRunReplyIDs[id] = replyID
+        }
+        return .started(conversationID: run.id)
+    }
+
+    /// After a time-zone change, wall-clock slots still ahead are read again
+    /// in the new zone, so 「每天 09:00」 means 09:00 where the Mac now is.
+    /// Due slots are left for the scheduler to run.
+    func rescheduleScheduledTasksForTimeZoneChange(now: Date = Date()) {
+        for index in scheduledTasks.indices {
+            scheduledTasks[index].followTimeZoneChange(now: now, calendar: scheduleCalendar)
+        }
+        scheduledTasksChanged()
+    }
+
+    /// Saves the tasks and re-arms the scheduler for the new earliest slot.
+    private func scheduledTasksChanged() {
+        let store = self.store
+        let snapshot = scheduledTasks
+        Task {
+            do { try await store.saveScheduledTasks(snapshot) }
+            catch {
+                DiagnosticsCenter.shared.record("workspace", .error, "scheduled tasks save failed",
+                    fields: ["error": error.localizedDescription])
+            }
+        }
+        schedulerStorage?.rearm()
     }
 
     // MARK: - Side chat

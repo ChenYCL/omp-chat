@@ -10,6 +10,8 @@ Starts relay_hub on a free port, opens a fake host SSE stream, and checks:
 - a host that disconnects mid-wait is 409
 - an `approve` command reaches the host with every field; one with a missing
   id, an unknown decision or `allowAlways` is 400 and never reaches it
+- `sendQueuedNow` / `removeQueued` reach the host; one without a
+  conversation or queued id is 400 and never reaches it
 
 Run: python3 tools/relay-hub/test_rpc.py
 """
@@ -356,6 +358,27 @@ def run(port: int) -> None:
     name, data = host.next_event()
     assert json.loads(data) == marker, data
     print("bad approve 400, never forwarded")
+
+    # Queued follow-ups: both kinds forwarded verbatim.
+    for kind in ("sendQueuedNow", "removeQueued"):
+        command = {"kind": kind, "conversationID": "C1", "queuedID": "Q1"}
+        status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", command)
+        assert status == 200, (kind, status, body)
+        name, data = host.next_event()
+        assert name == "command" and json.loads(data) == command, (name, data)
+    for bad in [
+        {"kind": "sendQueuedNow", "conversationID": "C1"},
+        {"kind": "sendQueuedNow", "conversationID": "C1", "queuedID": ""},
+        {"kind": "removeQueued", "queuedID": "Q1"},
+        {"kind": "removeQueued", "conversationID": "C1", "queuedID": 7},
+    ]:
+        status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", bad)
+        assert status == 400 and body == {"error": "bad command"}, (bad, status, body)
+    status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", marker)
+    assert status == 200, (status, body)
+    name, data = host.next_event()
+    assert json.loads(data) == marker, data
+    print("queue commands forwarded; malformed ones 400, never forwarded")
 
 
 if __name__ == "__main__":

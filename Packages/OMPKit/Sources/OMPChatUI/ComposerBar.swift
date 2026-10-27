@@ -39,6 +39,7 @@ public struct ComposerBar: View {
             if let token = mentionToken {
                 mentionList(token)
             }
+            QueuedMessagesStrip()
             composerCard
         }
         .padding(.horizontal, Theme.Layout.transcriptPadding)
@@ -197,6 +198,13 @@ public struct ComposerBar: View {
                     Label("设定目标", systemImage: "target")
                 }
                 .accessibilityIdentifier("composer.goal.set")
+                Button {
+                    compactSelected(clearingDraft: false)
+                } label: {
+                    Label("压缩上下文", systemImage: "arrow.down.right.and.arrow.up.left")
+                }
+                .disabled(model.selectedConversationID == nil)
+                .accessibilityIdentifier("composer.compact")
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -684,6 +692,30 @@ public struct ComposerBar: View {
 
             Divider().opacity(0.4)
 
+            if showsCompactCommand {
+                Button {
+                    compactSelected(clearingDraft: true)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 18)
+                        Text(ChatAppModel.compactCommand)
+                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.ompText)
+                        Text("压缩上下文")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.ompTextSecondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.ompFill.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer.slash.compact")
+            }
             ForEach(filteredTemplates, id: \.alias) { item in
                 Button {
                     model.draft = item.prompt
@@ -712,6 +744,22 @@ public struct ComposerBar: View {
         .frame(maxWidth: Theme.Layout.transcriptMax)
         .ompSurface(radius: Theme.Radius.m)
         .padding(.horizontal, Theme.Layout.transcriptPadding)
+    }
+
+    // MARK: - Compaction
+
+    /// The palette's `/compact` row matches its name or 压缩上下文.
+    private var showsCompactCommand: Bool {
+        let query = String(model.draft.dropFirst()).lowercased()
+        return query.isEmpty || "compact".contains(query) || "压缩上下文".contains(query)
+    }
+
+    /// 压缩上下文 from the + menu or the slash palette (which also clears the
+    /// typed `/…`). Failures show as the model's error banner.
+    private func compactSelected(clearingDraft: Bool) {
+        guard let id = model.selectedConversationID else { return }
+        if clearingDraft { model.draft = "" }
+        Task { _ = await model.compactConversation(id) }
     }
 
     private var modelPill: some View {

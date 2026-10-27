@@ -58,6 +58,7 @@ struct RemoteConsoleScreen: View {
             }
 
             if let conversation = currentConversation {
+                queuedStrip(for: conversation)
                 composer(for: conversation)
             }
         }
@@ -349,6 +350,73 @@ struct RemoteConsoleScreen: View {
             .overlay(Capsule().strokeBorder(Color.ompBorder, lineWidth: 0.5))
     }
 
+    // MARK: Queued follow-ups
+
+    /// The Mac's queued follow-ups for this conversation, as chips above the
+    /// composer: 立即发送 and 删除 go to the Mac; 编辑 brings the text back
+    /// into this composer and drops it there.
+    @ViewBuilder
+    private func queuedStrip(for conversation: RelayConversation) -> some View {
+        if !conversation.queued.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(queuedHeader(conversation))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextTertiary)
+                ForEach(conversation.queued) { item in
+                    HStack(spacing: 8) {
+                        Image(systemName: item.held ? "pause.circle" : "clock")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompTextTertiary)
+                        Text(item.text.isEmpty ? "附件消息" : item.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.ompText)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        queuedAction("立即发送", id: "remote.console.queued.sendNow") {
+                            submit(.sendQueuedNow(conversationID: conversationID, queuedID: item.id))
+                        }
+                        if !item.hasAttachments {
+                            queuedAction("编辑", id: "remote.console.queued.edit") {
+                                draft = draft.isEmpty ? item.text : draft + "\n" + item.text
+                                submit(.removeQueued(conversationID: conversationID, queuedID: item.id))
+                                inputFocused = true
+                            }
+                        }
+                        queuedAction("删除", id: "remote.console.queued.delete") {
+                            submit(.removeQueued(conversationID: conversationID, queuedID: item.id))
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.ompBorder, lineWidth: 0.5)
+                    )
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("remote.console.queued.item")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+            .accessibilityIdentifier("remote.console.queued")
+        }
+    }
+
+    private func queuedHeader(_ conversation: RelayConversation) -> String {
+        if conversation.isCompacting { return "压缩时不能插话，消息会在压缩完成后发送" }
+        if conversation.queued.allSatisfy(\.held) { return "已停止 · 这些消息不会自动发出" }
+        return "排队中 · 回复的下一步会带上"
+    }
+
+    private func queuedAction(_ title: String, id: String, perform: @escaping () -> Void) -> some View {
+        Button(title, action: perform)
+            .buttonStyle(.plain)
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundStyle(Color.ompTextSecondary)
+            .accessibilityIdentifier(id)
+    }
+
     // MARK: Composer
 
     private func composer(for conversation: RelayConversation) -> some View {
@@ -381,7 +449,10 @@ struct RemoteConsoleScreen: View {
                 .disabled(stopInFlight)
                 .accessibilityIdentifier("remote.console.stop")
                 .accessibilityLabel("停止生成")
-            } else {
+            }
+            // While the Mac replies, a typed message joins its queue as a
+            // follow-up, so send shows beside stop.
+            if !conversation.isStreaming || canSend {
                 Button(action: send) {
                     Circle()
                         .fill(canSend ? Color.ompPrimarySolid : Color.ompFill)

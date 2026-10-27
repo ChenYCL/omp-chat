@@ -190,6 +190,92 @@ final class DebugActionDecodingTests: XCTestCase {
         }
     }
 
+    func testScheduledTaskAddUsesTheStoredShapes() {
+        let daily = decode(#"{"action":"scheduledTask","op":"add","title":"日报","prompt":"总结","schedule":{"kind":"daily","hour":9,"minute":30}}"#)
+        XCTAssertEqual(daily, .scheduledTask(.add(
+            title: "日报", prompt: "总结", schedule: .daily(TimeOfDay(hour: 9, minute: 30)), target: .newThread,
+            workingDirectory: nil, permissionMode: nil
+        )), "不带 target 就是每次新建对话")
+
+        let attached = decode(#"""
+        {"action":"scheduledTask","op":"add","title":"t","prompt":"p",
+         "schedule":{"kind":"once","date":"2026-10-28T01:00:00Z"},
+         "target":{"kind":"attached","conversationID":"8F1C4D7A-8E57-4C2B-9C9B-1B2C3D4E5F60"},
+         "workingDirectory":"/tmp/x","permissionMode":"readOnly"}
+        """#)
+        XCTAssertEqual(attached, .scheduledTask(.add(
+            title: "t", prompt: "p", schedule: .once(Date(timeIntervalSince1970: 1_793_149_200)),
+            target: .attached(UUID(uuidString: "8F1C4D7A-8E57-4C2B-9C9B-1B2C3D4E5F60")!),
+            workingDirectory: "/tmp/x", permissionMode: "readOnly"
+        )), "日期按工作区文件同样的 ISO-8601 读")
+
+        XCTAssertNil(decode(#"{"action":"scheduledTask","op":"add","title":"t","prompt":"p","schedule":{"kind":"yearly"}}"#),
+                     "不认识的计划整条拒绝")
+        XCTAssertNil(decode(#"{"action":"scheduledTask","op":"add","title":"t","prompt":"p"}"#), "计划必填")
+        XCTAssertNil(decode(#"{"action":"scheduledTask","op":"add","title":"t","prompt":"p","schedule":{"kind":"daily"},"target":"x"}"#),
+                     "target 写错不能悄悄变成新建对话")
+    }
+
+    func testScheduledTaskOperationsNeedATask() {
+        XCTAssertEqual(decode(#"{"action":"scheduledTask","op":"runNow","taskID":"t1"}"#), .scheduledTask(.runNow(taskID: "t1")))
+        XCTAssertEqual(decode(#"{"action":"scheduledTask","op":"resume","taskID":"t1"}"#), .scheduledTask(.resume(taskID: "t1")))
+        XCTAssertNil(decode(#"{"action":"scheduledTask","op":"pause"}"#))
+        XCTAssertNil(decode(#"{"action":"scheduledTask","op":"explode","taskID":"t1"}"#))
+    }
+
+    func testQueuedChipActions() {
+        XCTAssertEqual(decode(#"{"action":"queued","queuedID":"q1","op":"sendNow"}"#),
+                       .queued(conversationID: nil, queuedID: "q1", op: .sendNow))
+        XCTAssertEqual(decode(#"{"action":"queued","conversationID":"c","queuedID":"q1","op":"delete"}"#),
+                       .queued(conversationID: "c", queuedID: "q1", op: .delete))
+        XCTAssertNil(decode(#"{"action":"queued","queuedID":"q1"}"#), "要说清做什么")
+        XCTAssertNil(decode(#"{"action":"queued","op":"edit"}"#), "要说清是哪一条")
+        XCTAssertNil(decode(#"{"action":"queued","queuedID":"q1","op":"send"}"#))
+        XCTAssertEqual(decode(#"{"action":"compact"}"#), .compact(conversationID: nil))
+        XCTAssertNil(decode(#"{"action":"compact","conversationID":false}"#))
+    }
+
+    func testOpenFileLineMustBeAPositiveInteger() {
+        XCTAssertEqual(decode(#"{"action":"openFile","path":"/tmp/a.swift","line":12}"#), .openFile(path: "/tmp/a.swift", line: 12))
+        XCTAssertEqual(decode(#"{"action":"openFile","path":"/tmp/a.swift"}"#), .openFile(path: "/tmp/a.swift", line: nil))
+        XCTAssertNil(decode(#"{"action":"openFile","path":"/tmp/a.swift","line":0}"#), "行号从 1 开始")
+        XCTAssertNil(decode(#"{"action":"openFile","path":"/tmp/a.swift","line":1.5}"#))
+        XCTAssertNil(decode(#"{"action":"openFile","path":"/tmp/a.swift","line":true}"#), "true 不是行号")
+        XCTAssertNil(decode(#"{"action":"openFile","path":""}"#))
+        XCTAssertEqual(decode(#"{"action":"codeReview"}"#), .codeReview(conversationID: nil))
+        XCTAssertNil(decode(#"{"action":"codeReview","conversationID":3}"#))
+    }
+
+    func testSetAccessTakesTheMenuChoices() {
+        XCTAssertEqual(decode(#"{"action":"setAccess","access":"chat"}"#), .setAccess(conversationID: nil, access: .chatOnly))
+        XCTAssertEqual(decode(#"{"action":"setAccess","access":"full","conversationID":"abc"}"#),
+                       .setAccess(conversationID: "abc", access: .tools(.full)))
+        XCTAssertEqual(decode(#"{"action":"setAccess","access":"default"}"#), .setAccess(conversationID: nil, access: .followDefault))
+        XCTAssertNil(decode(#"{"action":"setAccess"}"#))
+        XCTAssertNil(decode(#"{"action":"setAccess","access":"agent"}"#), "不认识的选项整条拒绝")
+        XCTAssertNil(decode(#"{"action":"setAccess","access":null}"#), "null 不能当跟随默认")
+    }
+
+    func testSidebarOperations() {
+        XCTAssertEqual(decode(#"{"action":"sidebarOp","op":"toggleArchive"}"#), .sidebarOp(.toggleArchive(conversationID: nil)))
+        XCTAssertEqual(
+            decode(#"{"action":"sidebarOp","op":"rename","conversationID":"abc","title":"新名字"}"#),
+            .sidebarOp(.rename(conversationID: "abc", title: "新名字"))
+        )
+        XCTAssertEqual(decode(#"{"action":"sidebarOp","op":"move","groupID":"g"}"#), .sidebarOp(.move(conversationID: nil, groupID: "g")))
+        XCTAssertEqual(decode(#"{"action":"sidebarOp","op":"move"}"#), .sidebarOp(.move(conversationID: nil, groupID: nil)),
+                       "不带 groupID 是移出分组")
+        XCTAssertEqual(decode(#"{"action":"sidebarOp","op":"move","groupID":null}"#), .sidebarOp(.move(conversationID: nil, groupID: nil)))
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"move","groupID":3}"#), "数字不能被当成移出分组")
+        XCTAssertEqual(decode(#"{"action":"sidebarOp","op":"deleteGroup","groupID":"g"}"#), .sidebarOp(.deleteGroup(groupID: "g")))
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"rename"}"#), "改名要带名字")
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"deleteGroup"}"#))
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"createSection"}"#))
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"togglePin","conversationID":7}"#))
+        XCTAssertNil(decode(#"{"action":"sidebarOp","op":"explode"}"#))
+        XCTAssertNil(decode(#"{"action":"sidebarOp"}"#))
+    }
+
     func testGitOperations() {
         XCTAssertEqual(
             decode(#"{"action":"git","op":"stage","paths":["说明 文档.md","a.txt"]}"#),
@@ -319,6 +405,15 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"setWebSearch","enabled":true}"#,
             #"{"action":"computerUseAdd"}"#,
             #"{"action":"setPhoneAccess","enabled":true}"#,
+            #"{"action":"undo"}"#,
+            #"{"action":"dismissUndo"}"#,
+            #"{"action":"sidebarOp","op":"togglePin"}"#,
+            #"{"action":"setAccess","access":"ask"}"#,
+            #"{"action":"scheduledTask","op":"delete","taskID":"x"}"#,
+            #"{"action":"openFile","path":"/x"}"#,
+            #"{"action":"codeReview"}"#,
+            #"{"action":"queued","queuedID":"q","op":"edit"}"#,
+            #"{"action":"compact"}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)

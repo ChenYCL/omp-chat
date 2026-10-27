@@ -20,6 +20,8 @@ struct OMPChatApp: App {
                     // start when the MCP pane is first opened.
                     model.reloadPlugins()
                     model.startMCP()
+                    // Due tasks missed while the app was closed run once now.
+                    model.startScheduledTasks()
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -114,6 +116,8 @@ struct OMPChatApp: App {
                 }
                 .keyboardShortcut(.downArrow, modifiers: .option)
             }
+            // Edit → 撤销「…」 for sidebar actions; ⌘Z only off text inputs.
+            AppUndoCommands(model: model)
         }
 
         Settings {

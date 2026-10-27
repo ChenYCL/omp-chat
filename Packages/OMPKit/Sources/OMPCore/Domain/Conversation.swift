@@ -38,6 +38,17 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// Whether the model is offered tools here; nil means automatic: offered
     /// when the thread has a working directory.
     public var toolsEnabled: Bool? = nil
+    /// A 「用 Codex 审查」 thread: its findings live only in this chat (official
+    /// `codeReviewPlugin.manualReview.chatOnlyDisclosure`). Older documents
+    /// have none.
+    public var isCodeReview: Bool = false
+    /// Follow-ups sent while a reply ran here, oldest first. Saved with the
+    /// thread so a quit or crash does not lose what the user typed; nothing
+    /// runs at launch, so they wait (held) until the user sends them.
+    public var queuedMessages: [QueuedMessage] = []
+    /// The summary requests send in place of the earlier messages; nil
+    /// until the thread is compacted.
+    public var compaction: ConversationCompaction? = nil
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -99,6 +110,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         goal = try? container.decodeIfPresent(String.self, forKey: .goal)
         permissionMode = try? container.decodeIfPresent(String.self, forKey: .permissionMode)
         toolsEnabled = try? container.decodeIfPresent(Bool.self, forKey: .toolsEnabled)
+        isCodeReview = (try? container.decodeIfPresent(Bool.self, forKey: .isCodeReview)) ?? false
+        queuedMessages = (try? container.decodeIfPresent([QueuedMessage].self, forKey: .queuedMessages)) ?? []
+        compaction = try? container.decodeIfPresent(ConversationCompaction.self, forKey: .compaction)
     }
 
 

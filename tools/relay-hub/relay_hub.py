@@ -62,6 +62,18 @@ def valid_approve(command: dict[str, Any]) -> bool:
     )
 
 
+def valid_queue_command(command: dict[str, Any]) -> bool:
+    """`sendQueuedNow` / `removeQueued` name one queued follow-up."""
+    conversation_id = command.get("conversationID")
+    queued_id = command.get("queuedID")
+    return (
+        isinstance(conversation_id, str)
+        and bool(conversation_id)
+        and isinstance(queued_id, str)
+        and bool(queued_id)
+    )
+
+
 @dataclass
 class Room:
     code: str
@@ -339,7 +351,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 "input", "stop", "select", "newConversation", "rename", "delete",
                 "regenerate", "deleteMessage", "editAndResend", "branch",
                 "feedback", "setModel", "togglePin", "toggleArchive",
-                "toggleLock", "setUnread", "approve",
+                "toggleLock", "setUnread", "approve", "sendQueuedNow", "removeQueued",
             }
             if command.get("kind") not in allowed:
                 writer.write(response("400 Bad Request", {"error": "bad kind"}))
@@ -347,6 +359,11 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 writer.close()
                 return
             if command.get("kind") == "approve" and not valid_approve(command):
+                writer.write(response("400 Bad Request", {"error": "bad command"}))
+                await writer.drain()
+                writer.close()
+                return
+            if command.get("kind") in ("sendQueuedNow", "removeQueued") and not valid_queue_command(command):
                 writer.write(response("400 Bad Request", {"error": "bad command"}))
                 await writer.drain()
                 writer.close()

@@ -271,6 +271,27 @@ public enum GitWorkingTree {
         return upstream
     }
 
+    // MARK: Reviewing
+
+    /// Every tracked change on one side in a single diff: `staged` compares
+    /// the index with HEAD (renames paired), otherwise the working tree with
+    /// the index. Untracked files are not in it; see `untrackedFiles`. The
+    /// prefixes are forced to `a/` and `b/` whatever `diff.noprefix` or
+    /// `diff.mnemonicPrefix` say, so the headers parse the same everywhere.
+    public static func fullDiff(staged: Bool, in directory: String) throws -> String {
+        let root = try repositoryRoot(of: directory)
+        let base = ["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"]
+        return try checked(staged ? base + ["-M", "--cached"] : base, in: root).text
+    }
+
+    /// Untracked files git does not ignore, relative to the repository root,
+    /// in git's order.
+    public static func untrackedFiles(in directory: String) throws -> [String] {
+        let root = try repositoryRoot(of: directory)
+        let output = try checked(["ls-files", "-z", "--others", "--exclude-standard"], in: root)
+        return output.text.split(separator: "\0").map(String.init)
+    }
+
     // MARK: Plumbing
 
     /// The checkout's root, which every root-relative path resolves against.
