@@ -37,7 +37,13 @@ public struct MarkdownText: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+        // A run of imported tool rows should read as one tight activity list,
+        // not paragraphs with a blank line between each (Codex's transcript).
+        let allToolRows = !segments.isEmpty && segments.allSatisfy {
+            if case .importedTool = $0.kind { return true }
+            return false
+        }
+        return VStack(alignment: .leading, spacing: allToolRows ? 2 : Theme.Spacing.s) {
             ForEach(segments) { segment in
                 switch segment.kind {
                 case .text(let value):
@@ -57,6 +63,8 @@ public struct MarkdownText: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                case .importedTool(let row):
+                    ImportToolRowView(row: row)
                 case .heading(let level, let text):
                     let inline = rendered(text)
                     Text(inline?.text ?? AttributedString(text))
@@ -191,15 +199,18 @@ public struct MarkdownText: View {
         return found
     }
 
-    /// A file reference opens in the side panel's 文件 tab at its line; any
-    /// other link opens as it always did.
+    /// A file reference opens in the side panel's 文件 tab at its line. Any
+    /// other link follows 设置 → 浏览器 → 链接打开位置 (official
+    /// linkDestinationPrompt): the side-panel browser, else the default
+    /// browser as it always did.
     private func openLink(_ url: URL) -> OpenURLAction.Result {
         if let target = FileReferenceLink.target(of: url) {
             model?.openFileInSidePanel(target.path, line: target.line)
             return .handled
         }
         #if os(macOS)
-        NSWorkspace.shared.open(url)
+        guard let model else { return .systemAction }
+        model.openMessageLink(url)
         return .handled
         #else
         return .systemAction
@@ -223,6 +234,7 @@ public struct MarkdownText: View {
     struct Segment: Identifiable, Equatable {
         enum Kind: Equatable {
             case text(String)
+            case importedTool(ImportToolRow)
             case heading(level: Int, text: String)
             case bulletList([String])
             case numberedList([String])
@@ -231,6 +243,37 @@ public struct MarkdownText: View {
             case table(headers: [String], rows: [[String]])
             case math(equation: String)
         }
+
+        /// An imported session's tool call, written by the scanner as
+        /// `〔调用工具 Name〕summary`. `isImportedToolLine` accepts the line
+        /// only when nothing follows the summary — otherwise it is body text
+        /// quoting the marker.
+        static func importedToolCall(_ raw: String) -> (name: String, detail: String)? {
+            guard raw.hasPrefix("〔调用工具 ") else { return nil }
+            let body = raw.dropFirst("〔调用工具 ".count)
+            guard let closing = body.firstIndex(of: "〕") else { return nil }
+            let name = String(body[body.startIndex..<closing]).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !name.contains("\n"), !name.contains("。") else { return nil }
+            return (name, String(body[body.index(after: closing)...]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        static func isImportedToolLine(_ trimmed: String) -> Bool {
+            importedToolCall(trimmed) != nil
+        }
+
+        /// The scanner folded long commands: everything after the summary up
+        /// to the next marker, blank line or clear prose is still part of that
+        /// one call (truncated with `Check…`). Those continuation lines belong
+        /// in the row's expandable detail, not back in the body as stray
+        /// quotes or code. Prose — the assistant's own words — starts with a
+        /// CJK character, which a shell line here never does.
+        static func toolCallContinuation(_ raw: String) -> Bool {
+            guard !isImportedToolLine(raw) else { return false }
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard let first = trimmed.first else { return false }
+            return !first.unicodeScalars.contains(where: { $0.properties.isIdeographic })
+        }
+
         let id: Int
         let kind: Kind
 
@@ -258,6 +301,19 @@ public struct MarkdownText: View {
             var i = 0
             while i < allLines.count {
                 let line = allLines[i]
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                if isImportedToolLine(trimmedLine), let call = importedToolCall(trimmedLine) {
+                    flushText()
+                    var detail = call.detail
+                    i += 1
+                    // Fold the call's own continuation lines into the detail.
+                    while i < allLines.count, toolCallContinuation(allLines[i]) {
+                        detail += "\n" + allLines[i]
+                        i += 1
+                    }
+                    segments.append(Segment(id: segments.count, kind: .importedTool(ImportToolRow(name: call.name, detail: detail))))
+                    continue
+                }
                 if line.hasPrefix("```") {
                     flushText()
                     let tag = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
@@ -291,7 +347,6 @@ public struct MarkdownText: View {
                     }
                 }
 
-                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
                 if trimmedLine.hasPrefix("$$") {
                     if trimmedLine.hasSuffix("$$") && trimmedLine.count > 4 {
                         flushText()
@@ -906,5 +961,73 @@ extension View {
         #else
         self
         #endif
+    }
+}
+
+/// One collapsed line for an imported session's tool call: the tool's name
+/// with a kind icon, the summary it recorded, expandable to the raw text.
+/// Data-only so `Segment` stays `Equatable` and testable.
+public struct ImportToolRow: Equatable, Identifiable {
+    public var id: Int = 0
+    public let name: String
+    public let detail: String
+
+    public init(name: String, detail: String) {
+        self.name = name
+        self.detail = detail
+    }
+
+    var symbol: String {
+        let lowered = name.lowercased()
+        if ["read", "view", "cat"].contains(where: lowered.contains) { return "doc.text" }
+        if ["write", "edit", "notebook"].contains(where: lowered.contains) { return "pencil.line" }
+        if ["search", "grep", "glob"].contains(where: lowered.contains) { return "magnifyingglass" }
+        if ["task", "todo", "agent"].contains(where: lowered.contains) { return "checklist" }
+        return "terminal"
+    }
+}
+
+private struct ImportToolRowView: View {
+    let row: ImportToolRow
+
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(Theme.Motion.quick) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: row.symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Text("调用了 \(row.name)")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("transcript.importedTool")
+            .accessibilityLabel("调用了 \(row.name)")
+
+            if expanded, !row.detail.isEmpty {
+                Text(row.detail)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Color.ompFill, in: RoundedRectangle(cornerRadius: Theme.Radius.officialMD, style: .continuous))
+            }
+        }
     }
 }

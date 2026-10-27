@@ -415,6 +415,64 @@ public struct ComposerBar: View {
 
     @State private var hoverPlus = false
     @State private var hoverOptions = false
+    /// Branches of the bound repository, for the base-branch picker.
+    @State private var worktreeBranches: [String] = []
+    @State private var worktreeBranchesFor: UUID?
+
+    /// 本地 / Worktree (official `composer.toggleWorktreeMode`): only on a
+    /// thread with a git working directory and no messages yet, since the
+    /// switch decides where the first send runs.
+    @ViewBuilder
+    private var worktreeSwitch: some View {
+        if let conversation = model.selectedConversation,
+           conversation.messages.isEmpty,
+           conversation.workingDirectory != nil,
+           model.managedWorktree(for: conversation.id) == nil {
+            let on = model.worktreeMode(for: conversation.id)
+            HStack(spacing: 4) {
+                Button {
+                    model.setWorktreeMode(!on, for: conversation.id)
+                } label: {
+                    Text(on ? "Worktree" : "本地")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(on ? Color.ompInverseText : Color.ompTextSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(on ? Color.ompPrimarySolid : Color.ompFill, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(on ? "第一条消息会先创建托管 Worktree 再发送" : "在本地检出中发送")
+                .accessibilityIdentifier("composer.worktree.mode")
+                .accessibilityValue(on ? "worktree" : "local")
+                if on {
+                    Menu {
+                        Button("当前分支") { model.setWorktreeBaseBranch(nil, for: conversation.id) }
+                        ForEach(worktreeBranches, id: \.self) { branch in
+                            Button(branch) { model.setWorktreeBaseBranch(branch, for: conversation.id) }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 9))
+                            Text(model.worktreeBaseBranch(for: conversation.id) ?? "当前分支")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Worktree 基于这个分支的最新提交创建")
+                    .accessibilityIdentifier("composer.worktree.branch")
+                }
+            }
+            .fixedSize()
+            .task(id: conversation.id) {
+                guard worktreeBranchesFor != conversation.id else { return }
+                worktreeBranchesFor = conversation.id
+                worktreeBranches = await model.worktreeBaseBranchChoices(for: conversation.id)
+            }
+        }
+    }
 
     /// Context line: 11pt tertiary bare text (no strip background).
     private var contextStrip: some View {
@@ -451,6 +509,7 @@ public struct ComposerBar: View {
                         .truncationMode(.middle)
                 }
             }
+            worktreeSwitch
             goalChip
             Spacer(minLength: 0)
         }

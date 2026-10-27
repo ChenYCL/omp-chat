@@ -331,15 +331,18 @@ public enum GitWorkingTree {
         return !output.stdout.isEmpty
     }
 
-    private struct Output {
-        var status: Int32
-        var stdout: Data
-        var stderr: String
+    public struct Output {
+        public var status: Int32
+        public var stdout: Data
+        public var stderr: String
 
-        var text: String { String(decoding: stdout, as: UTF8.self) }
-        var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        public var text: String { String(decoding: stdout, as: UTF8.self) }
+        public var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
         /// What to show when git failed: its stderr, else whatever it printed.
-        var failureText: String {
+        /// Exit status == 0.
+        public var ok: Bool { status == 0 }
+        public var stdoutText: String { text }
+        public var failureText: String {
             let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if !message.isEmpty { return message }
             return trimmed.isEmpty ? "git 退出码 \(status)" : trimmed
@@ -347,15 +350,16 @@ public enum GitWorkingTree {
     }
 
     @discardableResult
-    private static func checked(_ arguments: [String], in directory: String, literalPaths: Bool = false) throws -> Output {
-        let output = try run(arguments, in: directory, literalPaths: literalPaths)
+    static func checked(_ arguments: [String], in directory: String, literalPaths: Bool = false, environment: [String: String] = [:], stdin: Data? = nil) throws -> Output {
+        let output = try run(arguments, in: directory, literalPaths: literalPaths, environment: environment, stdin: stdin)
         guard output.status == 0 else { throw Failure.git(output.failureText) }
         return output
     }
 
     /// Runs git and returns whatever happened; a non-zero exit is the caller's
-    /// to judge.
-    private static func run(_ arguments: [String], in directory: String, literalPaths: Bool = false) throws -> Output {
+    /// to judge. `environment` merges over the child's, so worktree code can
+    /// set `GIT_INDEX_FILE` or `GIT_DIR` without rebuilding the rest.
+    static func run(_ arguments: [String], in directory: String, literalPaths: Bool = false, environment overrides: [String: String] = [:], stdin: Data? = nil) throws -> Output {
         #if os(macOS)
         guard let git = GitBinary.resolve() else { throw Failure.gitMissing }
         var isDirectory: ObjCBool = false
@@ -369,12 +373,23 @@ public enum GitWorkingTree {
             + (literalPaths ? ["--literal-pathspecs"] : [])
             + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        process.environment = environment()
+        var childEnvironment = environment()
+        for (key, value) in overrides { childEnvironment[key] = value }
+        process.environment = childEnvironment
         process.standardInput = FileHandle.nullDevice
         let out = Pipe()
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        if let stdin {
+            let input = Pipe()
+            process.standardInput = input
+            let handle = input.fileHandleForWriting
+            Thread.detachNewThread {
+                handle.write(stdin)
+                try? handle.close()
+            }
+        }
         do {
             try process.run()
         } catch {

@@ -41,6 +41,13 @@ public struct ChatRootView: View {
             .sheet(isPresented: $bindable.showSettings) {
                 ProviderSettingsView().environment(model)
             }
+            .sheet(item: $bindable.externalImportPrompt) { scan in
+                ExternalImportPrompt(scan: scan) {
+                    model.requestedSettingsSection = "externalImport"
+                    model.showSettings = true
+                }
+                .environment(model)
+            }
             .sheet(isPresented: $showSwitcher) {
                 QuickSwitcherView().environment(model)
             }
@@ -410,6 +417,32 @@ public struct ChatDetailView: View {
                         .disabled(model.isStreaming)
                     }
 
+                    // Official localConversation.moveTo* / threadHandoff:
+                    // move this chat and its code between Local and its
+                    // managed worktree.
+                    Menu {
+                        Button("交接到本地") {
+                            Task {
+                                if let failure = await model.handoff(conversation.id, to: .local) {
+                                    model.showError("交接失败：\(failure)")
+                                }
+                            }
+                        }
+                        .disabled(model.managedWorktree(for: conversation.id)?.deletedAt != nil
+                            && conversation.workingDirectory == model.managedWorktree(for: conversation.id)?.path)
+
+                        Button("交接到 Worktree") {
+                            Task {
+                                if let failure = await model.handoff(conversation.id, to: .worktree) {
+                                    model.showError("交接失败：\(failure)")
+                                }
+                            }
+                        }
+                        .disabled(model.isStreaming)
+                    } label: {
+                        Label("交接", systemImage: "arrow.left.arrow.right")
+                    }
+
                     // Official threadHeader.copyActions.
                     Menu {
                         Button {
@@ -521,6 +554,41 @@ public struct ChatDetailView: View {
                     .buttonStyle(.plain)
                     .help(directory)
                     OpenInControl(directory: directory)
+                    EnvironmentActionsHeader(conversationID: conversation.id, directory: directory)
+                    if let deleted = model.deletedWorktree(forConversation: conversation.id) {
+                        Button {
+                            Task {
+                                if let failure = await model.restoreManagedWorktree(for: conversation.id) {
+                                    model.showError(failure)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                Text("这个 worktree 已删除 · 恢复")
+                                    .font(.system(size: 11))
+                                Text(GitInfo.tildified(deleted.path))
+                                    .font(.system(size: 11).monospaced())
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            .foregroundStyle(Color.ompText)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.ompFill, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("从删除前的快照重建这个 Worktree（未提交的改动会回来）")
+                        .accessibilityIdentifier("header.worktreeRestore")
+                    }
+                    if let step = model.handoffProgress[conversation.id] {
+                        Text(step)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("header.handoffProgress")
+                    }
                 }
             }
 

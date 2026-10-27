@@ -47,7 +47,11 @@ struct SidePanel: View {
             Divider()
             switch tab {
             case .terminal:
-                TerminalView(startingDirectory: followDirectory)
+                TerminalView(
+                    startingDirectory: followDirectory,
+                    pendingCommand: model.sidePanelTerminalRequest,
+                    onCommandFinished: model.finishSidePanelTerminalRequest
+                )
             case .files:
                 fileList
             case .changes:

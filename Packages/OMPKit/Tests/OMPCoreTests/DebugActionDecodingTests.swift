@@ -440,6 +440,11 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"pickMention","token":"x"}"#,
             #"{"action":"sendDraft"}"#,
             #"{"action":"toggleSidebar"}"#,
+            #"{"action":"localEnvironment","op":"delete","path":"/tmp/p/.codex/environments/e.toml"}"#,
+            #"{"action":"worktree","op":"cleanup"}"#,
+            #"{"action":"externalImport","home":"/tmp/h","op":"scan"}"#,
+            #"{"action":"setLinkDestination","value":"app"}"#,
+            #"{"action":"hideImportPrompt"}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)
@@ -448,5 +453,45 @@ final class DebugActionDecodingTests: XCTestCase {
             )
             XCTAssertEqual(action.name, sent, body)
         }
+    }
+
+    func testLocalEnvironmentActions() {
+        XCTAssertEqual(decode(#"{"action":"localEnvironment","op":"save","project":"/tmp/p","fileName":"environment.toml","toml":"name = \"x\""}"#),
+                       .localEnvironment(.save(project: "/tmp/p", fileName: "environment.toml", toml: #"name = "x""#)))
+        XCTAssertEqual(decode(#"{"action":"localEnvironment","op":"select","project":"/tmp/p"}"#),
+                       .localEnvironment(.select(project: "/tmp/p", path: nil)), "不给 path 是清掉选择")
+        XCTAssertEqual(decode(#"{"action":"localEnvironment","op":"select","project":"/tmp/p","path":"none"}"#),
+                       .localEnvironment(.select(project: "/tmp/p", path: "none")))
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"select","project":"/tmp/p","path":"rel.toml"}"#), "相对路径不收")
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"save","project":"p","fileName":"e.toml","toml":""}"#), "项目要绝对路径")
+        XCTAssertEqual(decode(#"{"action":"localEnvironment","op":"runAction","index":0}"#),
+                       .localEnvironment(.runAction(conversationID: nil, index: 0)))
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"runAction","index":-1}"#))
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"runAction","index":1.5}"#))
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"runAction","index":true}"#))
+        XCTAssertNil(decode(#"{"action":"localEnvironment","op":"rename"}"#))
+    }
+
+    func testWorktreeActions() {
+        XCTAssertEqual(decode(#"{"action":"worktree","op":"setMode","on":true,"baseBranch":"main"}"#),
+                       .worktree(.setMode(conversationID: nil, on: true, baseBranch: "main")))
+        XCTAssertEqual(decode(#"{"action":"worktree","op":"setMode","on":false}"#),
+                       .worktree(.setMode(conversationID: nil, on: false, baseBranch: nil)))
+        XCTAssertNil(decode(#"{"action":"worktree","op":"setMode","on":1}"#), "数字不是开关")
+        XCTAssertEqual(decode(#"{"action":"worktree","op":"handoff","destination":"local"}"#),
+                       .worktree(.handoff(conversationID: nil, destination: .local)))
+        XCTAssertNil(decode(#"{"action":"worktree","op":"handoff","destination":"cloud"}"#))
+        XCTAssertNil(decode(#"{"action":"worktree","op":"delete"}"#), "删除要指明哪个 worktree")
+        XCTAssertEqual(decode(#"{"action":"worktree","op":"newChat","worktreeID":"w"}"#), .worktree(.newChat(worktreeID: "w")))
+        XCTAssertEqual(decode(#"{"action":"worktree","op":"restore"}"#), .worktree(.restore(conversationID: nil)))
+    }
+
+    func testImportAndLinkActions() {
+        XCTAssertEqual(decode(#"{"action":"externalImport","home":"/tmp/h","op":"run","entryIDs":["a","b"]}"#),
+                       .externalImport(home: "/tmp/h", op: .run(entryIDs: ["a", "b"])))
+        XCTAssertNil(decode(#"{"action":"externalImport","op":"scan"}"#), "没有 home 就不碰真实的家目录")
+        XCTAssertNil(decode(#"{"action":"externalImport","home":"~","op":"scan"}"#), "home 要绝对路径")
+        XCTAssertNil(decode(#"{"action":"externalImport","home":"/tmp/h","op":"run"}"#))
+        XCTAssertNil(decode(#"{"action":"setLinkDestination","value":"tab"}"#))
     }
 }

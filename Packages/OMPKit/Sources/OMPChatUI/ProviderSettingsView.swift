@@ -17,7 +17,7 @@ public struct ProviderSettingsView: View {
     @State private var archiveProjectFilter: UUID? = nil
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, personalization, appearance, voice, notifications, archived, shortcuts, sorting, git, dataControls, usage, plugins, mcp, remoteControl, computerUse, diagnostics, providers, about
+        case general, personalization, appearance, voice, browser, notifications, archived, shortcuts, sorting, git, environments, worktrees, dataControls, usage, plugins, mcp, remoteControl, computerUse, diagnostics, providers, about, externalImport
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -25,11 +25,14 @@ public struct ProviderSettingsView: View {
             case .personalization: "个性化"
             case .appearance: "外观"
             case .voice: "语音"
+            case .browser: "浏览器"
             case .notifications: "通知"
             case .archived: "已归档的聊天"
             case .shortcuts: "键盘快捷键"
             case .sorting: "会话排序"
             case .git: "Git"
+            case .environments: "环境"
+            case .worktrees: "Worktree"
             case .dataControls: "数据控制"
             case .usage: "用量"
             case .plugins: "插件与技能"
@@ -39,6 +42,7 @@ public struct ProviderSettingsView: View {
             case .diagnostics: "诊断"
             case .providers: "连接"
             case .about: "关于"
+            case .externalImport: "导入"
             }
         }
         var symbol: String {
@@ -47,11 +51,14 @@ public struct ProviderSettingsView: View {
             case .personalization: "person.crop.circle"
             case .appearance: "sparkles"
             case .voice: "waveform"
+            case .browser: "globe"
             case .notifications: "bell.badge"
             case .archived: "archivebox"
             case .shortcuts: "keyboard"
             case .sorting: "arrow.up.arrow.down"
             case .git: "arrow.triangle.branch"
+            case .environments: "shippingbox"
+            case .worktrees: "rectangle.split.3x1"
             case .dataControls: "externaldrive"
             case .usage: "chart.bar"
             case .plugins: "puzzlepiece.extension"
@@ -61,6 +68,7 @@ public struct ProviderSettingsView: View {
             case .remoteControl: "antenna.radiowaves.left.and.right"
             case .computerUse: "cursorarrow.click.2"
             case .about: "info.circle"
+            case .externalImport: "square.and.arrow.down"
             }
         }
     }
@@ -230,6 +238,8 @@ public struct ProviderSettingsView: View {
             settingsCard { accentColorContent }
         case .voice:
             settingsCard { speechSection }
+        case .browser:
+            settingsCard { browserSection }
         case .notifications:
             settingsCard { notificationsSection }
         case .archived:
@@ -241,6 +251,29 @@ public struct ProviderSettingsView: View {
         case .git:
             #if os(macOS)
             settingsCard { gitSection }
+            #endif
+        case .environments:
+            #if os(macOS)
+            LocalEnvironmentSettingsPane(selections: $draft.localEnvironmentSelections)
+            #else
+            settingsCard {
+                Text("环境只在 Mac 上配置和使用。")
+                    .foregroundStyle(.secondary)
+            }
+            #endif
+        case .worktrees:
+            #if os(macOS)
+            WorktreeSettingsPane(
+                autoCleanup: $draft.worktreeAutoCleanup,
+                keepCount: $draft.worktreeKeepCount,
+                fetchUpstream: $draft.worktreeFetchUpstream,
+                baseDirectory: $draft.worktreeBaseDirectory
+            )
+            #else
+            settingsCard {
+                Text("Worktree 只能在 Mac 上创建和管理。")
+                    .foregroundStyle(.secondary)
+            }
             #endif
         case .dataControls:
             dataControlsContent
@@ -278,6 +311,8 @@ public struct ProviderSettingsView: View {
             settingsCard { diagnosticsSection }
         case .about:
             settingsCard { aboutSection }
+        case .externalImport:
+            ExternalImportSettingsPane()
         }
     }
 
@@ -367,6 +402,7 @@ public struct ProviderSettingsView: View {
             shortcutRow("折叠侧栏", "⌘B")
             shortcutRow("上一个 / 下一个对话", "⌥↑ / ⌥↓")
             shortcutRow("偏好设置", "⌘,")
+            shortcutRow("环境动作 1 – 6", "⌃⌘1 – ⌃⌘6")
         }
     }
 
@@ -506,11 +542,11 @@ public struct ProviderSettingsView: View {
     #if os(macOS)
     private var gitSection: some View {
         Section {
-            Picker("新 Worktree 位置", selection: Binding(
+            Picker("Worktree 根目录", selection: Binding(
                 get: { draft.worktreeBaseDirectory.isEmpty },
-                set: { beside in if beside { draft.worktreeBaseDirectory = "" } }
+                set: { useDefault in if useDefault { draft.worktreeBaseDirectory = "" } }
             )) {
-                Text("仓库旁边").tag(true)
+                Text("默认（应用数据目录）").tag(true)
                 Text("指定文件夹").tag(false)
             }
             .pickerStyle(.inline)
@@ -532,8 +568,6 @@ public struct ProviderSettingsView: View {
                     .buttonStyle(.borderless)
             }
 
-            TextField("分支名前缀（留空则不加）", text: $draft.worktreeBranchPrefix)
-
             if let git = GitBinary.resolve() {
                 LabeledContent("Git", value: git)
             } else {
@@ -543,7 +577,7 @@ public struct ProviderSettingsView: View {
         } header: {
             Text("Git")
         } footer: {
-            Text("「分叉对话」和「继续于 → 新建 Worktree」都按这里的位置和分支前缀创建 checkout。")
+            Text("托管 Worktree 按「<根目录>/<仓库名>/<对话>」创建，默认在应用数据目录的 worktrees 里。")
         }
         .fileImporter(
             isPresented: $choosingWorktreeBase,
@@ -1322,5 +1356,36 @@ struct ProviderEditorSheet: View {
                 }
             }
         }
+    }
+}
+
+extension ProviderSettingsView {
+    /// 设置 → 浏览器：消息里的链接在哪里打开（official
+    /// linkDestinationPrompt）。侧面板浏览器只在 macOS 上有。
+    private var browserSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("链接打开位置").font(.system(size: 13, weight: .semibold))
+            Picker("", selection: Binding(
+                get: { model.settings.linkDestination },
+                set: { model.updateLinkDestination($0) }
+            )) {
+                #if os(macOS)
+                Text("应用内浏览器（侧面板标签页）").tag("app")
+                #endif
+                Text("系统默认浏览器").tag("system")
+            }
+            #if os(macOS)
+            .pickerStyle(.radioGroup)
+            #else
+            .pickerStyle(.inline)
+            #endif
+            .labelsHidden()
+            .accessibilityIdentifier("settings.linkDestination")
+            Text("之后可以在 设置 → 浏览器 里改。")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }

@@ -13,6 +13,9 @@ struct OMPChatApp: App {
                 .tint(customAccent)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
+                    // Logs any stretch where the main thread stops answering,
+                    // from launch on (it cannot sample itself in the sandbox).
+                    MainThreadWatchdog.shared.start()
                     await model.bootstrap()
                     model.syncRelayController()
                     // Plugins first: their bundled MCP servers join the list
@@ -101,6 +104,12 @@ struct OMPChatApp: App {
                 }
                 .keyboardShortcut("j", modifiers: .command)
 
+                // ⌘⇧W is free: 新建对话 takes ⌘N, 新建临时对话 takes ⌘⇧N.
+                Button("切换 本地/Worktree") {
+                    model.toggleWorktreeModeForSelected()
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+
                 Button("切换侧栏") {
                     NotificationCenter.default.post(name: .ompToggleSidebar, object: nil)
                 }
@@ -117,6 +126,25 @@ struct OMPChatApp: App {
                     model.selectNextConversation()
                 }
                 .keyboardShortcut(.downArrow, modifiers: .option)
+            }
+            CommandMenu("环境动作") {
+                // Official `codex.command.environmentAction1…9`; the first six
+                // get slots here. ⌃⌘1…6 were free: ⌘1…9 belong to nothing in
+                // this app and ⌃↑/⌃↓ are the in-chat search keys, but no
+                // ⌃⌘<digit> was taken.
+                ForEach(0..<6, id: \.self) { slot in
+                    Button("环境动作 \(slot + 1)") {
+                        guard let conversationID = model.selectedConversationID else {
+                            model.showError("没有选中的对话")
+                            return
+                        }
+                        if let failure = model.runEnvironmentAction(index: slot, in: conversationID) {
+                            model.showError(failure)
+                        }
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(slot + 1)")), modifiers: [.command, .control])
+                    .disabled(model.selectedConversationID == nil)
+                }
             }
             // Edit → 撤销「…」 for sidebar actions; ⌘Z only off text inputs.
             AppUndoCommands(model: model)

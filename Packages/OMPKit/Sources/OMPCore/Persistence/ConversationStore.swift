@@ -14,6 +14,8 @@ public protocol ConversationStoring: Sendable {
     func saveProjects(_ projects: [Project]) async throws
     func loadScheduledTasks() async throws -> [ScheduledTask]
     func saveScheduledTasks(_ tasks: [ScheduledTask]) async throws
+    func loadManagedWorktrees() async throws -> [ManagedWorktree]
+    func saveManagedWorktrees(_ worktrees: [ManagedWorktree]) async throws
 }
 
 /// In-memory store used by tests and previews.
@@ -24,6 +26,7 @@ public actor InMemoryConversationStore: ConversationStoring {
     private var settings = AppSettings()
     private var projects: [Project] = []
     private var scheduledTasks: [ScheduledTask] = []
+    private var managedWorktrees: [ManagedWorktree] = []
 
     public init() {}
 
@@ -58,4 +61,8 @@ public actor InMemoryConversationStore: ConversationStoring {
     public func loadScheduledTasks() async throws -> [ScheduledTask] { scheduledTasks }
 
     public func saveScheduledTasks(_ tasks: [ScheduledTask]) async throws { scheduledTasks = tasks }
+
+    public func loadManagedWorktrees() async throws -> [ManagedWorktree] { managedWorktrees }
+
+    public func saveManagedWorktrees(_ worktrees: [ManagedWorktree]) async throws { managedWorktrees = worktrees }
 }

@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 import OMPCore
+#if os(macOS)
+import AppKit
+#endif
 
 /// Drives every screen: owns the workspace, the streaming task and the
 /// provider/model selection. Views never talk to networking or storage directly.
@@ -96,12 +99,35 @@ public final class ChatAppModel {
     public var selectedMessageIDs: Set<UUID> = []
     public var showSettings = false
 
+    // MARK: - Local environments (slice: LocalEnvironments)
+
+    /// Codex local environments (`.codex/environments/*.toml`). Discovery is
+    /// cached briefly so header rendering and the settings pane never hit the
+    /// disk on every render; writes drop the cache for their project. The key
+    /// is the standardized project root, matching
+    /// `AppSettings.localEnvironmentSelections`.
+    @ObservationIgnored private var localEnvironmentCache: [String: (files: [LocalEnvironmentFile], at: Date)] = [:]
+    /// Revision (size + hash) seen when a file was last listed, so a save can
+    /// refuse to clobber a file that changed on disk since.
+    @ObservationIgnored private var localEnvironmentRevisions: [String: String] = [:]
+    /// The terminal's next command; the panel clears it once taken.
+    public private(set) var sidePanelTerminalRequest: SidePanelTerminalRequest?
+    /// How long a discovery result is reused before the disk is asked again.
+    @ObservationIgnored private static let localEnvironmentCacheLifetime: TimeInterval = 2
+
     // MARK: - Settings navigation
 
     /// A settings section to show next (`ProviderSettingsView.SettingsSection`
     /// raw value). The settings window consumes and clears it; nothing else
     /// reads it.
     public var requestedSettingsSection: String?
+
+    // MARK: - ExternalImport prompt
+
+    /// Non-nil while the first-launch import prompt should be on screen.
+    /// macOS only; set once after bootstrap when something importable exists
+    /// and the user has not dismissed it.
+    public var externalImportPrompt: ExternalImportScan?
 
     // MARK: - Side panel
 
@@ -307,6 +333,7 @@ public final class ChatAppModel {
             settings = try await store.loadSettings()
             projects = try await store.loadProjects()
             scheduledTasks = try await store.loadScheduledTasks()
+            managedWorktrees = try await store.loadManagedWorktrees()
             let folded = settings.foldLegacyConnection()
             let vaulted = PairedDeviceVault.hydrate(settings.pairedDevices, secrets: secrets)
             settings.pairedDevices = vaulted.devices
@@ -320,6 +347,7 @@ public final class ChatAppModel {
             settings = AppSettings()
             projects = []
             scheduledTasks = []
+            managedWorktrees = []
             DiagnosticsCenter.shared.record("workspace", .error, "workspace load failed",
                 fields: ["error": error.localizedDescription])
         }
@@ -329,6 +357,14 @@ public final class ChatAppModel {
         // A reply cannot be running yet; one saved mid-stream was cut off.
         for index in conversations.indices where conversations[index].closeInterruptedReplies() {
             try? await store.save(conversations[index])
+        }
+        // Rows written before deleting a chat unlinked it (or by a deletion
+        // that wrote back a stale copy) still name chats that are gone.
+        let existing = Set(conversations.map(\.id))
+        for record in managedWorktrees {
+            for missing in record.conversationIDs where !existing.contains(missing) {
+                unlinkDeletedConversationFromWorktrees(missing)
+            }
         }
         if conversations.isEmpty {
             let conversation = Conversation(providerID: settings.defaultProviderID, modelID: settings.defaultModelID)
@@ -343,6 +379,11 @@ public final class ChatAppModel {
             if models.contains(where: { $0.providerID == provider.id }) { continue }
             await refreshModels(for: provider.id, silent: true)
         }
+        await presentExternalImportPromptIfNeeded()
+        // Worktree housekeeping runs off the main actor inside; a deleted
+        // worktree's chat shows its 恢复 pill whenever it is opened later.
+        _ = await runWorktreeCleanup()
+        await refreshWorktreeDetails()
     }
 
     // MARK: Conversation actions
@@ -393,32 +434,19 @@ public final class ChatAppModel {
             #if os(iOS)
             return "新建 Worktree 只能在 Mac 上做"
             #else
-                let repository = original.workingDirectory ?? FileManager.default.currentDirectoryPath
-                guard let git = GitBinary.resolve() else { return "这台 Mac 上没有可用的 git" }
-                let plan = WorktreeFork.plan(
-                    title: original.title,
-                    id: copy.id,
-                    repository: repository,
-                    baseDirectory: settings.worktreeBaseDirectory,
-                    branchPrefix: settings.worktreeBranchPrefix
-                )
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: git)
-                process.arguments = plan.arguments
-                process.currentDirectoryURL = URL(fileURLWithPath: repository)
-                let pipe = Pipe()
-                process.standardError = pipe
-                process.standardOutput = Pipe()
-                do { try process.run() } catch { return error.localizedDescription }
-                process.waitUntilExit()
-                guard process.terminationStatus == 0 else {
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                    // The copy is already made; say why the checkout failed rather
-                    // than leaving a fork that silently points nowhere.
-                    return text.isEmpty ? "git worktree add 失败（退出码 \(process.terminationStatus)）" : text
+                // Codex-managed worktree: detached under the managed root,
+                // registered, `.worktreeinclude` copied, setup script run.
+                if case .failure(let failure) = await createManagedWorktreeRecord(
+                    for: copy.id,
+                    baseBranch: nil,
+                    carryUncommittedChanges: true,
+                    bindConversation: true,
+                    sourceDirectory: original.workingDirectory
+                ) {
+                    // The copy already exists; say why its checkout failed
+                    // rather than leaving a fork that silently points nowhere.
+                    return failure.message
                 }
-                updateWorkingDirectory(copy.id, plan.path)
                 return nil
             #endif
         }
@@ -448,6 +476,7 @@ public final class ChatAppModel {
         attachmentsByConversation.removeValue(forKey: id)
         pickedMentionsByConversation.removeValue(forKey: id)
         clearSideChat(id)
+        unlinkDeletedConversationFromWorktrees(id)
         if selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
         }
@@ -840,12 +869,19 @@ public final class ChatAppModel {
         guard var conversation = conversation(id) else { return }
         let before = conversation
         conversation.isArchived.toggle()
-        if conversation.isArchived { conversation.isPinned = false }
         replace(conversation)
         persist(conversation)
         registerUndo(.toggledArchive(before))
         if conversation.isArchived, selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
+        }
+        // Official: a managed worktree goes with its chat's archive (snapshot
+        // first), unless the switch is off or another chat still uses it.
+        // The policy refuses pinned or streaming chats on its own, so an
+        // archived-but-pinned chat keeps its worktree — exactly the official
+        // "won't be deleted automatically if a pinned chat is tied to it".
+        if conversation.isArchived {
+            Task { _ = await runWorktreeCleanup() }
         }
     }
 
@@ -1000,9 +1036,31 @@ public final class ChatAppModel {
         // follow-up; one running elsewhere still blocks the composer.
         guard !isStreaming || streamingConversationID == selectedConversationID else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || !pastedTexts.isEmpty else { return }
+        let pastes = pastedTexts
+        // Worktree mode: the first message of an empty, directory-bound chat
+        // creates the managed worktree first (progress card shows the phases).
+        // The draft only clears once the checkout exists, so a failure leaves
+        // the message in place to retry.
+        if let id = selectedConversationID, needsWorktreeFirstSend(id) {
+            let conversationID = id
+            let baseBranch = worktreeBaseBranch(for: conversationID)
+            Task {
+                if let failure = await createManagedWorktree(for: conversationID, baseBranch: baseBranch) {
+                    errorMessage = failure
+                    return
+                }
+                draft = ""
+                draftAttachments = []
+                pastedTexts = []
+                draftsByConversation.removeValue(forKey: conversationID)
+                attachmentsByConversation.removeValue(forKey: conversationID)
+                pickedMentionsByConversation.removeValue(forKey: conversationID)
+                await sendNow(text: text, attachments: attachments, pastes: pastes)
+            }
+            return
+        }
         draft = ""
         draftAttachments = []
-        let pastes = pastedTexts
         pastedTexts = []
         if let id = selectedConversationID {
             draftsByConversation.removeValue(forKey: id)
@@ -2299,40 +2357,287 @@ public final class ChatAppModel {
         return nil
     }
 
-    /// 继续于 新建 Worktree: the same `git worktree add` fork uses, but the
+    /// 继续于 新建 Worktree: the same managed worktree a fork gets, but the
     /// checkout is bound back onto this conversation rather than a copy.
     @discardableResult
     public func continueInNewWorktree(_ id: UUID) async -> String? {
-        guard let original = conversation(id) else { return "找不到这个对话" }
+        guard conversation(id) != nil else { return "找不到这个对话" }
+        if case .failure(let failure) = await createManagedWorktreeRecord(for: id, baseBranch: nil) {
+            return failure.message
+        }
+        return nil
+    }
+
+    // MARK: - Worktree mode
+
+    /// Codex-managed worktrees this app created, persisted in the workspace
+    /// document (`managedWorktrees`). Cleanup, snapshots and handoff build on
+    /// this registry.
+    public private(set) var managedWorktrees: [ManagedWorktree] = []
+    /// Progress of the newest managed worktree creation, shown over the
+    /// transcript (official `worktreeInitV2.progress.*`).
+    public private(set) var worktreeProgress: ManagedWorktreeProgress?
+    /// The composer's 本地/Worktree switch per conversation; a first send on an
+    /// empty conversation with this on creates the worktree before replying.
+    @ObservationIgnored private var worktreeModeByConversation: [UUID: Bool] = [:]
+    /// The base branch the composer picked, per conversation.
+    @ObservationIgnored private var worktreeBaseBranchByConversation: [UUID: String] = [:]
+    /// The running `git fetch` of a creation, so 「跳过更新」 can stop it.
+    @ObservationIgnored private var worktreeFetchHandles: [UUID: ManagedWorktreeFetchHandle] = [:]
+
+    /// The conversation's worktree: the live entry when one exists, a deleted
+    /// one only otherwise.
+    public func managedWorktree(for conversationID: UUID) -> ManagedWorktree? {
+        if let live = managedWorktrees.first(where: { $0.deletedAt == nil && $0.conversationIDs.contains(conversationID) }) {
+            return live
+        }
+        return managedWorktrees.first(where: { $0.conversationIDs.contains(conversationID) })
+    }
+
+    /// Insert-or-replace; used by creation here and by cleanup, snapshots and
+    /// handoff.
+    func updateManagedWorktree(_ record: ManagedWorktree) {
+        if let index = managedWorktrees.firstIndex(where: { $0.id == record.id }) {
+            managedWorktrees[index] = record
+        } else {
+            managedWorktrees.append(record)
+        }
+        persistManagedWorktrees()
+    }
+
+    /// Removes a just-created worktree completely — git's entry, the
+    /// directory, the registry row. No snapshot: this is the pure rollback
+    /// path for a worktree with nothing to keep.
+    @discardableResult
+    public func discardManagedWorktree(id: UUID) async -> String? {
         #if os(iOS)
+        _ = id
         return "新建 Worktree 只能在 Mac 上做"
         #else
-        let repository = original.workingDirectory ?? FileManager.default.currentDirectoryPath
-        guard let git = GitBinary.resolve() else { return "这台 Mac 上没有可用的 git" }
-        let plan = WorktreeFork.plan(
-            title: original.title,
-            id: original.id,
-            repository: repository,
-            baseDirectory: settings.worktreeBaseDirectory,
-            branchPrefix: settings.worktreeBranchPrefix
-        )
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: git)
-        process.arguments = plan.arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: repository)
-        let pipe = Pipe()
-        process.standardError = pipe
-        process.standardOutput = Pipe()
-        do { try process.run() } catch { return error.localizedDescription }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? "git worktree add 失败（退出码 \(process.terminationStatus)）" : text
+        guard let record = managedWorktrees.first(where: { $0.id == id }) else { return "没有这个 Worktree" }
+        let remove = await ManagedWorktreeGit.run(["worktree", "remove", "--force", record.path], in: record.sourceRoot, timeout: 60)
+        _ = await ManagedWorktreeGit.run(["worktree", "prune"], in: record.sourceRoot, timeout: 30)
+        try? FileManager.default.removeItem(atPath: record.path)
+        guard remove.ok || !FileManager.default.fileExists(atPath: record.path) else {
+            return remove.failureText
         }
-        updateWorkingDirectory(original.id, plan.path)
+        managedWorktrees.removeAll { $0.id == id }
+        persistManagedWorktrees()
         return nil
         #endif
+    }
+
+    private func persistManagedWorktrees() {
+        let store = self.store
+        let snapshot = managedWorktrees
+        Task {
+            do { try await store.saveManagedWorktrees(snapshot) }
+            catch {
+                DiagnosticsCenter.shared.record("workspace", .error, "managed worktrees save failed",
+                    fields: ["error": error.localizedDescription])
+            }
+        }
+    }
+
+    /// Where new managed worktrees go: the configured root, else the app's
+    /// Application Support `OMPChat/worktrees`.
+    public func resolvedWorktreeRoot() -> String {
+        let configured = settings.worktreeBaseDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? ManagedWorktreeLayout.defaultRoot().path : configured
+    }
+
+    // MARK: 本地 / Worktree switch (official composer.toggleWorktreeMode)
+
+    public func setWorktreeMode(_ on: Bool, for conversationID: UUID) {
+        worktreeModeByConversation[conversationID] = on
+        if !on { worktreeBaseBranchByConversation[conversationID] = nil }
+    }
+
+    /// ⌘⇧W: flips the switch of the selected conversation, when it can show one.
+    public func toggleWorktreeModeForSelected() {
+        guard let conversation = selectedConversation,
+              conversation.messages.isEmpty,
+              conversation.workingDirectory != nil,
+              managedWorktree(for: conversation.id) == nil else { return }
+        setWorktreeMode(!worktreeMode(for: conversation.id), for: conversation.id)
+    }
+
+    public func worktreeMode(for conversationID: UUID) -> Bool {
+        worktreeModeByConversation[conversationID] ?? false
+    }
+
+    /// The base branch the composer picked; nil = the source's current branch.
+    public func setWorktreeBaseBranch(_ branch: String?, for conversationID: UUID) {
+        worktreeBaseBranchByConversation[conversationID] = branch
+    }
+
+    public func worktreeBaseBranch(for conversationID: UUID) -> String? {
+        worktreeBaseBranchByConversation[conversationID]
+    }
+
+    /// Branches of the conversation's repository, for the base-branch picker.
+    public func worktreeBaseBranchChoices(for conversationID: UUID) async -> [String] {
+        #if os(macOS)
+        guard let directory = conversation(conversationID)?.workingDirectory else { return [] }
+        guard let root = try? GitWorkingTree.repositoryRoot(of: directory) else { return [] }
+        return await ManagedWorktreeGit.branches(in: root)
+        #else
+        return []
+        #endif
+    }
+
+    /// 「跳过更新」: stop the running fetch and create from the local refs.
+    public func skipWorktreeFetch(for conversationID: UUID) {
+        worktreeFetchHandles[conversationID]?.skip()
+    }
+
+    /// Worktree mode is a promise for the FIRST send: an empty conversation
+    /// with a directory bound. Later sends just run in the (now bound)
+    /// worktree.
+    private func needsWorktreeFirstSend(_ conversationID: UUID) -> Bool {
+        guard worktreeMode(for: conversationID), let conversation = conversation(conversationID) else { return false }
+        return conversation.messages.isEmpty && conversation.workingDirectory != nil
+    }
+
+    /// Creates a managed worktree for the conversation and returns nil on
+    /// success, the failure message otherwise.
+    @discardableResult
+    public func createManagedWorktree(for conversationID: UUID, baseBranch: String?) async -> String? {
+        if case .failure(let failure) = await createManagedWorktreeRecord(
+            for: conversationID,
+            baseBranch: baseBranch,
+            carryUncommittedChanges: true,
+            bindConversation: true,
+            sourceDirectory: nil
+        ) {
+            return failure.message
+        }
+        return nil
+    }
+
+    /// The full creation: detached `git worktree add` at the branch's HEAD,
+    /// the source's uncommitted work carried when the branch is the source's
+    /// current branch, `.worktreeinclude` files copied, the selected local
+    /// environment's setup script run, registry row written, conversation
+    /// bound. `sourceDirectory` nil uses the conversation's own binding.
+    public func createManagedWorktreeRecord(
+        for conversationID: UUID,
+        baseBranch: String?,
+        carryUncommittedChanges: Bool = true,
+        bindConversation: Bool = true,
+        sourceDirectory: String? = nil
+    ) async -> Result<ManagedWorktree, ManagedWorktreeCreationFailure> {
+        guard let conversation = conversation(conversationID) else { return .failure(ManagedWorktreeCreationFailure("找不到这个对话")) }
+        #if os(iOS)
+        return .failure(ManagedWorktreeCreationFailure("新建 Worktree 只能在 Mac 上做"))
+        #else
+        guard GitBinary.resolve() != nil else { return .failure(ManagedWorktreeCreationFailure("这台 Mac 上没有可用的 git")) }
+        let directory = sourceDirectory ?? conversation.workingDirectory
+        guard let directory, FileManager.default.fileExists(atPath: directory) else {
+            return .failure(ManagedWorktreeCreationFailure("这个对话还没有绑定本地文件夹"))
+        }
+        guard let root = try? GitWorkingTree.repositoryRoot(of: directory) else {
+            return .failure(ManagedWorktreeCreationFailure("当前目录不在 git 仓库里"))
+        }
+
+        // Carry the source's uncommitted work only when the chosen branch is
+        // where the source currently sits (Codex carries a branch's unstaged
+        // changes; another branch's HEAD has none of this checkout's edits).
+        let headRef = await ManagedWorktreeGit.run(["symbolic-ref", "--short", "-q", "HEAD"], in: root)
+        let currentBranch = headRef.ok
+            ? headRef.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+        let chosen = baseBranch ?? currentBranch
+        let carry = carryUncommittedChanges && chosen != nil && chosen == currentBranch
+
+        // A unique managed path: <root>/<repo-name>/<slug>.
+        let slug = WorktreeFork.slug(title: conversation.title, id: conversationID)
+        let rootDirectory = resolvedWorktreeRoot()
+        try? FileManager.default.createDirectory(atPath: rootDirectory, withIntermediateDirectories: true)
+        var worktreePath = ManagedWorktreeLayout.managedPath(root: rootDirectory, sourceRoot: root, slug: slug)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: worktreePath) {
+            worktreePath = ManagedWorktreeLayout.managedPath(root: rootDirectory, sourceRoot: root, slug: "\(slug)-\(suffix)")
+            suffix += 1
+        }
+
+        let handle = ManagedWorktreeFetchHandle()
+        if settings.worktreeFetchUpstream { worktreeFetchHandles[conversationID] = handle }
+        defer { worktreeFetchHandles[conversationID] = nil }
+
+        let creation = ManagedWorktreeCreation(
+            sourceRoot: root,
+            worktreePath: worktreePath,
+            baseBranch: chosen,
+            carryUncommittedChanges: carry,
+            fetchUpstream: settings.worktreeFetchUpstream,
+            fetchHandle: handle
+        )
+        let outcome: ManagedWorktreeCreation.Outcome
+        switch await creation.perform(onProgress: { [weak self] phase, detail, canSkip in
+            await self?.applyWorktreePhase(phase, detail: detail, canSkipFetch: canSkip, conversationID: conversationID)
+        }) {
+        case .success(let value):
+            outcome = value
+        case .failure(let failure):
+            worktreeProgress = ManagedWorktreeProgress(
+                conversationID: conversationID, phase: .failed,
+                detail: [failure.message, failure.detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+            )
+            return .failure(ManagedWorktreeCreationFailure(failure.message))
+        }
+
+        let environmentPath = selectedLocalEnvironmentPath(forProject: root)
+        let record = ManagedWorktree(
+            path: outcome.worktreePath,
+            sourceRoot: root,
+            baseCommit: outcome.baseCommit,
+            baseBranch: chosen,
+            environmentPath: environmentPath,
+            conversationIDs: [conversationID]
+        )
+        updateManagedWorktree(record)
+        if bindConversation { updateWorkingDirectory(conversationID, outcome.worktreePath) }
+        // The chat now lives in the worktree; the switch served its purpose.
+        setWorktreeMode(false, for: conversationID)
+
+        // Setup runs once the checkout is registered and bound, so a slow
+        // script never leaves the app without a usable directory.
+        if let environmentPath {
+            worktreeProgress = ManagedWorktreeProgress(conversationID: conversationID, phase: .settingUp)
+            let result = await LocalEnvironmentDiscovery.runLocalEnvironmentScript(
+                .setup, configPath: environmentPath, sourceRoot: root, worktreeRoot: outcome.worktreePath
+            )
+            if !result.skipped, result.exitCode != 0 {
+                // Official worktreeSetupFailed: the chat still starts, the
+                // worktree stays usable, the output shows.
+                worktreeProgress = ManagedWorktreeProgress(
+                    conversationID: conversationID, phase: .failed,
+                    detail: "初始化脚本失败（退出码 \(result.exitCode)），Worktree 可以继续使用。脚本可在 .codex/environments 中调整。\n"
+                        + worktreeOutputTail(result.output)
+                )
+                Task { _ = await runWorktreeCleanup() }
+                return .success(record)
+            }
+        }
+        worktreeProgress = nil
+        // Created one, so maybe the keep limit is over now.
+        Task { _ = await runWorktreeCleanup() }
+        return .success(record)
+        #endif
+    }
+
+    private func applyWorktreePhase(_ phase: ManagedWorktreePhase, detail: String?, canSkipFetch: Bool, conversationID: UUID) {
+        worktreeProgress = ManagedWorktreeProgress(
+            conversationID: conversationID, phase: phase, detail: detail, canSkipFetch: canSkipFetch
+        )
+    }
+
+    /// Keeps script or git output on the failure card readable.
+    private func worktreeOutputTail(_ output: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 2000 else { return trimmed }
+        return "…\n" + trimmed.suffix(2000)
     }
 
     // MARK: - Agent runtime
@@ -3460,6 +3765,576 @@ public final class ChatAppModel {
         schedulerStorage?.rearm()
     }
 
+    // MARK: - Worktree management (Codex worktree cleanup, snapshot/restore,
+    // handoff)
+
+    /// Settings-driven deletion decision state, kept together so the policy
+    /// reads one consistent snapshot (official `settings.worktrees.*`).
+    private var cleanupSettings: (auto: Bool, keep: Int) {
+        (settings.worktreeAutoCleanup, settings.worktreeKeepCount)
+    }
+
+    /// The detail rows the Worktree settings pane lists, refreshed off the
+    /// main actor. `nil` until the first `refreshWorktreeDetails()` ran.
+    public private(set) var worktreeDetails: [ManagedWorktreeDetail] = []
+    /// One git operation per worktree at a time: deletion, restore and the
+    /// handoff moves all take this lock so a double click cannot race git.
+    @ObservationIgnored private var busyWorktreeIDs: Set<UUID> = []
+    @ObservationIgnored private var worktreeCleanupRunning = false
+    /// The handoff's step text per conversation, shown under the header.
+    public private(set) var handoffProgress: [UUID: String] = [:]
+
+    func isWorktreeBusy(_ id: UUID) -> Bool { busyWorktreeIDs.contains(id) }
+
+    /// A deleted chat is unlinked from the registry. A live worktree stays:
+    /// deleting a chat is not deleting its checkout, which may hold work the
+    /// user still wants. 设置 → Worktree lists it without a chat and the
+    /// keep-count cleanup counts it. A row that was already deleted has no chat
+    /// left to restore it into, so it goes; its snapshot ref stays in the
+    /// repository, so the work is still reachable with git.
+    func unlinkDeletedConversationFromWorktrees(_ id: UUID) {
+        guard managedWorktrees.contains(where: { $0.conversationIDs.contains(id) }) else { return }
+        managedWorktrees = managedWorktrees.compactMap { record in
+            guard record.conversationIDs.contains(id) else { return record }
+            var next = record
+            next.conversationIDs.removeAll { $0 == id }
+            return next.deletedAt != nil && next.conversationIDs.isEmpty ? nil : next
+        }
+        persistManagedWorktrees()
+    }
+
+    /// Changes the registry row as it is now. Async paths (delete, restore,
+    /// handoff) must not write back a copy taken before their git work: a chat
+    /// deleted meanwhile would be linked again. False when the row is gone.
+    @discardableResult
+    func modifyManagedWorktree(_ id: UUID, _ change: (inout ManagedWorktree) -> Void) -> Bool {
+        guard let index = managedWorktrees.firstIndex(where: { $0.id == id }) else { return false }
+        change(&managedWorktrees[index])
+        persistManagedWorktrees()
+        return true
+    }
+
+    /// Pins `streamingConversationID` for tests, so a chat can count as
+    /// 「正在运行」 without a network round trip. Nil clears it.
+    func markStreamingForTest(_ id: UUID?) {
+        streamingConversationID = id
+        isStreaming = id != nil
+    }
+
+    /// Why the pane's 删除 button cannot proceed, or nil when it may. Shown
+    /// verbatim before the confirmation dialog ever opens.
+    public func worktreeDeletionRefusal(for id: UUID) -> String? {
+        guard let record = managedWorktrees.first(where: { $0.id == id }) else {
+            return "没有这个 Worktree"
+        }
+        guard record.deletedAt == nil else { return "这个 Worktree 已经删除" }
+        let linked = conversations.filter { record.conversationIDs.contains($0.id) }
+        if linked.contains(where: \.isPinned) {
+            return "有置顶的对话在使用这个 Worktree。先取消置顶，或手动删除。"
+        }
+        if linked.contains(where: { $0.id == streamingConversationID }) {
+            return "这个 Worktree 的对话还在运行，等回复结束后再删。"
+        }
+        return nil
+    }
+
+    private func setWorktreeBusy(_ id: UUID, _ busy: Bool) {
+        if busy { busyWorktreeIDs.insert(id) } else { busyWorktreeIDs.remove(id) }
+    }
+
+    func setHandoffProgress(_ id: UUID, _ step: String?) {
+        if let step { handoffProgress[id] = step } else { handoffProgress[id] = nil }
+    }
+
+    /// Recomputes path / branch / size for every registry row (and collects
+    /// linked conversation titles). Called by the pane's refresh and after a
+    /// deletion or restore; the disk walk runs detached.
+    public func refreshWorktreeDetails() async {
+        let registry = managedWorktrees
+        let titles = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0.title) })
+        let rows: [ManagedWorktreeDetail] = await Task.detached(priority: .utility) {
+            registry.map { record in
+                var size: Int64?
+                var exists = false
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: record.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                    exists = true
+                    if record.deletedAt == nil {
+                        // An enumerator walk, ignoring symlinked files.
+                        if let enumerator = FileManager.default.enumerator(
+                            at: URL(fileURLWithPath: record.path),
+                            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+                        ) {
+                            var total: Int64 = 0
+                            for case let file as URL in enumerator {
+                                let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                                if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
+                            }
+                            size = total
+                        }
+                    }
+                }
+                var label: String
+                if record.deletedAt != nil {
+                    label = "已删除"
+                } else if let branch = record.branch {
+                    label = branch
+                } else if exists, let live = try? GitInfo.branch(at: URL(fileURLWithPath: record.path)) {
+                    label = "已分离 · \(live)"
+                } else {
+                    label = "已分离"
+                }
+                return ManagedWorktreeDetail(
+                    id: record.id,
+                    path: record.path,
+                    sourceRoot: record.sourceRoot,
+                    branchLabel: label,
+                    createdAt: record.createdAt,
+                    environmentPath: record.environmentPath,
+                    conversationTitles: record.conversationIDs,
+                    linkedConversationTitles: record.conversationIDs.compactMap { titles[$0] },
+                    sizeOnDisk: size,
+                    existsOnDisk: exists,
+                    deleted: record.deletedAt != nil
+                )
+            }
+        }.value
+        worktreeDetails = rows
+    }
+
+    /// The worktree whose deleted snapshot the chat offers to restore, or nil.
+    /// Bound to the current workingDirectory, not the chat id alone: after a
+    /// handoff to Local the worktree keeps serving nothing.
+    public func deletedWorktree(forConversation id: UUID) -> ManagedWorktree? {
+        guard let conversation = conversation(id), let directory = conversation.workingDirectory else { return nil }
+        guard let record = managedWorktrees.first(where: {
+            $0.conversationIDs.contains(id) && $0.deletedAt != nil
+        }), directory == record.path else { return nil }
+        return record
+    }
+
+    /// The deletion decision (pure policy), applied. Returns the ids actually
+    /// deleted, oldest-first; called after a worktree creation (by
+    /// WorktreeMode) and once at launch.
+    @discardableResult
+    public func runWorktreeCleanup() async -> [UUID] {
+        #if os(iOS)
+        return []
+        #else
+        guard !worktreeCleanupRunning else { return [] }
+        worktreeCleanupRunning = true
+        defer { worktreeCleanupRunning = false }
+        let (auto, keep) = cleanupSettings
+        let chats = conversations.map {
+            WorktreeCleanup.Chat(id: $0.id, isPinned: $0.isPinned, isArchived: $0.isArchived)
+        }
+        let items = managedWorktrees
+            .filter { $0.deletedAt == nil }
+            .map { WorktreeCleanup.Item(id: $0.id, createdAt: $0.createdAt, conversationIDs: Set($0.conversationIDs)) }
+        let plan = WorktreeCleanup.orderedDeletions(
+            items: items,
+            conversations: chats,
+            streamingConversationID: streamingConversationID,
+            autoCleanup: auto,
+            keepCount: keep
+        )
+        var deleted: [UUID] = []
+        for id in plan {
+            if let failure = await deleteManagedWorktree(id) {
+                // One worktree refusing to go does not stop the rest; the
+                // reason is surfaced where the user can see it.
+                showError(failure)
+                continue
+            }
+            deleted.append(id)
+        }
+        if !deleted.isEmpty { await refreshWorktreeDetails() }
+        return deleted
+        #endif
+    }
+
+    /// Snapshot → environment cleanup script → `git worktree remove --force`
+    /// → prune → mark the registry row deleted with the snapshot. Refusals:
+    /// a pinned chat linked to it, or a chat whose reply is running (official
+    /// texts; the settings pane shows them verbatim).
+    @discardableResult
+    public func deleteManagedWorktree(_ id: UUID) async -> String? {
+        #if os(iOS)
+        return "删除 Worktree 只能在 Mac 上做"
+        #else
+        guard let record = managedWorktrees.first(where: { $0.id == id }) else {
+            return "没有这个 Worktree"
+        }
+        guard record.deletedAt == nil else { return "这个 Worktree 已经删除" }
+        let linked = conversations.filter { record.conversationIDs.contains($0.id) }
+        if linked.contains(where: \.isPinned) {
+            return "有置顶的对话在使用这个 Worktree。先取消置顶，或手动删除。"
+        }
+        if linked.contains(where: { $0.id == streamingConversationID }) {
+            return "这个 Worktree 的对话还在运行，等回复结束后再删。"
+        }
+        guard !busyWorktreeIDs.contains(id) else { return "这个 Worktree 正忙，请稍后再试。" }
+        setWorktreeBusy(id, true)
+        defer { setWorktreeBusy(id, false) }
+
+        let sourceRoot = record.sourceRoot
+        let path = record.path
+        let worktreeID = record.id
+        let environmentPath = record.environmentPath
+        var snapshot: ManagedWorktreeSnapshot?
+        var cleanupNote: String?
+        do {
+            let gathered = try await Task.detached(priority: .userInitiated) { () -> WorktreeGit.Snapshot? in
+                guard FileManager.default.fileExists(atPath: path) else { return nil }
+                return try WorktreeGit.snapshot(worktreeRoot: path, id: worktreeID)
+            }.value
+            if let gathered {
+                snapshot = ManagedWorktreeSnapshot(
+                    ref: "refs/omp/snapshots/\(worktreeID.uuidString)",
+                    commit: gathered.commit,
+                    head: gathered.head,
+                    createdAt: Date()
+                )
+            }
+        } catch {
+            // No snapshot, no deletion: the work may not be committed anywhere.
+            return "快照失败，未删除：\(error.localizedDescription)"
+        }
+        if let environmentPath {
+            let result = await LocalEnvironmentDiscovery.runLocalEnvironmentScript(
+                .cleanup, configPath: environmentPath, sourceRoot: sourceRoot, worktreeRoot: path
+            )
+            if !result.skipped, result.exitCode != 0 {
+                cleanupNote = "清理脚本失败（退出码 \(result.exitCode)）：\n" + worktreeOutputTail(result.output)
+            }
+        }
+        let removed = await Task.detached(priority: .userInitiated) { () -> String? in
+            do {
+                try WorktreeGit.remove(worktreePath: path, repositoryRoot: sourceRoot)
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }.value
+        if let removed { return "删除 Worktree 失败：\(removed)" }
+
+        // Re-read the row: a chat may have been deleted (and unlinked) while
+        // git ran, and the copy from the start would bring it back. A row
+        // left without chats has nothing to restore it into; the snapshot
+        // ref keeps the work in the repository.
+        modifyManagedWorktree(worktreeID) { current in
+            current.snapshot = snapshot
+            current.deletedAt = Date()
+        }
+        if managedWorktrees.first(where: { $0.id == worktreeID })?.conversationIDs.isEmpty == true {
+            managedWorktrees.removeAll { $0.id == worktreeID }
+            persistManagedWorktrees()
+        }
+        await refreshWorktreeDetails()
+        if let cleanupNote { showError(cleanupNote) }
+        return nil
+        #endif
+    }
+
+    /// Re-creates a deleted worktree from its snapshot at the registered path
+    /// (or the nearest free suffixed path) and rebinds every linked chat.
+    /// The snapshot's uncommitted work comes back uncommitted, staged files
+    /// staged. Unarchiving never auto-restores; only this does.
+    @discardableResult
+    public func restoreManagedWorktree(for conversationID: UUID) async -> String? {
+        #if os(iOS)
+        return "恢复 Worktree 只能在 Mac 上做"
+        #else
+        guard let record = managedWorktrees.first(where: {
+            $0.id == deletedWorktree(forConversation: conversationID)?.id
+        }) else {
+            return "这个对话的 Worktree 没有可恢复的快照"
+        }
+        guard let snapshot = record.snapshot else {
+            return "删除前没有留下快照，无法恢复"
+        }
+        let id = record.id
+        guard !busyWorktreeIDs.contains(id) else { return "这个 Worktree 正忙，请稍后再试。" }
+        setWorktreeBusy(id, true)
+        defer { setWorktreeBusy(id, false) }
+        do {
+            // The index tree rides as the snapshot commit's second parent.
+            let parents = await ManagedWorktreeGit.run(
+                ["rev-list", "--parents", "-n", "1", snapshot.commit], in: record.sourceRoot
+            )
+            var indexCommit: String?
+            if parents.ok {
+                let parts = parents.stdoutText.split(whereSeparator: \.isWhitespace).map(String.init)
+                if parts.count >= 3 { indexCommit = parts[2] }
+            }
+            let used = try await Task.detached(priority: .userInitiated) { () throws -> String in
+                try WorktreeGit.restore(
+                    repositoryRoot: record.sourceRoot,
+                    head: snapshot.head,
+                    commit: snapshot.commit,
+                    indexCommit: indexCommit,
+                    to: record.path
+                )
+            }.value
+            // The current row, not the copy from before the restore ran.
+            let linkedNow = managedWorktrees.first(where: { $0.id == record.id })?.conversationIDs ?? []
+            modifyManagedWorktree(record.id) { current in
+                current.path = used
+                current.deletedAt = nil
+            }
+            for linked in linkedNow {
+                guard let conversation = conversation(linked) else { continue }
+                updateWorkingDirectory(linked, subdirectorySuffix(conversation.workingDirectory, from: record.path, to: used) ?? used)
+            }
+            await refreshWorktreeDetails()
+            return nil
+        } catch {
+            return "恢复失败：\(error.localizedDescription)"
+        }
+        #endif
+    }
+
+    /// A chat bound to `<worktree>/<sub>` keeps its sub-path when the
+    /// worktree returns at a suffixed path. Both roots are standardized:
+    /// `repositoryRoot` resolves `/var` → `/private/var` while conversations
+    /// may carry the short form, which would break the prefix match.
+    private func subdirectorySuffix(_ original: String?, from oldRoot: String, to newRoot: String) -> String? {
+        guard let original else { return newRoot }
+        let originalStandard = (original as NSString).standardizingPath
+        let oldStandard = (oldRoot as NSString).standardizingPath
+        let newStandard = (newRoot as NSString).standardizingPath
+        if originalStandard == oldStandard { return newStandard }
+        guard originalStandard.hasPrefix(oldStandard + "/") else { return original }
+        return newStandard + String(originalStandard.dropFirst(oldStandard.count))
+    }
+
+    /// Moves a chat and its code between its local checkout and its
+    /// associated worktree (official `localConversation.moveTo*`). Returns
+    /// nil on success, the failure message otherwise; every step reports
+    /// progress through `handoffProgress` and nothing is lost on a failure.
+    @discardableResult
+    public func handoff(_ conversationID: UUID, to destination: HandoffDestination) async -> String? {
+        guard let conversation = conversation(conversationID) else { return "找不到这个对话" }
+        #if os(iOS)
+        return "交接只能在 Mac 上做"
+        #else
+        guard conversationID != streamingConversationID else {
+            return "当前回复结束后再交接"
+        }
+        switch destination {
+        case .local: return await handoffToLocal(conversationID, conversation)
+        case .worktree: return await handoffToWorktree(conversationID, conversation)
+        }
+        #endif
+    }
+
+    private func handoffToLocal(_ conversationID: UUID, _ conversation: Conversation) async -> String? {
+        #if os(iOS)
+        return "交接只能在 Mac 上做"
+        #else
+        guard let record = managedWorktrees.first(where: {
+            $0.deletedAt == nil && $0.conversationIDs.contains(conversationID)
+        }), let worktreeDirectory = conversation.workingDirectory,
+           FileManager.default.fileExists(atPath: worktreeDirectory),
+           (worktreeDirectory + "/").hasPrefix(record.path + "/")
+        else {
+            return "这个对话不在它的 Worktree 里"
+        }
+        let localRoot = record.sourceRoot
+        guard FileManager.default.fileExists(atPath: localRoot) else {
+            return "本地仓库不见了：\(GitInfo.tildified(localRoot))"
+        }
+        guard WorktreeHandoff.sameRepository(worktreeDirectory, localRoot) else {
+            return "Worktree 和本地目录不再是同一个仓库"
+        }
+        setHandoffProgress(conversationID, "正在检查两边状态…")
+        defer { setHandoffProgress(conversationID, nil) }
+        do {
+            let move: WorktreeHandoff.Move = try await Task.detached(priority: .userInitiated) { () throws in
+                let base = try WorktreeHandoff.mergeBase(worktreeRoot: worktreeDirectory, localRoot: localRoot)
+                return try WorktreeHandoff.buildMove(root: worktreeDirectory, base: base, id: record.id)
+            }.value
+            let conflicts = try await Task.detached(priority: .userInitiated) {
+                try WorktreeHandoff.conflictingPaths(move, destination: localRoot)
+            }.value
+            if !conflicts.isEmpty {
+                let names = conflicts.prefix(5).joined(separator: "、")
+                return "先把本地的这些改动暂存或提交：\(names)"
+            }
+            setHandoffProgress(conversationID, "正在把改动搬回本地…")
+            try await Task.detached(priority: .userInitiated) {
+                if move.patch.isEmpty {
+                    // Nothing to carry; the chat just returns to Local.
+                    return
+                }
+                try WorktreeHandoff.apply(move, to: localRoot)
+            }.value
+            setHandoffProgress(conversationID, "正在清理 Worktree…")
+            let cleanFailure: String? = await Task.detached(priority: .userInitiated) { () -> String? in
+                do {
+                    try WorktreeHandoff.cleanSource(root: worktreeDirectory, paths: move.paths)
+                    return nil
+                } catch {
+                    // The work is safe in Local; the worktree side just could
+                    // not be folded back. Say so instead of failing the move.
+                    return error.localizedDescription
+                }
+            }.value
+            updateWorkingDirectory(conversationID, localRoot)
+            await refreshWorktreeDetails()
+            statusMessage = "已把对话移到本地工作区"
+            if let cleanFailure {
+                showError("改动已到本地，但 Worktree 没能清干净：\(cleanFailure)")
+            }
+            return nil
+        } catch let error as WorktreeHandoff.GitError {
+            return error.message
+        } catch {
+            return "交接失败：\(error.localizedDescription)"
+        }
+        #endif
+    }
+
+    private func handoffToWorktree(_ conversationID: UUID, _ conversation: Conversation) async -> String? {
+        #if os(iOS)
+        return "交接只能在 Mac 上做"
+        #else
+        guard let localDirectory = conversation.workingDirectory,
+              FileManager.default.fileExists(atPath: localDirectory)
+        else {
+            return "这个对话还没有绑定本地文件夹"
+        }
+        guard let localRoot = try? GitWorkingTree.repositoryRoot(of: localDirectory) else {
+            return "当前目录不在 git 仓库里"
+        }
+        setHandoffProgress(conversationID, "正在检查本地改动…")
+        defer { setHandoffProgress(conversationID, nil) }
+
+        // Reuse the chat's own worktree when it lives in the same repository;
+        // otherwise create one (detached, no carried changes — the handoff
+        // itself moves the local work over).
+        var record = managedWorktrees.first(where: {
+            $0.deletedAt == nil && $0.conversationIDs.contains(conversationID)
+        })
+        if let existing = record,
+           !WorktreeHandoff.sameRepository(existing.sourceRoot, localRoot) {
+            return "这个对话的 Worktree 属于另一个仓库"
+        }
+        if record == nil {
+            setHandoffProgress(conversationID, "正在创建 Worktree…")
+            let created = await createManagedWorktreeRecord(
+                for: conversationID,
+                baseBranch: nil,
+                carryUncommittedChanges: false,
+                bindConversation: false,
+                sourceDirectory: localDirectory
+            )
+            switch created {
+            case .success(let fresh):
+                record = fresh
+            case .failure(let failure):
+                return failure.message
+            }
+        }
+        guard let worktree = record else { return "没能找到或创建 Worktree" }
+        let worktreeID = worktree.id
+        guard !busyWorktreeIDs.contains(worktreeID) else { return "这个 Worktree 正忙，请稍后再试。" }
+        setWorktreeBusy(worktreeID, true)
+        defer { setWorktreeBusy(worktreeID, false) }
+
+        do {
+            let move: WorktreeHandoff.Move = try await Task.detached(priority: .userInitiated) {
+                try WorktreeHandoff.buildMove(root: localRoot, base: "HEAD", id: UUID())
+            }.value
+            let worktreePath = worktree.path
+            guard FileManager.default.fileExists(atPath: worktreePath) else {
+                return "这个 Worktree 已经不在磁盘上，先删除记录再新建。"
+            }
+            let busy = try await Task.detached(priority: .userInitiated) {
+                try WorktreeHandoff.conflictingPaths(move, destination: worktreePath)
+            }.value
+            if !busy.isEmpty {
+                let names = busy.prefix(5).joined(separator: "、")
+                return "Worktree 里还有没处理的改动，先处理这些文件：\(names)"
+            }
+            // Land the worktree on the local HEAD when it can fast-forward,
+            // so the patch applies to files the worktree actually has.
+            setHandoffProgress(conversationID, "正在对齐 Worktree…")
+            let moved = try await Task.detached(priority: .userInitiated) { () throws -> Bool in
+                try WorktreeHandoff.fastForwardWorktree(root: worktreePath, to: move.baseHead)
+            }.value
+            guard moved else {
+                return "Worktree 里有没提交的改动，交接取消。"
+            }
+            setHandoffProgress(conversationID, "正在把本地改动搬进 Worktree…")
+            try await Task.detached(priority: .userInitiated) {
+                if !move.patch.isEmpty {
+                    try WorktreeHandoff.apply(move, to: worktreePath)
+                }
+            }.value
+            setHandoffProgress(conversationID, "正在恢复本地目录…")
+            let cleanFailure: String? = await Task.detached(priority: .userInitiated) { () -> String? in
+                do {
+                    if !move.patch.isEmpty {
+                        try WorktreeHandoff.cleanSource(root: localRoot, paths: move.paths)
+                    }
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            guard cleanFailure == nil else {
+                // Local never got cleaned; undo the worktree side so neither
+                // side is half-moved.
+                let undone: String? = await Task.detached(priority: .userInitiated) { () -> String? in
+                    do {
+                        if !move.patch.isEmpty { try WorktreeHandoff.revert(move, on: worktreePath) }
+                        return nil
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }.value
+                let rollback = undone ?? "Worktree 已还原"
+                return "本地目录没能恢复干净，交接已回滚（\(rollback)）"
+            }
+            let rebased = subdirectorySuffix(localDirectory, from: localRoot, to: worktreePath) ?? worktreePath
+            updateWorkingDirectory(conversationID, rebased)
+            // Freshen the registry row: the worktree now starts at Local's HEAD.
+            modifyManagedWorktree(worktree.id) { $0.baseCommit = move.baseHead }
+            await refreshWorktreeDetails()
+            statusMessage = "已把对话移到 Worktree"
+            return nil
+        } catch let error as WorktreeHandoff.GitError {
+            return error.message
+        } catch {
+            return "交接失败：\(error.localizedDescription)"
+        }
+        #endif
+    }
+
+    /// A chat bound to this worktree (worktree ⋯ menu, settings row).
+    @discardableResult
+    public func newChat(inManagedWorktree id: UUID) -> UUID? {
+        guard let record = managedWorktrees.first(where: { $0.id == id }), record.deletedAt == nil,
+              FileManager.default.fileExists(atPath: record.path) else { return nil }
+        let conversation = newConversation(in: nil)
+        updateWorkingDirectory(conversation.id, record.path)
+        var updated = record
+        if !updated.conversationIDs.contains(conversation.id) {
+            updated.conversationIDs.append(conversation.id)
+            updateManagedWorktree(updated)
+        }
+        return conversation.id
+    }
+
+    /// Truncates script output for cards and banners: head and tail.
+    nonisolated func worktreeOutputTail(_ output: String, cap: Int = 1500) -> String {
+        guard output.count > cap else { return output }
+        let head = String(output.prefix(cap / 2))
+        let tail = String(output.suffix(cap / 2))
+        return head + "\n…（中间省略）…\n" + tail
+    }
+
     // MARK: - Row status
 
     /// The tags conversation `id`'s sidebar row shows (Codex
@@ -3619,6 +4494,10 @@ public final class ChatAppModel {
     /// Home whose `.agents/skills` holds the user's skills (Codex USER
     /// scope). Tests point it at a temporary folder; nil reads none.
     @ObservationIgnored public var skillsHome: String? = HostExecutor.realHomeDirectory()
+    /// Home scanned for other AI apps (`~/.claude`, `~/.cursor`, their
+    /// `Library/Application Support`). Tests point it at a fixture folder so
+    /// the user's real setups are never read; nil means `skillsHome`'s home.
+    @ObservationIgnored public var externalImportHome: String?
     /// Installed plugins as of the last `reloadPlugins()`.
     public private(set) var installedPlugins: [InstalledPlugin] = []
     /// Bundled servers of enabled plugins (ids `<plugin>-<server>`, origin
@@ -4000,6 +4879,35 @@ public final class ChatAppModel {
         }
     }
 
+    // MARK: - Link destination
+
+    /// 设置 → 浏览器 → 链接打开位置 (official linkDestinationPrompt).
+    public func updateLinkDestination(_ value: String) {
+        settings.linkDestination = value == "app" ? "app" : "system"
+        Task { await saveSettings(settings) }
+    }
+
+    #if os(macOS)
+    /// Where `openMessageLink` sent a link.
+    public enum OpenedLink: Equatable, Sendable {
+        case sidePanelTab(UUID)
+        case systemBrowser
+    }
+
+    /// A web link clicked in a message: a new tab of the side-panel browser
+    /// when 链接打开位置 is 应用内, else the default browser.
+    @discardableResult
+    public func openMessageLink(_ url: URL) -> OpenedLink {
+        if settings.linkDestination == "app" {
+            let tab = openBrowserTab(url: url.absoluteString)
+            toggleSidePanel(open: true, tab: .browser)
+            return .sidePanelTab(tab)
+        }
+        NSWorkspace.shared.open(url)
+        return .systemBrowser
+    }
+    #endif
+
     // MARK: - Dictation
 
     /// Composer dictation, recognised on the device. Tests swap in a
@@ -4230,5 +5138,306 @@ enum CompletionNotifier {
             )
             center.add(request)
         }
+    }
+}
+
+// MARK: - ExternalImport
+
+extension ChatAppModel {
+    /// Reads Claude Code and Cursor on disk (macOS) and reports what can be
+    /// imported. iOS returns an empty scan: those files live on the Mac.
+    public func scanExternalAgents() async -> ExternalImportScan {
+        #if os(macOS)
+        let environment = externalImportEnvironment()
+        return await Task.detached(priority: .userInitiated) {
+            ExternalImportScanner.scan(environment: environment)
+        }.value
+        #else
+        return .empty
+        #endif
+    }
+
+    /// Imports the selected entries. Re-scans first so the selection always
+    /// applies to the current files, and a second run skips what the first
+    /// already brought over.
+    @discardableResult
+    public func runExternalImport(_ selection: ExternalImportSelection) async -> ExternalImportReport {
+        #if os(macOS)
+        let environment = externalImportEnvironment()
+        let (report, outcome) = await Task.detached(priority: .userInitiated) {
+            let scan = ExternalImportScanner.scan(environment: environment)
+            return ExternalImportExecutor.run(selection: selection, scan: scan, environment: environment)
+        }.value
+        return await applyExternalImport(outcome, base: report)
+        #else
+        return ExternalImportReport(lines: [])
+        #endif
+    }
+
+    /// 暂不: remembers the choice so the first-launch prompt stays away.
+    public func dismissExternalImportPrompt() {
+        var next = settings
+        next.externalImportPromptDismissed = true
+        settings = next
+        externalImportPrompt = nil
+        Task { await saveSettings(next) }
+    }
+
+    /// Called once at the end of bootstrap: scans (off the main actor) and,
+    /// when something importable exists and the user has not dismissed the
+    /// prompt before, raises it.
+    public func presentExternalImportPromptIfNeeded() async {
+        guard settings.externalImportPromptDismissed == false else { return }
+        let scan = await scanExternalAgents()
+        externalImportPrompt = scan.isEmpty ? nil : scan
+    }
+
+    #if os(macOS)
+    private func externalImportEnvironment() -> ExternalImportScanner.Environment {
+        let home = externalImportHome ?? skillsHome ?? HostExecutor.realHomeDirectory()
+        let skillsRoot = (home as NSString).appendingPathComponent(".agents/skills")
+        var skillNames = Set<String>()
+        if let names = try? FileManager.default.contentsOfDirectory(atPath: skillsRoot) {
+            skillNames = Set(names.filter { !$0.hasPrefix(".") })
+        }
+        return ExternalImportScanner.Environment(
+            home: home,
+            skillsRoot: skillsRoot,
+            existingSkillNames: skillNames,
+            projectNames: Set(projects.map(\.name)),
+            importedSessionKeys: Set(conversations.compactMap(\.importedFrom)),
+            mcpServers: settings.mcpServers,
+            customInstructions: settings.customInstructions,
+            installedPluginNames: Set(pluginStore.installed().compactMap { $0.manifest?.name }),
+            projectIDByName: Dictionary(projects.map { ($0.name, $0.id) }, uniquingKeysWith: { first, _ in first })
+        )
+    }
+
+    private func applyExternalImport(_ outcome: ExternalImportExecutor.Outcome, base: ExternalImportReport) async -> ExternalImportReport {
+        var lines = base.lines
+        var next = settings
+        for block in outcome.instructionsBlocks where !next.customInstructions.contains(block) {
+            next.customInstructions = next.customInstructions.isEmpty
+                ? block
+                : next.customInstructions + "\n\n" + block
+        }
+        for server in outcome.mcpServers {
+            var stored = server
+            for (variable, value) in server.env where !value.isEmpty {
+                guard setMCPSecret(value, serverID: server.id, variable: variable) else {
+                    lines.append(ExternalImportReport.Line(
+                        id: "mcp-secret-\(server.id)-\(variable)", provider: .claudeCode, kind: .mcpServers,
+                        title: server.name, note: "无法把「\(variable)」写入钥匙串，该服务器没有导入", failed: true
+                    ))
+                    stored = MCPServerConfig(id: "", name: "")
+                    break
+                }
+                stored.env[variable] = ""
+            }
+            guard !stored.id.isEmpty else { continue }
+            next.mcpServers.append(stored)
+        }
+        if next != settings { await saveSettings(next) }
+
+        for project in outcome.newProjects {
+            projects.append(project)
+        }
+        if !outcome.newProjects.isEmpty { persistProjects() }
+        for conversation in outcome.conversations {
+            conversations.append(conversation)
+            persist(conversation)
+        }
+        if selectedConversationID == nil { selectedConversationID = outcome.conversations.first?.id }
+
+        for plugin in outcome.pluginFolders {
+            do {
+                let plan = try preparePluginInstall(folder: plugin.folder)
+                try confirmPluginInstall(plan)
+                lines.append(ExternalImportReport.Line(
+                    id: plugin.id, provider: .claudeCode, kind: .plugins,
+                    title: plugin.name, note: nil, failed: false
+                ))
+            } catch {
+                lines.append(ExternalImportReport.Line(
+                    id: plugin.id, provider: .claudeCode, kind: .plugins,
+                    title: plugin.name, note: "安装插件失败：\(error.localizedDescription)", failed: true
+                ))
+            }
+        }
+        if !outcome.pluginFolders.isEmpty { reloadPlugins() }
+        return ExternalImportReport(lines: lines)
+    }
+    #endif
+
+    // MARK: - Local environments
+
+    /// Every environment file for `root`'s repository: the working
+    /// directory's own first, then inherited ones, each labelled.
+    public func localEnvironments(forProject root: String) -> [LocalEnvironmentFile] {
+        let key = LocalEnvironmentDiscovery.standardize(root)
+        if let cached = localEnvironmentCache[key],
+           Date().timeIntervalSince(cached.at) < Self.localEnvironmentCacheLifetime {
+            return cached.files
+        }
+        let files = LocalEnvironmentDiscovery.files(inWorkingDirectory: root)
+        for file in files {
+            localEnvironmentRevisions[LocalEnvironmentDiscovery.standardize(file.path)] =
+                LocalEnvironmentDiscovery.revision(ofFileAt: file.path)
+        }
+        localEnvironmentCache[key] = (files, Date())
+        return files
+    }
+
+    /// Drops the discovery cache, for tests and after external changes.
+    func invalidateLocalEnvironmentCache() {
+        localEnvironmentCache.removeAll()
+    }
+
+    /// Which environment file is in force for `root`: the user's choice while
+    /// it still exists, else the only discovered file, else nil.
+    public func selectedLocalEnvironmentPath(forProject root: String) -> String? {
+        LocalEnvironmentDiscovery.selectedPath(
+            projectRoot: root,
+            files: localEnvironments(forProject: root),
+            selections: settings.localEnvironmentSelections
+        )
+    }
+
+    /// Records the user's environment choice for `root`; nil clears it.
+    public func selectLocalEnvironment(_ path: String?, forProject root: String) {
+        let key = LocalEnvironmentDiscovery.standardize(root)
+        var selections = settings.localEnvironmentSelections
+        if let path {
+            selections[key] = LocalEnvironmentDiscovery.standardize(path)
+        } else {
+            selections.removeValue(forKey: key)
+        }
+        // First in memory, so the next read sees the choice; then persisted.
+        var updated = settings
+        updated.localEnvironmentSelections = selections
+        settings = updated
+        Task { await saveSettings(updated) }
+    }
+
+    /// Validates and writes an environment file into
+    /// `<root>/.codex/environments/<fileName>`, refusing when the file on
+    /// disk changed since it was last listed. The saved file becomes the
+    /// project's selection, as the official flow does. nil on success.
+    @discardableResult
+    public func saveLocalEnvironment(_ environment: LocalEnvironment, toProject root: String, fileName: String) -> String? {
+        let problems = environment.validationErrors()
+        guard problems.isEmpty else { return problems.joined(separator: "；") }
+        let destination = LocalEnvironmentDiscovery.standardize(root)
+            + "/.codex/environments/" + LocalEnvironmentDiscovery.sanitizedFileName(fileName)
+        let expected = localEnvironmentRevisions[LocalEnvironmentDiscovery.standardize(destination)]
+        let failure = LocalEnvironmentDiscovery.save(
+            environment, toProject: root, fileName: fileName, expectedRevision: expected
+        )
+        guard failure == nil else { return failure }
+        localEnvironmentRevisions[LocalEnvironmentDiscovery.standardize(destination)] =
+            LocalEnvironmentDiscovery.revision(ofFileAt: destination)
+        localEnvironmentCache.removeValue(forKey: LocalEnvironmentDiscovery.standardize(root))
+        selectLocalEnvironment(destination, forProject: root)
+        return nil
+    }
+
+    /// Deletes the environment file at `path`. Selections pointing at it fall
+    /// back automatically. nil on success.
+    @discardableResult
+    public func deleteLocalEnvironment(at path: String) -> String? {
+        let failure = LocalEnvironmentDiscovery.delete(at: path)
+        guard failure == nil else { return failure }
+        localEnvironmentRevisions.removeValue(forKey: LocalEnvironmentDiscovery.standardize(path))
+        localEnvironmentCache.removeAll()
+        return nil
+    }
+
+    /// The distinct repository roots the app knows: every conversation's
+    /// working directory, resolved to its repository root.
+    public func knownProjectRoots() -> [String] {
+        var roots: [String] = []
+        for conversation in conversations {
+            guard let directory = conversation.workingDirectory,
+                  let root = LocalEnvironmentDiscovery.repositoryRoot(containing: directory) else { continue }
+            let standardized = LocalEnvironmentDiscovery.standardize(root)
+            if !roots.contains(standardized) { roots.append(standardized) }
+        }
+        return roots
+    }
+
+    /// Runs an environment's setup or cleanup script at `worktreeRoot` and
+    /// records one diagnostics event per run. See
+    /// `LocalEnvironmentDiscovery.runLocalEnvironmentScript` for the rules.
+    public func runLocalEnvironmentScript(
+        _ phase: LocalEnvironmentPhase, configPath: String, sourceRoot: String, worktreeRoot: String
+    ) async -> LocalEnvironmentRunResult {
+        #if os(macOS)
+        let result = await LocalEnvironmentDiscovery.runLocalEnvironmentScript(
+            phase, configPath: configPath, sourceRoot: sourceRoot, worktreeRoot: worktreeRoot
+        )
+        DiagnosticsCenter.shared.record(
+            "environment", result.exitCode == 0 ? .info : .warn,
+            "\(phase == .setup ? "setup" : "cleanup") \(result.skipped ? "skipped" : "exit \(result.exitCode)")",
+            fields: ["config": configPath, "worktree": worktreeRoot]
+        )
+        return result
+        #else
+        _ = phase; _ = configPath; _ = sourceRoot; _ = worktreeRoot
+        return LocalEnvironmentRunResult(exitCode: 0, output: "本地环境只能在 Mac 上运行", skipped: true)
+        #endif
+    }
+
+    #if os(macOS)
+    /// Runs the header's environment action `index` for the thread: opens the
+    /// side panel on the terminal and sends the command through the
+    /// terminal's own run path. Returns the reason it could not, or nil.
+    public func runEnvironmentAction(index: Int, in conversationID: UUID) -> String? {
+        guard let conversation = conversation(conversationID) else { return "找不到这个对话" }
+        guard let directory = conversation.workingDirectory else { return "这个对话没有绑定工作目录" }
+        let files = localEnvironments(forProject: directory)
+        guard let chosen = selectedLocalEnvironmentPath(forProject: directory),
+              let file = files.first(where: {
+                  LocalEnvironmentDiscovery.standardize($0.path) == LocalEnvironmentDiscovery.standardize(chosen)
+              }),
+              let environment = file.environment else {
+            return "这个项目还没有选择环境"
+        }
+        let actions = environment.actions(for: .current)
+        guard actions.indices.contains(index) else { return "没有这个环境动作" }
+        let action = actions[index]
+        DiagnosticsCenter.shared.record(
+            "environment", .info, "action run",
+            fields: ["name": action.name, "command": action.command, "directory": directory]
+        )
+        runCommandInSidePanel(action.command, directory: directory)
+        return nil
+    }
+    #endif
+
+    /// A command the side panel's terminal should run right now. `id` makes
+    /// asking for the same command twice a new request.
+    public struct SidePanelTerminalRequest: Equatable, Sendable {
+        public let id: UUID
+        public let command: String
+        /// Where the command runs; the terminal keeps its own directory when
+        /// nil.
+        public let directory: String?
+
+        public init(id: UUID, command: String, directory: String?) {
+            self.id = id
+            self.command = command
+            self.directory = directory
+        }
+    }
+
+    /// Opens the side panel on the terminal and runs `command` there.
+    public func runCommandInSidePanel(_ command: String, directory: String?) {
+        sidePanelTerminalRequest = SidePanelTerminalRequest(id: UUID(), command: command, directory: directory)
+        toggleSidePanel(open: true, tab: .terminal)
+    }
+
+    /// The terminal took request `id`; a later request is left in place.
+    public func finishSidePanelTerminalRequest(_ id: UUID) {
+        if sidePanelTerminalRequest?.id == id { sidePanelTerminalRequest = nil }
     }
 }

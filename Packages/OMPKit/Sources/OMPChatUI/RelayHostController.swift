@@ -73,25 +73,18 @@ public final class RelayHostController {
         #if os(macOS)
         // In-process window capture: works while the app is in the background
         // and can only ever contain this app's windows.
-        server.onDebugWindows = {
-            await MainActor.run { AppSnapshot.windowListJSON() }
-        }
-        server.onDebugSnapshot = { number in
-            await MainActor.run { AppSnapshot.png(windowNumber: number) }
-        }
+        server.onDebugWindows = { AppSnapshot.windowListJSON() }
+        server.onDebugSnapshot = { number in AppSnapshot.png(windowNumber: number) }
         // Black-box automation: run one UI-level action / read one state
-        // summary, on the main actor like the UI would.
+        // summary, on the main actor like the UI would. The server gives up
+        // with `main_thread_busy` when the main actor cannot start them.
         server.onDebugAction = { [weak self] action in
-            guard let model = await self?.model else {
-                return DebugActionOutcome.failure("no model")
-            }
+            guard let model = self?.model else { return DebugActionOutcome.failure("no model") }
             return await DebugActions.perform(action, model: model)
         }
         server.onDebugState = { [weak self] in
-            await MainActor.run {
-                guard let model = self?.model else { return Data("{}".utf8) }
-                return DebugActions.stateJSON(model: model)
-            }
+            guard let model = self?.model else { return Data("{}".utf8) }
+            return DebugActions.stateJSON(model: model)
         }
         #endif
     }

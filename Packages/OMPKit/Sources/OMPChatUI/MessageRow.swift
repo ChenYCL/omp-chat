@@ -252,8 +252,22 @@ public struct MessageRow: View {
             }
             operationSection
             replyVersionPicker
-            ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
-                partView(part)
+            // Consecutive text parts that are all imported tool rows render
+            // as one tight activity list, not paragraphs with gaps.
+            let groups = Self.groupedParts(message.parts)
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                switch group {
+                case .single(let part):
+                    partView(part)
+                case .toolRows(let parts):
+                    MarkdownText(parts.compactMap {
+                        if case .text(let value) = $0 { return value }
+                        return nil
+                    }.joined(separator: "\n"))
+                        .foregroundStyle(Color.ompText)
+                        .environment(\.genUISend, genUISend)
+                        .environment(\.ompFileReferencesEnabled, true)
+                }
             }
             if message.status == .streaming, !isAwaitingAnswer {
                 StreamingCaret()
@@ -395,6 +409,37 @@ public struct MessageRow: View {
             guard !model.isStreaming else { return }
             Task { await model.sendNow(text: text, attachments: []) }
         }
+    }
+
+    /// Splits the parts into runs: consecutive text parts that are all
+    /// imported tool rows group together (they render with a tight list
+    /// spacing); everything else passes through one by one.
+    fileprivate enum PartGroup {
+        case single(ContentPart)
+        case toolRows([ContentPart])
+    }
+
+    fileprivate static func groupedParts(_ parts: [ContentPart]) -> [PartGroup] {
+        var groups: [PartGroup] = []
+        var run: [ContentPart] = []
+        func flush() {
+            if run.count == 1 { groups.append(.single(run[0])) }
+            else if !run.isEmpty { groups.append(.toolRows(run)) }
+            run = []
+        }
+        for part in parts {
+            if case .text(let value) = part,
+               value.split(separator: "\n", omittingEmptySubsequences: true).allSatisfy({
+                   MarkdownText.Segment.isImportedToolLine($0.trimmingCharacters(in: .whitespaces))
+               }), !value.isEmpty {
+                run.append(part)
+                continue
+            }
+            flush()
+            groups.append(.single(part))
+        }
+        flush()
+        return groups
     }
 
     @ViewBuilder

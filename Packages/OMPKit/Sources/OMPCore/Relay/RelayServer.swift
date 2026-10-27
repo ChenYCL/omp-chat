@@ -131,6 +131,42 @@ public enum DebugSidebarOperation: Sendable, Equatable {
     case archiveSection(groupID: String)
 }
 
+/// 本地环境: 设置 → 环境 writes and the header's action buttons.
+public enum DebugLocalEnvironmentOperation: Sendable, Equatable {
+    /// Writes `<project>/.codex/environments/<fileName>` from TOML in the
+    /// official layout; refused with the editor's own validation text.
+    case save(project: String, fileName: String, toml: String)
+    /// nil clears the choice (the only file is then used); `"none"` is an
+    /// explicit 不使用环境.
+    case select(project: String, path: String?)
+    case delete(path: String)
+    /// Header action button `index` (from 0) of the thread's environment.
+    case runAction(conversationID: String?, index: Int)
+}
+
+/// Worktree mode, the 设置 → Worktree list, and 交接.
+public enum DebugWorktreeOperation: Sendable, Equatable {
+    /// The composer's 本地 / Worktree switch and base-branch picker.
+    case setMode(conversationID: String?, on: Bool, baseBranch: String?)
+    case handoff(conversationID: String?, destination: HandoffDestination)
+    /// Snapshot, cleanup script, then remove.
+    case delete(worktreeID: String)
+    /// The header's 恢复 for a chat whose worktree was deleted.
+    case restore(conversationID: String?)
+    /// Runs the auto-cleanup policy now.
+    case cleanup
+    /// 在此 worktree 新建对话.
+    case newChat(worktreeID: String)
+}
+
+/// 从其他 AI 应用导入.
+public enum DebugImportOperation: Sendable, Equatable {
+    /// `detail` carries the scan as JSON.
+    case scan
+    /// Imports the entries with these ids from the last scan of `home`.
+    case run(entryIDs: [String])
+}
+
 /// One automation action for the token-gated `POST /debug/action` route. This
 /// is the black-box test channel: the integrator drives the app without
 /// bringing it to the front, exactly the actions the UI's own menus offer.
@@ -246,6 +282,21 @@ public enum DebugAction: Sendable, Equatable {
     case dismissUndo
     /// ⌘B: shows or hides the sidebar (macOS).
     case toggleSidebar
+    case localEnvironment(DebugLocalEnvironmentOperation)
+    case worktree(DebugWorktreeOperation)
+    /// Import against `home`, an absolute folder standing in for `~`, so an
+    /// automated run never reads or writes the user's real Claude / Cursor
+    /// setups. Imported chats, MCP servers and instructions still land in
+    /// this app's workspace.
+    case externalImport(home: String, op: DebugImportOperation)
+    /// 设置 → 浏览器 → 链接打开位置: `"app"` or `"system"`.
+    case setLinkDestination(String)
+    /// Hides the first-launch import prompt for this session only; unlike
+    /// 暂不 it is not remembered.
+    case hideImportPrompt
+    /// Clicking a web link in a message; it goes where 链接打开位置 says, so a
+    /// script should set `"app"` first or the user's browser opens.
+    case clickLink(url: String)
 
     /// The wire name of the action.
     public var name: String {
@@ -300,6 +351,12 @@ public enum DebugAction: Sendable, Equatable {
         case .undo: "undo"
         case .dismissUndo: "dismissUndo"
         case .toggleSidebar: "toggleSidebar"
+        case .localEnvironment: "localEnvironment"
+        case .worktree: "worktree"
+        case .externalImport: "externalImport"
+        case .setLinkDestination: "setLinkDestination"
+        case .hideImportPrompt: "hideImportPrompt"
+        case .clickLink: "clickLink"
         }
     }
 
@@ -637,6 +694,77 @@ public enum DebugAction: Sendable, Equatable {
             return .dismissUndo
         case "toggleSidebar":
             return .toggleSidebar
+        case "localEnvironment":
+            guard let op = fields["op"] as? String else { return nil }
+            switch op {
+            case "save":
+                guard let project = fields["project"] as? String, project.hasPrefix("/"),
+                      let file = fields["fileName"] as? String, !file.isEmpty,
+                      let toml = fields["toml"] as? String else { return nil }
+                return .localEnvironment(.save(project: project, fileName: file, toml: toml))
+            case "select":
+                guard let project = fields["project"] as? String, project.hasPrefix("/"),
+                      let path = optionalString("path") else { return nil }
+                if let path, path != "none", !path.hasPrefix("/") { return nil }
+                return .localEnvironment(.select(project: project, path: path))
+            case "delete":
+                guard let path = fields["path"] as? String, path.hasPrefix("/") else { return nil }
+                return .localEnvironment(.delete(path: path))
+            case "runAction":
+                guard let id = optionalString("conversationID"),
+                      let number = fields["index"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.intValue >= 0, Double(number.intValue) == number.doubleValue else { return nil }
+                return .localEnvironment(.runAction(conversationID: id, index: number.intValue))
+            default:
+                return nil
+            }
+        case "worktree":
+            guard let op = fields["op"] as? String else { return nil }
+            switch op {
+            case "setMode":
+                guard let id = optionalString("conversationID"), let on = boolean(fields["on"]),
+                      let branch = optionalString("baseBranch") else { return nil }
+                return .worktree(.setMode(conversationID: id, on: on, baseBranch: branch))
+            case "handoff":
+                guard let id = optionalString("conversationID"),
+                      let raw = fields["destination"] as? String,
+                      let destination = HandoffDestination(rawValue: raw) else { return nil }
+                return .worktree(.handoff(conversationID: id, destination: destination))
+            case "delete":
+                guard let id = fields["worktreeID"] as? String else { return nil }
+                return .worktree(.delete(worktreeID: id))
+            case "restore":
+                guard let id = optionalString("conversationID") else { return nil }
+                return .worktree(.restore(conversationID: id))
+            case "cleanup":
+                return .worktree(.cleanup)
+            case "newChat":
+                guard let id = fields["worktreeID"] as? String else { return nil }
+                return .worktree(.newChat(worktreeID: id))
+            default:
+                return nil
+            }
+        case "externalImport":
+            guard let home = fields["home"] as? String, home.hasPrefix("/"),
+                  let op = fields["op"] as? String else { return nil }
+            switch op {
+            case "scan":
+                return .externalImport(home: home, op: .scan)
+            case "run":
+                guard let ids = fields["entryIDs"] as? [String] else { return nil }
+                return .externalImport(home: home, op: .run(entryIDs: ids))
+            default:
+                return nil
+            }
+        case "setLinkDestination":
+            guard let value = fields["value"] as? String, value == "app" || value == "system" else { return nil }
+            return .setLinkDestination(value)
+        case "hideImportPrompt":
+            return .hideImportPrompt
+        case "clickLink":
+            guard let raw = fields["url"] as? String, let url = URL(string: raw),
+                  let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+            return .clickLink(url: raw)
         default:
             return nil
         }
@@ -705,6 +833,11 @@ public struct DebugActionOutcome: Codable, Sendable, Equatable {
 /// - `GET /debug/state` → JSON `{"selectedID":…,"sidePanelOpen":…,
 ///   "sidePanelTab":…,"windowTitles":[…]}` read from the host hook
 ///   [`onDebugState`]. Answers `503` until that hook is installed.
+///
+/// The windows, snapshot, action and state hooks run on the main actor. If it
+/// cannot start one within `mainActorStartTimeout`, the route answers
+/// `503 {"ok":false,"error":"main_thread_busy"}` and the hook is abandoned:
+/// it will not run later (see `MainActorStart`).
 public final class RelayServer: @unchecked Sendable {
     /// Host app hook. Commands are delivered one at a time, in arrival order;
     /// the next command waits for the previous handler to return.
@@ -717,14 +850,17 @@ public final class RelayServer: @unchecked Sendable {
     public var onDebugReport: (@Sendable () async -> Data)?
     /// Host hook for `POST /debug/action`. Runs one [`DebugAction`] and
     /// reports success or a short error string; `nil` answers `503`.
-    public var onDebugAction: (@Sendable (DebugAction) async -> DebugActionOutcome)?
+    public var onDebugAction: (@MainActor @Sendable (DebugAction) async -> DebugActionOutcome)?
     /// Host hook for `GET /debug/state`. Returns the app-state JSON.
-    public var onDebugState: (@Sendable () async -> Data)?
+    public var onDebugState: (@MainActor @Sendable () -> Data)?
     /// Host hook for `GET /debug/windows`. Returns the window-list JSON.
-    public var onDebugWindows: (@Sendable () async -> Data)?
+    public var onDebugWindows: (@MainActor @Sendable () -> Data)?
     /// Host hook for `GET /debug/snapshot`. A `nil` argument means the main
     /// window; returning `nil` answers `404`.
-    public var onDebugSnapshot: (@Sendable (Int?) async -> Data?)?
+    public var onDebugSnapshot: (@MainActor @Sendable (Int?) -> Data?)?
+    /// How long a main-actor hook may wait to start before its route gives
+    /// up with `main_thread_busy`.
+    public var mainActorStartTimeout: Double = 10
 
 
     /// Internal: the bound listener, exposed so `RelayAdvertiser` can attach
@@ -1098,9 +1234,11 @@ public final class RelayServer: @unchecked Sendable {
                 send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
                 return
             }
+            let timeout = mainActorStartTimeout
             Task {
-                let body = await handler()
+                let outcome = await MainActorStart.run(startWithin: timeout) { handler() }
                 self.queue.async {
+                    guard case .done(let body) = outcome else { return self.sendMainThreadBusy(id: id) }
                     self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
                 }
             }
@@ -1115,9 +1253,11 @@ public final class RelayServer: @unchecked Sendable {
                 send(json(ErrorBody(ok: false), status: "400 Bad Request"), id: id)
                 return
             }
+            let timeout = mainActorStartTimeout
             Task {
-                let png = await handler(window)
+                let outcome = await MainActorStart.run(startWithin: timeout) { handler(window) }
                 self.queue.async {
+                    guard case .done(let png) = outcome else { return self.sendMainThreadBusy(id: id) }
                     if let png {
                         self.send(self.httpResponse(status: "200 OK", contentType: "image/png", body: png), id: id)
                     } else {
@@ -1134,10 +1274,12 @@ public final class RelayServer: @unchecked Sendable {
                 send(json(DebugActionOutcome(ok: false, error: "unsupported"), status: "503 Service Unavailable"), id: id)
                 return
             }
+            let timeout = mainActorStartTimeout
             Task {
-                let outcome = await handler(action)
+                let outcome = await MainActorStart.run(startWithin: timeout) { await handler(action) }
                 self.queue.async {
-                    self.send(self.json(outcome, status: "200 OK"), id: id)
+                    guard case .done(let result) = outcome else { return self.sendMainThreadBusy(id: id) }
+                    self.send(self.json(result, status: "200 OK"), id: id)
                 }
             }
         case ("GET", "/debug/state"):
@@ -1145,15 +1287,22 @@ public final class RelayServer: @unchecked Sendable {
                 send(json(ErrorBody(ok: false), status: "503 Service Unavailable"), id: id)
                 return
             }
+            let timeout = mainActorStartTimeout
             Task {
-                let body = await handler()
+                let outcome = await MainActorStart.run(startWithin: timeout) { handler() }
                 self.queue.async {
+                    guard case .done(let body) = outcome else { return self.sendMainThreadBusy(id: id) }
                     self.send(self.httpResponse(status: "200 OK", contentType: "application/json", body: body), id: id)
                 }
             }
         default:
             send(json(ErrorBody(ok: false), status: "404 Not Found"), id: id)
         }
+    }
+
+    /// A main-actor hook could not start in time; the hook was abandoned.
+    private func sendMainThreadBusy(id: ObjectIdentifier) {
+        send(json(DebugActionOutcome(ok: false, error: "main_thread_busy"), status: "503 Service Unavailable"), id: id)
     }
 
     // MARK: - Command dispatch

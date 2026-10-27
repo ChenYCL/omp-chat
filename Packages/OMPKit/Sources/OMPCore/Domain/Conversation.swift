@@ -52,6 +52,10 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// The scheduled task whose run created this thread; set once by the
     /// run, kept after the task is deleted. Older documents have none.
     public var scheduledTaskID: UUID? = nil
+    /// Source id of an imported chat (`claude-code:<sessionId>` /
+    /// `cursor:<agentId>`). A re-import skips a conversation whose marker is
+    /// already in the workspace. Older documents have none.
+    public var importedFrom: String? = nil
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -117,8 +121,17 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         queuedMessages = (try? container.decodeIfPresent([QueuedMessage].self, forKey: .queuedMessages)) ?? []
         compaction = try? container.decodeIfPresent(ConversationCompaction.self, forKey: .compaction)
         scheduledTaskID = try? container.decodeIfPresent(UUID.self, forKey: .scheduledTaskID)
+        importedFrom = try? container.decodeIfPresent(String.self, forKey: .importedFrom)
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, title, providerID, modelID, systemPrompt, messages
+        case createdAt, updatedAt, isPinned, isArchived, projectID, isLocked
+        case isTemporary, reasoningEffort, alternativeReplies, sortIndex
+        case hasUnread, workingDirectory, goal, permissionMode, toolsEnabled
+        case isCodeReview, queuedMessages, compaction, scheduledTaskID
+        case importedFrom
+    }
 
     /// True when the conversation is waiting on an answer: the newest message
     /// is the user's, or the reply failed. Drives the sidebar's 待处理 group.

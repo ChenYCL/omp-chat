@@ -35,6 +35,9 @@ public struct ChatTranscriptView: View {
                         if model.isCompacting(conversation.id) {
                             CompactingIndicator()
                         }
+                        if let progress = model.worktreeProgress, progress.conversationID == conversation.id {
+                            WorktreeProgressCard(progress: progress)
+                        }
                     }
                     Color.clear
                         .frame(height: 1)

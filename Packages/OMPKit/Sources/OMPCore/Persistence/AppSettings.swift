@@ -79,10 +79,19 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var relayAllowShell: Bool
     /// iOS: every Mac this phone has paired with, newest first.
     public var pairedDevices: [PairedDevice]
-    /// macOS: where 新建 Worktree checkouts live. Empty = beside the repository.
+    /// macOS: root of managed worktrees. Empty = the app's Application
+    /// Support `OMPChat/worktrees` (`ManagedWorktreeLayout.defaultRoot()`).
     public var worktreeBaseDirectory: String
-    /// macOS: prefix for new worktree branch names, e.g. "omp". Empty = none.
-    public var worktreeBranchPrefix: String
+    /// macOS: fetch upstream before creating a managed worktree (official
+    /// `settings.worktrees.upstreamRefresh`). Off by default.
+    public var worktreeFetchUpstream: Bool
+    /// macOS: delete managed worktrees automatically — an archived chat's
+    /// worktree, then the oldest beyond the keep count; never one tied to a
+    /// pinned chat or a chat in progress (official `settings.worktrees.*`).
+    public var worktreeAutoCleanup: Bool
+    /// macOS: how many managed worktrees to keep when auto-cleanup runs
+    /// (official `settings.worktrees.keepCount`, default 15).
+    public var worktreeKeepCount: Int
     /// macOS: MCP servers the agent can use (设置 → 插件与 MCP). Secret
     /// environment values live in the secrets vault, not here.
     public var mcpServers: [MCPServerConfig]
@@ -92,6 +101,17 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// macOS: `OpenInTarget.id` the header's Open-in button used last; empty
     /// until one is used.
     public var openInTargetID: String = ""
+    /// macOS: project root → the chosen environment file's absolute path, or
+    /// `LocalEnvironmentDiscovery.noneSelection` for an explicit "none".
+    public var localEnvironmentSelections: [String: String] = [:]
+    /// The first-launch "从其他 AI 应用导入" prompt was dismissed with 暂不
+    /// (or an import finished). Older documents have none, so the prompt shows
+    /// once when something importable exists.
+    public var externalImportPromptDismissed: Bool = false
+
+    /// Where a link in a message opens (official linkDestinationPrompt):
+    /// "app" = side-panel browser tab, "system" = default browser.
+    public var linkDestination: String = "system"
 
     public init(
         version: Int = 1,
@@ -129,10 +149,15 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remoteRoomCode: String = "",
         relayAllowShell: Bool = false,
         worktreeBaseDirectory: String = "",
-        worktreeBranchPrefix: String = "",
+        worktreeFetchUpstream: Bool = false,
+        worktreeAutoCleanup: Bool = true,
+        worktreeKeepCount: Int = 15,
         pairedDevices: [PairedDevice] = [],
         mcpServers: [MCPServerConfig] = [],
-        defaultPermissionMode: String = "ask"
+        defaultPermissionMode: String = "ask",
+        linkDestination: String = "system",
+        externalImportPromptDismissed: Bool = false,
+        localEnvironmentSelections: [String: String] = [:]
     ) {
         self.version = version
         self.defaultProviderID = defaultProviderID
@@ -170,9 +195,14 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.relayAllowShell = relayAllowShell
         self.pairedDevices = pairedDevices
         self.worktreeBaseDirectory = worktreeBaseDirectory
-        self.worktreeBranchPrefix = worktreeBranchPrefix
+        self.worktreeFetchUpstream = worktreeFetchUpstream
+        self.worktreeAutoCleanup = worktreeAutoCleanup
+        self.worktreeKeepCount = worktreeKeepCount
         self.mcpServers = mcpServers
         self.defaultPermissionMode = defaultPermissionMode
+        self.linkDestination = linkDestination
+        self.externalImportPromptDismissed = externalImportPromptDismissed
+        self.localEnvironmentSelections = localEnvironmentSelections
     }
 
     public init(from decoder: Decoder) throws {
@@ -213,10 +243,15 @@ public struct AppSettings: Codable, Hashable, Sendable {
         relayAllowShell = try container.decodeIfPresent(Bool.self, forKey: .relayAllowShell) ?? false
         pairedDevices = try container.decodeIfPresent([PairedDevice].self, forKey: .pairedDevices) ?? []
         worktreeBaseDirectory = try container.decodeIfPresent(String.self, forKey: .worktreeBaseDirectory) ?? ""
-        worktreeBranchPrefix = try container.decodeIfPresent(String.self, forKey: .worktreeBranchPrefix) ?? ""
+        worktreeFetchUpstream = try container.decodeIfPresent(Bool.self, forKey: .worktreeFetchUpstream) ?? false
+        worktreeAutoCleanup = try container.decodeIfPresent(Bool.self, forKey: .worktreeAutoCleanup) ?? true
+        worktreeKeepCount = try container.decodeIfPresent(Int.self, forKey: .worktreeKeepCount) ?? 15
         mcpServers = try container.decodeIfPresent([MCPServerConfig].self, forKey: .mcpServers) ?? []
         defaultPermissionMode = try container.decodeIfPresent(String.self, forKey: .defaultPermissionMode) ?? "ask"
+        linkDestination = try container.decodeIfPresent(String.self, forKey: .linkDestination) ?? "system"
         openInTargetID = try container.decodeIfPresent(String.self, forKey: .openInTargetID) ?? ""
+        externalImportPromptDismissed = try container.decodeIfPresent(Bool.self, forKey: .externalImportPromptDismissed) ?? false
+        localEnvironmentSelections = try container.decodeIfPresent([String: String].self, forKey: .localEnvironmentSelections) ?? [:]
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -229,8 +264,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case relayToken, relayPort, relayEnabled
         case relayHubURL, relayRoomCode, remoteHubURL, remoteRoomCode
         case relayAllowShell, pairedDevices
-        case worktreeBaseDirectory, worktreeBranchPrefix
+        case worktreeBaseDirectory, worktreeFetchUpstream, worktreeAutoCleanup, worktreeKeepCount
         case mcpServers, defaultPermissionMode
+        case linkDestination
         case openInTargetID
+        case externalImportPromptDismissed
+        case localEnvironmentSelections
     }
 }

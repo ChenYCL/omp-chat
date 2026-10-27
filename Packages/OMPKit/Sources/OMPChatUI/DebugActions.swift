@@ -178,7 +178,10 @@ enum DebugActions {
             guard !model.draftForSending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .failure("草稿是空的")
             }
-            return await deliver(to: id, model: model) { model.send() }
+            // Worktree mode's first message creates the checkout and runs the
+            // environment's setup script before it is sent.
+            let createsWorktree = model.worktreeMode(for: id) && model.managedWorktree(for: id) == nil
+            return await deliver(to: id, model: model, within: createsWorktree ? .seconds(600) : .seconds(2)) { model.send() }
 
         case .stop:
             model.stop()
@@ -348,6 +351,30 @@ enum DebugActions {
             NotificationCenter.default.post(name: .ompToggleSidebar, object: nil)
             return .success
 
+        case .localEnvironment(let operation):
+            return localEnvironment(operation, model: model)
+
+        case .worktree(let operation):
+            return await worktree(operation, model: model)
+
+        case .externalImport(let home, let operation):
+            return await externalImport(home: home, operation, model: model)
+
+        case .setLinkDestination(let value):
+            model.updateLinkDestination(value)
+            return .success
+
+        case .hideImportPrompt:
+            model.externalImportPrompt = nil
+            return .success
+
+        case .clickLink(let raw):
+            guard let url = URL(string: raw) else { return .failure("bad url") }
+            switch model.openMessageLink(url) {
+            case .sidePanelTab(let tab): return DebugActionOutcome(ok: true, error: nil, detail: "tab:\(tab.uuidString)")
+            case .systemBrowser: return DebugActionOutcome(ok: true, error: nil, detail: "system")
+            }
+
         case .computerUseAdd(let raw):
             let server = raw.map { ComputerUseCatalog.server(id: $0) } ?? ComputerUseCatalog.servers.first
             guard let server else { return .failure("no such computer-use server") }
@@ -435,6 +462,46 @@ enum DebugActions {
             /// Every message in order, text trimmed; notes such as the
             /// unanswered-follow-up one are in `error`.
             var transcript: [MessageLine]
+            /// The composer's 本地 / Worktree switch, and the managed worktree
+            /// the chat runs in (or ran in, when `worktreeDeleted`).
+            var worktreeMode: Bool
+            var managedWorktreeID: String?
+            var worktreeDeleted: Bool
+            /// Environment files for the working directory (own, then
+            /// inherited) and the one in force.
+            var environments: [EnvironmentLine]
+            var selectedEnvironment: String?
+        }
+        struct EnvironmentLine: Encodable {
+            var path: String
+            var name: String?
+            var inherited: Bool
+            var actions: [String]
+            var parseError: String?
+        }
+        struct WorktreeLine: Encodable {
+            var id: String
+            var path: String
+            var sourceRoot: String
+            var baseCommit: String
+            /// nil while detached, as managed worktrees start.
+            var branch: String?
+            var conversationIDs: [String]
+            var environmentPath: String?
+            var deleted: Bool
+            var hasSnapshot: Bool
+        }
+        struct ImportedLine: Encodable {
+            var id: String
+            var title: String
+            var importedFrom: String
+            var workingDirectory: String?
+        }
+        struct WorktreeProgressLine: Encodable {
+            var conversationID: String
+            /// fetching / checkingOut / settingUp / failed
+            var phase: String
+            var detail: String?
         }
         struct QueuedLine: Encodable {
             var id: String
@@ -544,6 +611,10 @@ enum DebugActions {
             var dictation: String
             var dictationError: String?
             var conversationCount: Int
+            /// Chats brought over by 从其他 AI 应用导入 (`importedFrom` is
+            /// `claude-code:<id>` / `cursor:<id>`), so a scenario can find and
+            /// remove what it imported.
+            var importedConversations: [ImportedLine]
             /// Non-archived chats with an unread reply, so a scenario that
             /// runs 全部标为已读 can put back exactly what was unread before.
             var unreadIDs: [String]
@@ -564,6 +635,18 @@ enum DebugActions {
             var scheduledTasks: [ScheduledTaskLine]
             /// A file the 文件 tab was asked to show and has not picked up yet.
             var pendingFileRequest: String?
+            /// A command the side-panel terminal was asked to run and has not
+            /// picked up yet.
+            var pendingTerminalCommand: String?
+            /// 设置 → 浏览器 → 链接打开位置: app / system.
+            var linkDestination: String
+            /// Managed worktrees, deleted ones included (they keep a snapshot).
+            var managedWorktrees: [WorktreeLine]
+            var worktreeProgress: WorktreeProgressLine?
+            /// Conversation id → the 交接 step running for it.
+            var handoffProgress: [String: String]
+            /// The first-launch 从其他 AI 应用导入 prompt is up.
+            var importPromptShown: Bool
             var sidePanelOpen: Bool
             var sidePanelTab: String?
             var sideChatStreaming: Bool
@@ -645,7 +728,20 @@ enum DebugActions {
                         attached: $0.mentionAttachments.compactMap { $0.mention?.readable },
                         mentionNotes: $0.mentionNotes
                     )
-                }
+                },
+                worktreeMode: model.worktreeMode(for: $0.id),
+                managedWorktreeID: (model.managedWorktree(for: $0.id) ?? model.deletedWorktree(forConversation: $0.id))?.id.uuidString,
+                worktreeDeleted: model.deletedWorktree(forConversation: $0.id) != nil,
+                environments: $0.workingDirectory.map { directory in
+                    model.localEnvironments(forProject: directory).map { file in
+                        EnvironmentLine(
+                            path: file.path, name: file.environment?.name, inherited: file.inherited,
+                            actions: file.environment?.actions(for: .current).map(\.name) ?? [],
+                            parseError: file.parseError.map { "第 \($0.line) 行：\($0.message)" }
+                        )
+                    }
+                } ?? [],
+                selectedEnvironment: $0.workingDirectory.flatMap { model.selectedLocalEnvironmentPath(forProject: $0) }
             )
         }
         let state = State(
@@ -670,6 +766,12 @@ enum DebugActions {
                 return nil
             }(),
             conversationCount: model.conversations.count,
+            importedConversations: model.conversations.compactMap { conversation in
+                conversation.importedFrom.map {
+                    ImportedLine(id: conversation.id.uuidString, title: conversation.title, importedFrom: $0,
+                                 workingDirectory: conversation.workingDirectory)
+                }
+            },
             unreadIDs: model.conversations.filter { $0.hasUnread && !$0.isArchived }.map(\.id.uuidString).sorted(),
             priorityIDs: model.priorityConversationIDs().map(\.uuidString).sorted(),
             sidebarGrouping: model.settings.sidebarGrouping,
@@ -697,6 +799,26 @@ enum DebugActions {
             pendingFileRequest: model.sidePanelFileRequest.map { request in
                 request.line.map { "\(request.path):\($0)" } ?? request.path
             },
+            pendingTerminalCommand: model.sidePanelTerminalRequest?.command,
+            linkDestination: model.settings.linkDestination,
+            managedWorktrees: model.managedWorktrees.map { tree in
+                WorktreeLine(
+                    id: tree.id.uuidString, path: tree.path, sourceRoot: tree.sourceRoot, baseCommit: tree.baseCommit,
+                    branch: tree.branch, conversationIDs: tree.conversationIDs.map(\.uuidString),
+                    environmentPath: tree.environmentPath, deleted: tree.deletedAt != nil, hasSnapshot: tree.snapshot != nil
+                )
+            },
+            worktreeProgress: model.worktreeProgress.map { progress in
+                let phase: String = switch progress.phase {
+                case .fetching: "fetching"
+                case .checkingOut: "checkingOut"
+                case .settingUp: "settingUp"
+                case .failed: "failed"
+                }
+                return WorktreeProgressLine(conversationID: progress.conversationID.uuidString, phase: phase, detail: progress.detail)
+            },
+            handoffProgress: Dictionary(uniqueKeysWithValues: model.handoffProgress.map { ($0.key.uuidString, $0.value) }),
+            importPromptShown: model.externalImportPrompt != nil,
             sidePanelOpen: model.sidePanelOpen,
             sidePanelTab: model.sidePanelOpen ? model.sidePanelTab.rawValue : nil,
             sideChatStreaming: model.sideChatStreamingID != nil,
@@ -760,7 +882,9 @@ enum DebugActions {
     /// was busy. Same rule as the desktop composer: a reply in another
     /// conversation blocks; one in this conversation (or a compaction of it)
     /// takes the message as a queued follow-up.
-    private static func deliver(to id: UUID, model: ChatAppModel, start: () -> Void) async -> DebugActionOutcome {
+    private static func deliver(
+        to id: UUID, model: ChatAppModel, within timeout: Duration = .seconds(2), start: () -> Void
+    ) async -> DebugActionOutcome {
         if model.isStreaming, model.streamingConversationID != id {
             return .failure("另一个对话正在回复")
         }
@@ -773,7 +897,7 @@ enum DebugActions {
             let queued = await waitUntil { model.queuedMessages(for: id).count > queuedBefore }
             return queued ? .success : .failure(model.errorMessage ?? "没有排进队列")
         }
-        let sent = await waitUntil { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
+        let sent = await waitUntil(timeout) { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
         if sent, (model.selectedConversation?.messages.count ?? 0) > before { return .success }
         return .failure(model.errorMessage ?? "没有发出")
     }
@@ -869,6 +993,107 @@ enum DebugActions {
     /// Model methods report failure as an optional message.
     private static func outcome(_ failure: String?) -> DebugActionOutcome {
         failure.map(DebugActionOutcome.failure) ?? .success
+    }
+
+    private static func localEnvironment(_ operation: DebugLocalEnvironmentOperation, model: ChatAppModel) -> DebugActionOutcome {
+        switch operation {
+        case .save(let project, let fileName, let toml):
+            let environment: LocalEnvironment
+            do {
+                environment = try LocalEnvironmentTOML.parse(toml)
+            } catch let error as LocalEnvironmentParseError {
+                return .failure("第 \(error.line) 行：\(error.message)")
+            } catch {
+                return .failure(error.localizedDescription)
+            }
+            return outcome(model.saveLocalEnvironment(environment, toProject: project, fileName: fileName))
+        case .select(let project, let path):
+            model.selectLocalEnvironment(path == "none" ? LocalEnvironmentDiscovery.noneSelection : path, forProject: project)
+            return .success
+        case .delete(let path):
+            return outcome(model.deleteLocalEnvironment(at: path))
+        case .runAction(let raw, let index):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(model.runEnvironmentAction(index: index, in: id))
+        }
+    }
+
+    private static func worktree(_ operation: DebugWorktreeOperation, model: ChatAppModel) async -> DebugActionOutcome {
+        func registered(_ raw: String) -> UUID? {
+            UUID(uuidString: raw).flatMap { id in model.managedWorktrees.contains { $0.id == id } ? id : nil }
+        }
+        switch operation {
+        case .setMode(let raw, let on, let branch):
+            guard let id = targetID(raw, in: model), let conversation = model.conversations.first(where: { $0.id == id }) else {
+                return .failure("no such conversation")
+            }
+            // The composer shows the switch only on an empty chat bound to a
+            // folder that does not already run in a managed worktree.
+            guard conversation.messages.isEmpty, conversation.workingDirectory != nil,
+                  model.managedWorktree(for: id) == nil else {
+                return .failure("只有绑定了工作目录、还没有消息的对话能切换本地 / Worktree")
+            }
+            model.setWorktreeMode(on, for: id)
+            if on { model.setWorktreeBaseBranch(branch, for: id) }
+            return .success
+        case .handoff(let raw, let destination):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(await model.handoff(id, to: destination))
+        case .delete(let raw):
+            guard let id = registered(raw) else { return .failure("no such worktree") }
+            return outcome(await model.deleteManagedWorktree(id))
+        case .restore(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            return outcome(await model.restoreManagedWorktree(for: id))
+        case .cleanup:
+            let deleted = await model.runWorktreeCleanup()
+            return DebugActionOutcome(ok: true, error: nil, detail: deleted.map(\.uuidString).joined(separator: ","))
+        case .newChat(let raw):
+            guard let id = registered(raw) else { return .failure("no such worktree") }
+            guard let created = model.newChat(inManagedWorktree: id) else { return .failure("无法在这个 worktree 新建对话") }
+            return DebugActionOutcome(ok: true, error: nil, detail: created.uuidString)
+        }
+    }
+
+    /// Points the import at `home` for this one call, so an automated run
+    /// reads and writes only a fixture folder.
+    private static func externalImport(home: String, _ operation: DebugImportOperation, model: ChatAppModel) async -> DebugActionOutcome {
+        let previous = model.externalImportHome
+        model.externalImportHome = home
+        defer { model.externalImportHome = previous }
+        struct EntryLine: Encodable {
+            var id: String, provider: String, kind: String, title: String, detail: String, count: Int
+            var skippedReason: String?
+        }
+        struct NotImportedLine: Encodable { var provider: String, kind: String, reason: String }
+        struct ScanLine: Encodable { var providers: [String], entries: [EntryLine], notImported: [NotImportedLine] }
+        struct ReportLine: Encodable { var id: String, kind: String, title: String, note: String?, failed: Bool }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        switch operation {
+        case .scan:
+            let scan = await model.scanExternalAgents()
+            let line = ScanLine(
+                providers: scan.providersFound.map(\.rawValue),
+                entries: scan.entries.map {
+                    EntryLine(id: $0.id, provider: $0.provider.rawValue, kind: $0.kind.rawValue, title: $0.title,
+                              detail: $0.detail, count: $0.count, skippedReason: $0.skippedReason)
+                },
+                notImported: scan.notImported.map {
+                    NotImportedLine(provider: $0.provider.rawValue, kind: $0.kind.rawValue, reason: $0.reason)
+                }
+            )
+            let data = (try? encoder.encode(line)) ?? Data("{}".utf8)
+            return DebugActionOutcome(ok: true, error: nil, detail: String(decoding: data, as: UTF8.self))
+        case .run(let ids):
+            let report = await model.runExternalImport(ExternalImportSelection(enabledEntryIDs: Set(ids)))
+            let lines = report.lines.map {
+                ReportLine(id: $0.id, kind: $0.kind.rawValue, title: $0.title, note: $0.note, failed: $0.failed)
+            }
+            let data = (try? encoder.encode(lines)) ?? Data("[]".utf8)
+            return DebugActionOutcome(ok: report.failedCount == 0, error: report.errorSummary,
+                                      detail: String(decoding: data, as: UTF8.self))
+        }
     }
 
     private static func apply(_ style: DebugFormatStyle, model: ChatAppModel) {

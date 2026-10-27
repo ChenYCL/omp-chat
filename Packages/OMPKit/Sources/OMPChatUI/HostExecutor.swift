@@ -77,15 +77,10 @@ public struct HostExecutor: Sendable {
         self.pollRetention = pollRetention ?? Self.pollRetention
     }
 
-    /// Account home from `getpwuid`, falling back to `NSHomeDirectory()` only
-    /// when the passwd entry is missing.
+    /// Account home from `getpwuid`; the shared implementation lives in
+    /// `ChildProcessEnvironment` so every spawner agrees on it.
     public static func realHomeDirectory() -> String {
-        #if os(macOS)
-        if let entry = getpwuid(getuid()), let dir = entry.pointee.pw_dir {
-            return String(cString: dir)
-        }
-        #endif
-        return NSHomeDirectory()
+        ChildProcessEnvironment.realHomeDirectory()
     }
 
     /// The most recent operations, newest last, capped at 20.
@@ -697,19 +692,7 @@ public struct HostExecutor: Sendable {
     /// Environment for a child shell: the real home, and a PATH that can see
     /// Homebrew git both on Apple silicon and Intel.
     static func childEnvironment(home: String) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        environment["HOME"] = home
-        // A Finder-launched app inherits launchd's minimal PATH. Agent CLIs
-        // install per user (claude → ~/.local/bin, omp → ~/.bun/bin), so look
-        // in the account's real home, not the injected one tests use.
-        let user = realHomeDirectory()
-        let extras = ["\(user)/.local/bin", "\(user)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
-        let current = environment["PATH"] ?? "/usr/bin:/bin"
-        let missing = extras.filter { !current.split(separator: ":").contains(Substring($0)) }
-        if !missing.isEmpty {
-            environment["PATH"] = (missing + [current]).joined(separator: ":")
-        }
-        return environment
+        ChildProcessEnvironment.build(home: home)
     }
     #endif
 

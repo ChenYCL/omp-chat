@@ -14,15 +14,17 @@ public actor FileConversationStore: ConversationStoring {
         public var settings: AppSettings
         public var projects: [Project]
         public var scheduledTasks: [ScheduledTask]
+        public var managedWorktrees: [ManagedWorktree]
 
         public init(
             version: Int = 1,
             conversations: [Conversation] = [],
             providers: [ProviderProfile] = [],
             models: [ModelDescriptor] = [],
-            settings: AppSettings = AppSettings(),
+            settings: AppSettings = .init(),
             projects: [Project] = [],
-            scheduledTasks: [ScheduledTask] = []
+            scheduledTasks: [ScheduledTask] = [],
+            managedWorktrees: [ManagedWorktree] = []
         ) {
             self.version = version
             self.conversations = conversations
@@ -31,6 +33,7 @@ public actor FileConversationStore: ConversationStoring {
             self.settings = settings
             self.projects = projects
             self.scheduledTasks = scheduledTasks
+            self.managedWorktrees = managedWorktrees
         }
 
         public init(from decoder: Decoder) throws {
@@ -42,6 +45,7 @@ public actor FileConversationStore: ConversationStoring {
             settings = try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
             projects = try container.decodeIfPresent([Project].self, forKey: .projects) ?? []
             scheduledTasks = try ScheduledTask.decodeList(from: container, forKey: .scheduledTasks)
+            managedWorktrees = try ManagedWorktree.decodeList(from: container, forKey: .managedWorktrees)
         }
     }
 
@@ -147,6 +151,16 @@ public actor FileConversationStore: ConversationStoring {
     public func saveScheduledTasks(_ tasks: [ScheduledTask]) async throws {
         var snapshot = try current()
         snapshot.scheduledTasks = tasks
+        try commit(snapshot)
+    }
+
+    public func loadManagedWorktrees() async throws -> [ManagedWorktree] {
+        try current().managedWorktrees
+    }
+
+    public func saveManagedWorktrees(_ worktrees: [ManagedWorktree]) async throws {
+        var snapshot = try current()
+        snapshot.managedWorktrees = worktrees
         try commit(snapshot)
     }
 
