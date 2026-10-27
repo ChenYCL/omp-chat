@@ -1,7 +1,0 @@
----
-description: 命名规范
-globs: "*.ts"
-alwaysApply: true
----
-
-TypeScript 一律严格模式。

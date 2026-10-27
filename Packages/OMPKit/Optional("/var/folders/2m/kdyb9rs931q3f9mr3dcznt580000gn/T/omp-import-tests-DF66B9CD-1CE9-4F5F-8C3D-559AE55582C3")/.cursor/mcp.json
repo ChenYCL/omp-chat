@@ -1,1 +1,0 @@
-{"mcpServers":{"local-tool":{"command":"node","args":["server.js"]},"remote-plain":{"type":"http","url":"https://plain.example.com"}}}

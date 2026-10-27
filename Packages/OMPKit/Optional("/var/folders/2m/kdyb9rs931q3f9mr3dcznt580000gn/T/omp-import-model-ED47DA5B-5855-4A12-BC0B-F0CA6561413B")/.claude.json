@@ -1,1 +1,0 @@
-{"mcpServers":{"fix-server":{"command":"node","args":["s.js"],"env":{"FIX_TOKEN":"sk-vault-me"}}}}
