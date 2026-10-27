@@ -164,26 +164,21 @@ enum DebugActions {
         case .send(let raw, let text):
             guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure("消息是空的") }
-            // Same rule as the desktop composer: a reply in another
-            // conversation blocks; one in this conversation (or a compaction
-            // of it) takes the message as a queued follow-up.
-            if model.isStreaming, model.streamingConversationID != id {
-                return .failure("另一个对话正在回复")
+            return await deliver(to: id, model: model) {
+                // Not awaited: with tools on, the reply can stop at an
+                // approval card that only a later `approve` action resolves.
+                Task { await model.sendNow(text: text, attachments: []) }
             }
+
+        case .sendDraft(let raw):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
             if model.selectedConversationID != id { model.selectedConversationID = id }
-            let busy = model.isStreaming || model.isCompacting(id)
-            let before = model.selectedConversation?.messages.count ?? 0
-            let queuedBefore = model.queuedMessages(for: id).count
-            // Not awaited: with tools on, the reply can stop at an approval
-            // card that only a later `approve` action resolves.
-            Task { await model.sendNow(text: text, attachments: []) }
-            if busy {
-                let queued = await waitUntil { model.queuedMessages(for: id).count > queuedBefore }
-                return queued ? .success : .failure(model.errorMessage ?? "没有排进队列")
+            // The send button's path: readable mentions become tokens, the
+            // draft and its picks are cleared.
+            guard !model.draftForSending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .failure("草稿是空的")
             }
-            let sent = await waitUntil { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
-            if sent, (model.selectedConversation?.messages.count ?? 0) > before { return .success }
-            return .failure(model.errorMessage ?? "没有发出")
+            return await deliver(to: id, model: model) { model.send() }
 
         case .stop:
             model.stop()
@@ -246,6 +241,49 @@ enum DebugActions {
             guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
             return outcome(await model.compactConversation(id))
 
+        case .mentionSearch(let raw, let query, let trigger):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            let result = await model.mentionSearch(query: query, trigger: trigger, for: id)
+            struct Line: Encodable {
+                var token: String
+                var kind: String
+                var section: String
+                var title: String
+                var detail: String
+                var badge: String
+            }
+            struct Body: Encodable {
+                var candidates: [Line]
+                var fileSearchFailed: Bool
+            }
+            let body = Body(
+                candidates: result.candidates.map {
+                    Line(token: $0.mention.token, kind: $0.mention.kind.rawValue, section: $0.section.rawValue,
+                         title: $0.title, detail: $0.detail, badge: $0.badge)
+                },
+                fileSearchFailed: result.fileSearchFailed
+            )
+            let data = (try? JSONEncoder().encode(body)) ?? Data("{}".utf8)
+            return DebugActionOutcome(ok: true, error: nil, detail: String(decoding: data, as: UTF8.self))
+
+        case .pickMention(let raw, let token):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            // Exactly one well-formed token, as the list hands out.
+            let found = ComposerMention.mentions(in: token)
+            guard found.count == 1, let mention = found.first, mention.token == token else {
+                return .failure("not a mention token")
+            }
+            // The pick edits the draft on screen, which is the selected thread's.
+            if model.selectedConversationID != id { model.selectedConversationID = id }
+            model.pickMention(mention)
+            return .success
+
+        case .transcribeFile(let raw, let path, let locale):
+            guard let id = targetID(raw, in: model) else { return .failure("no such conversation") }
+            // The text lands in the draft on screen, which is the selected thread's.
+            if model.selectedConversationID != id { model.selectedConversationID = id }
+            return outcome(await model.transcribeIntoDraft(fileURL: URL(fileURLWithPath: path), localeIdentifier: locale))
+
         case .mcpInstall(let entryID, let values):
             guard let entry = MCPCatalog.entries.first(where: { $0.id == entryID }) else {
                 return .failure("no such catalog entry")
@@ -302,6 +340,12 @@ enum DebugActions {
 
         case .dismissUndo:
             model.dismissUndoToast()
+            return .success
+
+        case .toggleSidebar:
+            // The sidebar's visibility is the root view's state; ⌘B reaches it
+            // through this notification too.
+            NotificationCenter.default.post(name: .ompToggleSidebar, object: nil)
             return .success
 
         case .computerUseAdd(let raw):
@@ -364,6 +408,9 @@ enum DebugActions {
             var isArchived: Bool
             /// Project or custom section it is filed under.
             var groupID: String?
+            /// The row's status tags (`ConversationRowTag` raw values), the
+            /// primary one first, as the sidebar shows them.
+            var rowTags: [String]
             /// The selected thread's side chat; never part of the thread.
             var sideChat: [SideChatLine]
             var permissionMode: String
@@ -403,9 +450,15 @@ enum DebugActions {
         struct MessageLine: Encodable {
             var id: String
             var role: String
+            /// What the bubble shows: the written text, without attached
+            /// mention content (the model still reads all of it).
             var text: String
             var status: String
             var error: String?
+            /// Mention chips under the bubble (`@notes.md`, `$review`).
+            var attached: [String]
+            /// The 提及说明 line under the bubble: mentions left out or cut.
+            var mentionNotes: [String]
         }
         struct ReplyLine: Encodable {
             var text: String
@@ -483,6 +536,13 @@ enum DebugActions {
             var selectedID: String?
             var selected: Selected?
             var draft: String
+            /// The mentions the draft holds, as the chips above the field
+            /// show them (`@说明.md`, `$review`).
+            var draftMentions: [String]
+            /// idle / starting / listening / finishing / transcribing / done /
+            /// failed / cancelled, and the error text when failed.
+            var dictation: String
+            var dictationError: String?
             var conversationCount: Int
             /// Non-archived chats with an unread reply, so a scenario that
             /// runs 全部标为已读 can put back exactly what was unread before.
@@ -551,6 +611,7 @@ enum DebugActions {
                 isPinned: $0.isPinned,
                 isArchived: $0.isArchived,
                 groupID: $0.projectID?.uuidString,
+                rowTags: model.rowStatus(for: $0).tags.map(\.rawValue),
                 sideChat: model.sideChat(for: $0.id).map {
                     SideChatLine(role: $0.role.rawValue, text: $0.concatenatedText, status: $0.status.rawValue, error: $0.errorText)
                 },
@@ -579,8 +640,10 @@ enum DebugActions {
                 },
                 transcript: $0.messages.map {
                     MessageLine(
-                        id: $0.id.uuidString, role: $0.role.rawValue, text: String($0.concatenatedText.prefix(400)),
-                        status: $0.status.rawValue, error: $0.errorText
+                        id: $0.id.uuidString, role: $0.role.rawValue, text: String($0.writtenText.prefix(400)),
+                        status: $0.status.rawValue, error: $0.errorText,
+                        attached: $0.mentionAttachments.compactMap { $0.mention?.readable },
+                        mentionNotes: $0.mentionNotes
                     )
                 }
             )
@@ -589,6 +652,23 @@ enum DebugActions {
             selectedID: model.selectedConversationID?.uuidString,
             selected: selected,
             draft: model.draft,
+            draftMentions: model.draftMentions.map(\.readable),
+            dictation: {
+                switch model.dictationState {
+                case .idle: "idle"
+                case .starting: "starting"
+                case .listening: "listening"
+                case .finishing: "finishing"
+                case .transcribing: "transcribing"
+                case .done: "done"
+                case .failed: "failed"
+                case .cancelled: "cancelled"
+                }
+            }(),
+            dictationError: {
+                if case .failed(let error, _) = model.dictationState { return error.message }
+                return nil
+            }(),
             conversationCount: model.conversations.count,
             unreadIDs: model.conversations.filter { $0.hasUnread && !$0.isArchived }.map(\.id.uuidString).sorted(),
             priorityIDs: model.priorityConversationIDs().map(\.uuidString).sorted(),
@@ -673,6 +753,29 @@ enum DebugActions {
     private static func tabID(_ raw: String, in model: ChatAppModel) -> UUID? {
         guard let id = UUID(uuidString: raw), model.browserTabs.tab(id) != nil else { return nil }
         return id
+    }
+
+    /// Runs `start` (which kicks off a send without awaiting it) for `id` and
+    /// waits until the message is in the thread, or queued when the thread
+    /// was busy. Same rule as the desktop composer: a reply in another
+    /// conversation blocks; one in this conversation (or a compaction of it)
+    /// takes the message as a queued follow-up.
+    private static func deliver(to id: UUID, model: ChatAppModel, start: () -> Void) async -> DebugActionOutcome {
+        if model.isStreaming, model.streamingConversationID != id {
+            return .failure("另一个对话正在回复")
+        }
+        if model.selectedConversationID != id { model.selectedConversationID = id }
+        let busy = model.isStreaming || model.isCompacting(id)
+        let before = model.selectedConversation?.messages.count ?? 0
+        let queuedBefore = model.queuedMessages(for: id).count
+        start()
+        if busy {
+            let queued = await waitUntil { model.queuedMessages(for: id).count > queuedBefore }
+            return queued ? .success : .failure(model.errorMessage ?? "没有排进队列")
+        }
+        let sent = await waitUntil { (model.selectedConversation?.messages.count ?? 0) > before || model.errorMessage != nil }
+        if sent, (model.selectedConversation?.messages.count ?? 0) > before { return .success }
+        return .failure(model.errorMessage ?? "没有发出")
     }
 
     /// The named conversation, or the selected one when no id was given.

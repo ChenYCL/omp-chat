@@ -34,6 +34,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var codeFontName: String
     public var speechRateMultiplier: Double
     public var speechVoiceLanguage: String
+    /// Composer dictation language (BCP-47, e.g. zh-CN); empty follows the
+    /// system's preferred languages (`DictationLocale.candidates`).
+    public var dictationLocale: String
     /// Sidebar ordering: "updated" (default), "created", or "manual".
     public var conversationSort: String
     /// Sidebar grouping: "project" (default) or "connection".
@@ -105,6 +108,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         codeFontName: String = "SF Mono",
         speechRateMultiplier: Double = 1.0,
         speechVoiceLanguage: String = "zh-CN",
+        dictationLocale: String = "",
         conversationSort: String = "updated",
         sidebarGrouping: String = "project",
         sidebarFilter: String = "all",
@@ -144,6 +148,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.codeFontName = codeFontName
         self.speechRateMultiplier = speechRateMultiplier
         self.speechVoiceLanguage = speechVoiceLanguage
+        self.dictationLocale = dictationLocale
         self.conversationSort = conversationSort
         self.sidebarGrouping = sidebarGrouping
         self.sidebarFilter = sidebarFilter
@@ -186,6 +191,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName) ?? "SF Mono"
         speechRateMultiplier = try container.decodeIfPresent(Double.self, forKey: .speechRateMultiplier) ?? 1.0
         speechVoiceLanguage = try container.decodeIfPresent(String.self, forKey: .speechVoiceLanguage) ?? "zh-CN"
+        dictationLocale = try container.decodeIfPresent(String.self, forKey: .dictationLocale) ?? ""
         conversationSort = try container.decodeIfPresent(String.self, forKey: .conversationSort) ?? "updated"
         sidebarGrouping = try container.decodeIfPresent(String.self, forKey: .sidebarGrouping) ?? "project"
         sidebarFilter = try container.decodeIfPresent(String.self, forKey: .sidebarFilter) ?? "all"
@@ -216,7 +222,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case version, defaultProviderID, defaultModelID, sendOnReturn, appearance
         case systemPrompt, temperature, maxOutputTokens, fontSize, soundEffects
-        case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage
+        case showLineNumbers, codeFontName, speechRateMultiplier, speechVoiceLanguage, dictationLocale
         case conversationSort, sidebarGrouping, sidebarFilter, customInstructions, enableMemories, memories, accentColorHex
         case completionNotifications
         case remoteHost, remotePort, remoteToken

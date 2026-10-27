@@ -44,8 +44,8 @@ public struct Skill: Identifiable, Hashable, Sendable {
     public var path: String
     public var scope: SkillScope
     /// `agents/openai.yaml` `policy.allow_implicit_invocation`; when false
-    /// the skill is never offered to the model here, since this app has no
-    /// explicit `$skill` invocation.
+    /// the skill is left out of the model-visible list and runs only when
+    /// the user invokes it with `$` in the composer.
     public var allowsImplicitInvocation: Bool
 
     public var directory: String { (path as NSString).deletingLastPathComponent }

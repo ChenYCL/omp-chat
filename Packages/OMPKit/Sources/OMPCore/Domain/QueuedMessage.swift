@@ -11,6 +11,11 @@ public struct QueuedMessage: Identifiable, Codable, Hashable, Sendable {
     /// Long pastes that were chips in the composer, kept apart from `text`
     /// so 编辑 can put them back as chips.
     public var pastes: [String]
+    /// The composer mentions in `text`, resolved when it was sent: sent
+    /// after the pastes, each marked on the message so the transcript shows
+    /// it as a chip. 编辑 drops them and keeps the mentions, so the next
+    /// send reads the files again.
+    public var mentions: [MentionAttachment]
     /// The message it quotes (the composer's 引用).
     public var replyToID: UUID?
     /// Sent from a paired phone: the reply it reaches is held to the phone's
@@ -27,6 +32,7 @@ public struct QueuedMessage: Identifiable, Codable, Hashable, Sendable {
         text: String,
         attachments: [MediaRef] = [],
         pastes: [String] = [],
+        mentions: [MentionAttachment] = [],
         replyToID: UUID? = nil,
         remote: Bool = false,
         isHeld: Bool = false,
@@ -36,6 +42,7 @@ public struct QueuedMessage: Identifiable, Codable, Hashable, Sendable {
         self.text = text
         self.attachments = attachments
         self.pastes = pastes
+        self.mentions = mentions
         self.replyToID = replyToID
         self.remote = remote
         self.isHeld = isHeld
@@ -48,6 +55,7 @@ public struct QueuedMessage: Identifiable, Codable, Hashable, Sendable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         attachments = (try? container.decodeIfPresent([MediaRef].self, forKey: .attachments)) ?? []
         pastes = (try? container.decodeIfPresent([String].self, forKey: .pastes)) ?? []
+        mentions = (try? container.decodeIfPresent([MentionAttachment].self, forKey: .mentions)) ?? []
         replyToID = try? container.decodeIfPresent(UUID.self, forKey: .replyToID)
         remote = (try? container.decodeIfPresent(Bool.self, forKey: .remote)) ?? false
         isHeld = (try? container.decodeIfPresent(Bool.self, forKey: .isHeld)) ?? false
@@ -56,31 +64,35 @@ public struct QueuedMessage: Identifiable, Codable, Hashable, Sendable {
 
     /// One line for the chip above the composer.
     public var preview: String {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init)?
+        let line = shownText.split(whereSeparator: \.isNewline).first.map(String.init)?
             .trimmingCharacters(in: .whitespaces) ?? ""
         if !line.isEmpty { return line }
         if !pastes.isEmpty { return "粘贴的文本" }
         return attachments.isEmpty ? "空消息" : "附件消息"
     }
 
-    /// The user message it becomes when delivered.
-    public var message: ChatMessage {
-        ChatMessage(
-            role: .user,
-            parts: Self.userParts(text: text, pastes: pastes, attachments: attachments),
-            replyToID: replyToID
-        )
+    /// `text` as the transcript shows it: mention tokens read as `@名称`.
+    /// A phone's text is shown as typed; it never carries resolved mentions.
+    public var shownText: String {
+        remote ? text : ComposerMention.readable(text)
     }
 
-    /// A user message's parts as the composer sends them: the text, each
-    /// folded paste as a fenced block, then the attachments.
-    public static func userParts(text: String, pastes: [String], attachments: [MediaRef]) -> [ContentPart] {
+    /// The user message it becomes when delivered: the text, each folded
+    /// paste as a fenced block, the resolved mentions (marked), then the
+    /// attachments.
+    public var message: ChatMessage {
+        let shown = shownText
         var parts: [ContentPart] = []
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(text)) }
+        if !shown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(shown)) }
         for paste in pastes {
             parts.append(.text("\n\n```\n\(paste)\n```"))
         }
+        var marks: [MessageMention] = []
+        for mention in mentions {
+            marks.append(MessageMention(part: parts.count, attachment: mention))
+            parts.append(.text(mention.text))
+        }
         parts.append(contentsOf: attachments.map { .media($0) })
-        return parts
+        return ChatMessage(role: .user, parts: parts, replyToID: replyToID, mentions: marks)
     }
 }

@@ -361,7 +361,7 @@ public struct ProviderSettingsView: View {
             shortcutRow("新建临时对话", "⇧⌘N")
             shortcutRow("重新生成", "⇧⌘R")
             shortcutRow("停止生成", "⌘.")
-            shortcutRow("语音模式", "⇧⌘V")
+            shortcutRow("听写", "⇧⌘V")
             shortcutRow("会话内查找", "⌘F")
             shortcutRow("命令面板", "⌘K")
             shortcutRow("折叠侧栏", "⌘B")
@@ -988,6 +988,12 @@ public struct ProviderSettingsView: View {
         }
     }
 
+    /// Languages the device dictates in on device, loaded when the section
+    /// appears; zh-CN and en-US are offered before that.
+    @State private var dictationLocales: [String] = []
+    /// 跟随系统 with the language it resolves to here, loaded with the list.
+    @State private var followSystemDictationTitle = "跟随系统"
+
     private var speechSection: some View {
         Section("语音与朗读") {
             Picker("朗读语速", selection: $draft.speechRateMultiplier) {
@@ -1001,6 +1007,18 @@ public struct ProviderSettingsView: View {
                 Text("英语 (en-US)").tag("en-US")
                 Text("粤语 (zh-HK)").tag("zh-HK")
                 Text("日语 (ja-JP)").tag("ja-JP")
+            }
+            Picker("听写语言", selection: $draft.dictationLocale) {
+                Text(followSystemDictationTitle).tag("")
+                ForEach(DictationLocale.menu(dictationLocales + [draft.dictationLocale]), id: \.self) { identifier in
+                    Text(DictationLocale.displayName(identifier)).tag(identifier)
+                }
+            }
+            .accessibilityIdentifier("settings.dictationLocale")
+            .task {
+                let menu = await DictationEngines.languageMenu()
+                dictationLocales = menu.locales
+                followSystemDictationTitle = menu.followSystem
             }
         }
     }

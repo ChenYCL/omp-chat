@@ -193,8 +193,12 @@ public enum DebugAction: Sendable, Equatable {
     case git(conversationID: String?, operation: DebugGitOperation)
     /// Archive, pin, rename, move, and project / section edits.
     case sidebarOp(DebugSidebarOperation)
-    /// Send a user message in a conversation (the composer's send button).
+    /// Send the given text as a user message, as typed: mention tokens in it
+    /// are resolved, readable `@名称` text is not (see `sendDraft`).
     case send(conversationID: String?, text: String)
+    /// The composer's send button on the current draft: readable mentions go
+    /// out as tokens and are resolved, the draft is cleared.
+    case sendDraft(conversationID: String?)
     /// Stop the reply, the running tool and every pending approval (⌘.).
     case stop
     /// Answer one approval card.
@@ -214,6 +218,15 @@ public enum DebugAction: Sendable, Equatable {
     case queued(conversationID: String?, queuedID: String, op: DebugQueuedOperation)
     /// 压缩上下文 (the + menu and `/compact`).
     case compact(conversationID: String?)
+    /// The composer's `@` / `$` list for a query: `detail` carries the
+    /// candidates as JSON (token, kind, title, detail, badge).
+    case mentionSearch(conversationID: String?, query: String, trigger: Character)
+    /// Picking a row of that list: replaces the `@…` / `$…` being typed in
+    /// the draft with the candidate's token.
+    case pickMention(conversationID: String?, token: String)
+    /// Transcribes an audio file into the draft with the same on-device
+    /// recognizer as the composer's dictation (no microphone involved).
+    case transcribeFile(conversationID: String?, path: String, locale: String?)
     /// 设置 → MCP 服务器 → 目录 → 安装: the entry's answers by input id.
     case mcpInstall(entryID: String, values: [String: [String]])
     /// Remove a server from settings (and its vault secrets).
@@ -231,6 +244,8 @@ public enum DebugAction: Sendable, Equatable {
     case undo
     /// Hides the undo toast; the history is kept.
     case dismissUndo
+    /// ⌘B: shows or hides the sidebar (macOS).
+    case toggleSidebar
 
     /// The wire name of the action.
     public var name: String {
@@ -263,6 +278,7 @@ public enum DebugAction: Sendable, Equatable {
         case .git: "git"
         case .sidebarOp: "sidebarOp"
         case .send: "send"
+        case .sendDraft: "sendDraft"
         case .stop: "stop"
         case .approve: "approve"
         case .setPermissionMode: "setPermissionMode"
@@ -273,6 +289,9 @@ public enum DebugAction: Sendable, Equatable {
         case .codeReview: "codeReview"
         case .queued: "queued"
         case .compact: "compact"
+        case .mentionSearch: "mentionSearch"
+        case .pickMention: "pickMention"
+        case .transcribeFile: "transcribeFile"
         case .mcpInstall: "mcpInstall"
         case .mcpRemove: "mcpRemove"
         case .setWebSearch: "setWebSearch"
@@ -280,6 +299,7 @@ public enum DebugAction: Sendable, Equatable {
         case .setPhoneAccess: "setPhoneAccess"
         case .undo: "undo"
         case .dismissUndo: "dismissUndo"
+        case .toggleSidebar: "toggleSidebar"
         }
     }
 
@@ -480,6 +500,9 @@ public enum DebugAction: Sendable, Equatable {
         case "send":
             guard let id = optionalString("conversationID"), let text = fields["text"] as? String else { return nil }
             return .send(conversationID: id, text: text)
+        case "sendDraft":
+            guard let id = optionalString("conversationID") else { return nil }
+            return .sendDraft(conversationID: id)
         case "stop":
             return .stop
         case "approve":
@@ -570,6 +593,18 @@ public enum DebugAction: Sendable, Equatable {
         case "compact":
             guard let id = optionalString("conversationID") else { return nil }
             return .compact(conversationID: id)
+        case "mentionSearch":
+            guard let id = optionalString("conversationID"),
+                  let query = fields["query"] as? String,
+                  let raw = fields["trigger"] as? String, raw == "@" || raw == "$" else { return nil }
+            return .mentionSearch(conversationID: id, query: query, trigger: Character(raw))
+        case "pickMention":
+            guard let id = optionalString("conversationID"), let token = fields["token"] as? String else { return nil }
+            return .pickMention(conversationID: id, token: token)
+        case "transcribeFile":
+            guard let id = optionalString("conversationID"), let locale = optionalString("locale"),
+                  let path = fields["path"] as? String, path.hasPrefix("/") else { return nil }
+            return .transcribeFile(conversationID: id, path: path, locale: locale)
         case "mcpInstall":
             guard let entry = fields["entryID"] as? String else { return nil }
             var values: [String: [String]] = [:]
@@ -600,6 +635,8 @@ public enum DebugAction: Sendable, Equatable {
             return .undo
         case "dismissUndo":
             return .dismissUndo
+        case "toggleSidebar":
+            return .toggleSidebar
         default:
             return nil
         }
@@ -611,6 +648,15 @@ public struct DebugActionOutcome: Codable, Sendable, Equatable {
     public var ok: Bool
     /// Present only when `ok` is false.
     public var error: String?
+    /// What a query-like action found, as JSON text (e.g. `mentionSearch`).
+    /// Left out of the reply when nil.
+    public var detail: String?
+
+    public init(ok: Bool, error: String?, detail: String? = nil) {
+        self.ok = ok
+        self.error = error
+        self.detail = detail
+    }
 
     public static let success = DebugActionOutcome(ok: true, error: nil)
     public static func failure(_ message: String) -> DebugActionOutcome {

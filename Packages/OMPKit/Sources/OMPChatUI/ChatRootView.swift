@@ -11,7 +11,6 @@ public extension Notification.Name {
     static let ompNewChat = Notification.Name("omp.newChat")
     static let ompFindInChat = Notification.Name("omp.findInChat")
     static let ompToggleSidebar = Notification.Name("omp.toggleSidebar")
-    static let ompVoiceMode = Notification.Name("omp.voiceMode")
     static let ompScrollToBottom = Notification.Name("omp.scrollToBottom")
     /// userInfo["messageID"]: scroll that message into view (in-chat search).
     static let ompScrollToMessage = Notification.Name("omp.scrollToMessage")
@@ -67,31 +66,58 @@ public struct ChatRootView: View {
 
     #if os(macOS)
     @State private var sidebarWidth: CGFloat = 260
+    /// The root's width, for `toggleSidebar`; layout reads the geometry.
+    @State private var rootWidth: CGFloat = 0
+
+    /// Narrowest the chat column gets: its header and composer stop
+    /// compressing at about 500pt.
+    private static let chatMinWidth: CGFloat = 520
+    /// The side panel is 460pt when there is room and gives way down to 320pt.
+    private static let sidePanelWidths: ClosedRange<CGFloat> = 320...460
+
+    /// Whether the sidebar fits next to the chat and the open side panel,
+    /// both at their narrowest. When it does not, the sidebar steps aside for
+    /// the panel, as Xcode's navigator does for its inspector. The row used to
+    /// keep all three (with a fixed 460pt panel it came to about 1225pt in the
+    /// default 1180pt window) and AppKit does not grow a window when its
+    /// content's minimum grows, so the centred overflow cut the sidebar's left
+    /// edge and the panel's right edge.
+    private func sidebarFits(in width: CGFloat) -> Bool {
+        !model.sidePanelOpen
+            || width >= sidebarWidth + SidebarResizer.width + Self.chatMinWidth + 1 + Self.sidePanelWidths.lowerBound
+    }
 
     private var macOSRoot: some View {
-        HStack(spacing: 0) {
-            if sidebarVisible {
-                ConversationSidebar()
-                    .frame(width: sidebarWidth)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                SidebarResizer(width: $sidebarWidth)
-            }
-            ChatDetailView(
-                onQuickSwitch: { showSwitcher = true },
-                onToggleSidebar: toggleSidebar,
-                onToggleTerminal: { model.toggleSidePanel() }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Terminal / files / changes on the local working tree. The open
-            // flag and the tab live in the model so the relay's debug actions
-            // drive the same panel.
-            if model.sidePanelOpen {
-                Divider()
-                SidePanel()
-                    .frame(width: 460)
-                    .transition(.move(edge: .trailing))
+        GeometryReader { geometry in
+            let showsSidebar = sidebarVisible && sidebarFits(in: geometry.size.width)
+            let sidebarColumn = showsSidebar ? sidebarWidth + SidebarResizer.width : 0
+            let room = geometry.size.width - sidebarColumn - 1 - Self.chatMinWidth
+            let panelWidth = min(Self.sidePanelWidths.upperBound, max(Self.sidePanelWidths.lowerBound, room))
+            HStack(spacing: 0) {
+                if showsSidebar {
+                    ConversationSidebar()
+                        .frame(width: sidebarWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    SidebarResizer(width: $sidebarWidth)
+                }
+                ChatDetailView(
+                    onQuickSwitch: { showSwitcher = true },
+                    onToggleSidebar: toggleSidebar,
+                    onToggleTerminal: { model.toggleSidePanel() }
+                )
+                .frame(minWidth: Self.chatMinWidth, maxWidth: .infinity, maxHeight: .infinity)
+                // Terminal / files / changes on the local working tree. The open
+                // flag and the tab live in the model so the relay's debug actions
+                // drive the same panel.
+                if model.sidePanelOpen {
+                    Divider()
+                    SidePanel()
+                        .frame(width: panelWidth)
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { rootWidth = $0 }
         .background(Color.ompCanvas)
         .animation(Theme.Motion.quick, value: sidebarVisible)
         .animation(Theme.Motion.quick, value: model.sidePanelOpen)
@@ -100,8 +126,16 @@ public struct ChatRootView: View {
         }
     }
 
+    /// ⌘B and the header button. A sidebar that stepped aside for the panel
+    /// counts as hidden: showing it again closes the panel, since both do not
+    /// fit, rather than doing nothing visible.
     private func toggleSidebar() {
-        sidebarVisible.toggle()
+        if sidebarVisible && sidebarFits(in: rootWidth) {
+            sidebarVisible = false
+        } else {
+            sidebarVisible = true
+            if !sidebarFits(in: rootWidth) { model.toggleSidePanel(open: false) }
+        }
     }
     #endif
 }
@@ -590,7 +624,7 @@ public struct ChatDetailView: View {
         let query = inChatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, let conversation = model.selectedConversation else { return [] }
         return conversation.messages.filter {
-            $0.concatenatedText.localizedCaseInsensitiveContains(query)
+            $0.writtenText.localizedCaseInsensitiveContains(query)
         }.map(\.id)
     }
 

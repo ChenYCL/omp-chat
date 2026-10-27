@@ -223,6 +223,28 @@ final class DebugActionDecodingTests: XCTestCase {
         XCTAssertNil(decode(#"{"action":"scheduledTask","op":"explode","taskID":"t1"}"#))
     }
 
+    func testMentionActionsNeedAKnownTriggerAndAToken() {
+        XCTAssertEqual(decode(#"{"action":"mentionSearch","query":"说明","trigger":"@"}"#),
+                       .mentionSearch(conversationID: nil, query: "说明", trigger: "@"))
+        XCTAssertEqual(decode(#"{"action":"mentionSearch","conversationID":"c","query":"","trigger":"$"}"#),
+                       .mentionSearch(conversationID: "c", query: "", trigger: "$"), "空查询列出全部")
+        XCTAssertNil(decode(##"{"action":"mentionSearch","query":"x","trigger":"#"}"##), "只有 @ 和 $")
+        XCTAssertNil(decode(#"{"action":"mentionSearch","query":"x","trigger":"@@"}"#))
+        XCTAssertNil(decode(#"{"action":"mentionSearch","trigger":"@"}"#))
+        XCTAssertEqual(decode(#"{"action":"pickMention","token":"[@a.md](file:a.md)"}"#),
+                       .pickMention(conversationID: nil, token: "[@a.md](file:a.md)"))
+        XCTAssertNil(decode(#"{"action":"pickMention"}"#))
+        XCTAssertEqual(decode(#"{"action":"sendDraft"}"#), .sendDraft(conversationID: nil))
+        XCTAssertEqual(decode(#"{"action":"sendDraft","conversationID":"c"}"#), .sendDraft(conversationID: "c"))
+        XCTAssertNil(decode(#"{"action":"sendDraft","conversationID":7}"#))
+        XCTAssertEqual(decode(#"{"action":"transcribeFile","path":"/tmp/a.aiff","locale":"zh-CN"}"#),
+                       .transcribeFile(conversationID: nil, path: "/tmp/a.aiff", locale: "zh-CN"))
+        XCTAssertEqual(decode(#"{"action":"transcribeFile","path":"/tmp/a.aiff"}"#),
+                       .transcribeFile(conversationID: nil, path: "/tmp/a.aiff", locale: nil), "语言缺省跟随设置")
+        XCTAssertNil(decode(#"{"action":"transcribeFile","path":"a.aiff"}"#), "只收绝对路径")
+        XCTAssertNil(decode(#"{"action":"transcribeFile","path":"/tmp/a.aiff","locale":3}"#))
+    }
+
     func testQueuedChipActions() {
         XCTAssertEqual(decode(#"{"action":"queued","queuedID":"q1","op":"sendNow"}"#),
                        .queued(conversationID: nil, queuedID: "q1", op: .sendNow))
@@ -414,6 +436,10 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"codeReview"}"#,
             #"{"action":"queued","queuedID":"q","op":"edit"}"#,
             #"{"action":"compact"}"#,
+            #"{"action":"mentionSearch","query":"","trigger":"@"}"#,
+            #"{"action":"pickMention","token":"x"}"#,
+            #"{"action":"sendDraft"}"#,
+            #"{"action":"toggleSidebar"}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)

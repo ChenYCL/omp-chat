@@ -77,8 +77,10 @@ struct OMPChatApp: App {
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!model.isStreaming)
 
-                Button("语音模式") {
-                    NotificationCenter.default.post(name: .ompVoiceMode, object: nil)
+                // Starts dictation in the composer, or puts what was said into
+                // the draft; Esc cancels from the dictation bar.
+                Button("听写") {
+                    model.toggleDictation()
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
 

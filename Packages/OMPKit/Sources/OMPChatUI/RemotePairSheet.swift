@@ -521,6 +521,8 @@ struct RemoteConversationRow: View {
                         approvalBadge
                     } else if conversation.isStreaming {
                         streamingBadge
+                    } else if let tag = conversation.rowTag {
+                        ConversationRowTagView(tag: tag, scope: "remote")
                     }
                 }
                 HStack(spacing: 6) {

@@ -112,6 +112,9 @@ def run(relay, shots, check):
               json.dumps({"reply": reply, "queued": state["queued"]}, ensure_ascii=False))
         check("插话没有打断回复，卡片还在", relay.state()["isStreaming"] and bool(cards()))
         check("排队时还没进对话", follow_up not in user_texts())
+        state = relay.state()
+        check("会话行标「等待批准」并进待处理", state["selected"]["rowTags"][:1] == ["awaitingApproval"]
+              and conversation_id in state["priorityIDs"], json.dumps(state["selected"]["rowTags"]))
         codex.settle()
         relay.snap(os.path.join(shots, "01-queued-while-card.png"))
         if waiting:
@@ -119,6 +122,7 @@ def run(relay, shots, check):
         finished = finish()
         state = selected()
         check("回复走完，队列清空", finished and not state["queued"], json.dumps(state["queued"], ensure_ascii=False))
+        check("走完后行上没有阻塞标签", not state["rowTags"], json.dumps(state["rowTags"]))
         texts = user_texts()
         check("插话作为用户消息进了对话", follow_up in texts, json.dumps(texts, ensure_ascii=False)[:300])
         transcript = state["transcript"]
@@ -139,6 +143,8 @@ def run(relay, shots, check):
         check("停止后不再回复、没有卡片", stopped)
         check("队列还在且被停住", [(q["text"], q["held"]) for q in state["queued"]] == [(held_text, True)],
               json.dumps(state["queued"], ensure_ascii=False))
+        check("停住后行标「需要你处理」", state["rowTags"][:1] == ["needsInput"]
+              and conversation_id in relay.state()["priorityIDs"], json.dumps(state["rowTags"]))
         time.sleep(3)
         check("停住的消息没有自己发出", held_text not in user_texts() and user_texts() == before)
         queued_id = state["queued"][0]["id"] if state["queued"] else ""
@@ -146,6 +152,8 @@ def run(relay, shots, check):
         state = relay.state()
         check("编辑：回到输入框，队列清空", held_text in state["draft"] and not state["selected"]["queued"],
               json.dumps({"draft": state["draft"], "queued": state["selected"]["queued"]}, ensure_ascii=False))
+        check("队列清空后「需要你处理」消失", "needsInput" not in state["selected"]["rowTags"],
+              json.dumps(state["selected"]["rowTags"]))
         relay.act("setDraft", text="")
 
         print("立即发送：打断等待中的回复")

@@ -10,6 +10,10 @@
     <true/>
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+    <!-- Composer dictation (听写): microphone input for on-device speech
+         recognition. Without it the sandbox delivers no audio. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <!-- Opt-in remote host access (设置 → 远程控制 → 允许手机访问文件与终端).
          Measured with a signed probe (HostExecutor sandbox study): the home-relative
          exception lets `ls`/read work but `git` still fails; only the absolute-path

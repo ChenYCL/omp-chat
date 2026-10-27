@@ -49,6 +49,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     /// The summary requests send in place of the earlier messages; nil
     /// until the thread is compacted.
     public var compaction: ConversationCompaction? = nil
+    /// The scheduled task whose run created this thread; set once by the
+    /// run, kept after the task is deleted. Older documents have none.
+    public var scheduledTaskID: UUID? = nil
     public init(
         id: UUID = UUID(),
         title: String = "新对话",
@@ -113,6 +116,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isCodeReview = (try? container.decodeIfPresent(Bool.self, forKey: .isCodeReview)) ?? false
         queuedMessages = (try? container.decodeIfPresent([QueuedMessage].self, forKey: .queuedMessages)) ?? []
         compaction = try? container.decodeIfPresent(ConversationCompaction.self, forKey: .compaction)
+        scheduledTaskID = try? container.decodeIfPresent(UUID.self, forKey: .scheduledTaskID)
     }
 
 
@@ -126,7 +130,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
 
     public var lastMessagePreview: String {
         guard let last = messages.last else { return "开始新的对话" }
-        let text = last.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = last.writtenText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "附件消息" }
         let stripped = text
             .replacingOccurrences(of: "**", with: "")
@@ -139,14 +143,21 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
 /// group lists these, and every other section hides them, so a chat cannot
 /// appear twice.
 public enum ConversationPriority {
-    public static func wantsAttention(_ conversation: Conversation, streamingID: UUID?) -> Bool {
+    /// `awaitingApproval`: conversations with an approval card waiting.
+    public static func wantsAttention(_ conversation: Conversation, streamingID: UUID?,
+                                      awaitingApproval: Bool = false) -> Bool {
         guard !conversation.isArchived, !conversation.isLocked else { return false }
         return conversation.hasUnread
             || conversation.id == streamingID
             || conversation.needsReply
+            || awaitingApproval
+            || ConversationRowStatus.needsInput(conversation)
     }
 
-    public static func ids(in conversations: [Conversation], streamingID: UUID?) -> Set<UUID> {
-        Set(conversations.filter { wantsAttention($0, streamingID: streamingID) }.map(\.id))
+    public static func ids(in conversations: [Conversation], streamingID: UUID?,
+                           awaitingApprovalIDs: Set<UUID> = []) -> Set<UUID> {
+        Set(conversations.filter {
+            wantsAttention($0, streamingID: streamingID, awaitingApproval: awaitingApprovalIDs.contains($0.id))
+        }.map(\.id))
     }
 }

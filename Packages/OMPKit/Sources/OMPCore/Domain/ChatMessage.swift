@@ -29,6 +29,9 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     /// Earlier versions of this prompt if it was edited.
     public var alternativeVersions: [String] = []
     public var currentVersionIndex: Int = 0
+    /// Which text parts are attached mention context, not what the user
+    /// wrote (see `MessageMention`). Empty for messages that predate it.
+    public var mentions: [MessageMention] = []
     public init(
         id: UUID = UUID(),
         role: MessageRole,
@@ -40,7 +43,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         feedback: Int? = nil,
         replyToID: UUID? = nil,
         alternativeVersions: [String] = [],
-        currentVersionIndex: Int = 0
+        currentVersionIndex: Int = 0,
+        mentions: [MessageMention] = []
     ) {
         self.id = id
         self.role = role
@@ -53,11 +57,12 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.replyToID = replyToID
         self.alternativeVersions = alternativeVersions
         self.currentVersionIndex = currentVersionIndex
+        self.mentions = mentions
     }
 
     enum CodingKeys: String, CodingKey {
         case id, role, parts, status, createdAt, errorText, usage, feedback, replyToID
-        case alternativeVersions, currentVersionIndex
+        case alternativeVersions, currentVersionIndex, mentions
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +78,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.replyToID = try container.decodeIfPresent(UUID.self, forKey: .replyToID)
         self.alternativeVersions = (try? container.decodeIfPresent([String].self, forKey: .alternativeVersions)) ?? []
         self.currentVersionIndex = (try? container.decodeIfPresent(Int.self, forKey: .currentVersionIndex)) ?? 0
+        self.mentions = (try? container.decodeIfPresent([MessageMention].self, forKey: .mentions)) ?? []
     }
 
     /// Visible answer text only. Thinking lives in `thinkingText`.

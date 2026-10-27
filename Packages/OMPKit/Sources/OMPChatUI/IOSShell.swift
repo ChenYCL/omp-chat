@@ -463,7 +463,7 @@ struct ChatScreen: View {
         let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, let conversation = model.selectedConversation else { return [] }
         return conversation.messages
-            .filter { $0.concatenatedText.localizedCaseInsensitiveContains(query) }
+            .filter { $0.writtenText.localizedCaseInsensitiveContains(query) }
             .map(\.id)
     }
 
@@ -819,8 +819,9 @@ struct ShellDrawer: View {
     }
 
 
-    /// Unread replies and whichever conversation is still generating — the
-    /// phone's counterpart to the desktop sidebar's 待处理 section.
+    /// Unread replies, the conversation still generating and the ones
+    /// waiting on the user — the phone's counterpart to the desktop
+    /// sidebar's 待处理 section.
     private var priorityConversations: [Conversation] {
         let ids = model.priorityConversationIDs()
         return model.sortedConversations.filter { ids.contains($0.id) }
@@ -853,6 +854,7 @@ struct ShellDrawer: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Color.ompText)
                         .lineLimit(1)
+                    ConversationRowTags(status: model.rowStatus(for: conv), scope: "drawer")
                     Spacer()
                     Text(conv.updatedAt.formatted(.relative(presentation: .named)))
                         .font(.system(size: 11))
@@ -1032,7 +1034,6 @@ struct ShellDrawer: View {
 /// ompSurface fill + 0.5pt border; left `+` menu, right 32pt circular send key.
 struct PaseoComposerBar: View {
     @Environment(ChatAppModel.self) private var model
-    @State private var showVoiceSheet = false
     @State private var showImageSheet = false
     @State private var importingFile = false
     @State private var showGoalAlert = false
@@ -1066,10 +1067,11 @@ struct PaseoComposerBar: View {
             }
             QueuedMessagesStrip()
                 .padding(.horizontal, 12)
-            composerRow
-        }
-        .sheet(isPresented: $showVoiceSheet) {
-            VoiceModeSheet().environment(model)
+            if model.showsDictationBar {
+                dictationRow
+            } else {
+                composerRow
+            }
         }
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
@@ -1111,13 +1113,6 @@ struct PaseoComposerBar: View {
                         showImageSheet = true
                     } label: {
                         Label("生成图片", systemImage: "photo.badge.plus")
-                    }
-                }
-                Menu("语音模式") {
-                    Button {
-                        showVoiceSheet = true
-                    } label: {
-                        Label("打开语音输入", systemImage: "mic")
                     }
                 }
                 Button {
@@ -1172,6 +1167,7 @@ struct PaseoComposerBar: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, (IOSShellMetrics.composerMinHeight - 20) / 2)
 
+            DictationButton(size: IOSShellMetrics.composerMinHeight, iconSize: 16)
             sendButton
         }
         .padding(.leading, 6)
@@ -1233,6 +1229,23 @@ struct PaseoComposerBar: View {
 
     private var queuesFollowUp: Bool {
         canSend && model.streamingConversationID == model.selectedConversationID
+    }
+
+    // MARK: - Dictation
+
+    /// While dictating, the pill holds the dictation bar instead of the field.
+    private var dictationRow: some View {
+        DictationBar(compact: true, rowHeight: IOSShellMetrics.composerMinHeight)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Color.ompCard, in: RoundedRectangle(cornerRadius: IOSShellMetrics.composerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: IOSShellMetrics.composerRadius, style: .continuous)
+                    .strokeBorder(Color.ompBorder, lineWidth: 0.5)
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
     }
 }
 #endif

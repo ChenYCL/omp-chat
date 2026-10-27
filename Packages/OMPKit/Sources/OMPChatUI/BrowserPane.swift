@@ -26,6 +26,8 @@ struct BrowserPane: View {
     /// Which tab's name field has focus; per tab, so starting a second rename
     /// is not mistaken for clicking away from the first.
     @FocusState private var renameFocus: UUID?
+    /// Names this pane's page-text reader in the model (composer mentions).
+    @State private var pageReaderID = UUID()
 
     private var tabs: BrowserTabList { model.browserTabs }
 
@@ -44,7 +46,14 @@ struct BrowserPane: View {
                 }
             }
         }
-        .onAppear { text = selected.url }
+        .onAppear {
+            text = selected.url
+            // A mentioned tab's page text is read from these live pages at
+            // send time, while the pane is on screen.
+            let pages = self.pages
+            model.setBrowserPageReader({ id in await pages.text(of: id) }, owner: pageReaderID)
+        }
+        .onDisappear { model.setBrowserPageReader(nil, owner: pageReaderID) }
         .onChange(of: tabs.selectedID) { _, _ in text = tabs.selected.url }
         // Redirects and link clicks move the address; typing is left alone.
         .onChange(of: selected.url) { _, url in
@@ -358,6 +367,12 @@ private final class BrowserPages {
             pages[id] = nil
         }
     }
+
+    /// The visible text of tab `id`'s page (`document.body.innerText`); nil
+    /// when this pane has no live page for the tab.
+    func text(of id: UUID) async -> String? {
+        await pages[id]?.innerText()
+    }
 }
 
 /// One tab's web view and its load state.
@@ -437,6 +452,33 @@ private final class BrowserPage {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.removeFromSuperview()
+    }
+
+    /// `document.body.innerText`, or nil when the page does not answer
+    /// within `timeout` seconds (a busy page must not hold up a send).
+    func innerText(timeout: TimeInterval = 3) async -> String? {
+        await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            webView.evaluateJavaScript("document.body ? document.body.innerText : ''") { result, _ in
+                once.resume(result as? String)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { once.resume(nil) }
+        }
+    }
+
+    /// Resumes its continuation the first time only: the script's answer
+    /// and the timeout race, both on the main thread.
+    private final class ResumeOnce {
+        private var continuation: CheckedContinuation<String?, Never>?
+
+        init(_ continuation: CheckedContinuation<String?, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(_ value: String?) {
+            continuation?.resume(returning: value)
+            continuation = nil
+        }
     }
 
     /// Hands what the web view now shows back to the tab list.

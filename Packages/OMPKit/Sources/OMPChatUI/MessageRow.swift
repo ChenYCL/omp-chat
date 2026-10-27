@@ -124,6 +124,10 @@ public struct MessageRow: View {
                 } else {
                     bubble
                 }
+                // Mentions that were left out or cut short (提及说明).
+                if !editing, !message.mentionNotes.isEmpty {
+                    mentionNotes(message.mentionNotes)
+                }
                 // A follow-up the reply took in but ended without answering.
                 if let note = message.errorText, !note.isEmpty {
                     errorView(note)
@@ -138,13 +142,16 @@ public struct MessageRow: View {
         }
     }
     /// Official user bubble: ompUserBubble fill, radius 22, padding 10×14,
-    /// max width 78% of the transcript column, right aligned.
+    /// max width 78% of the transcript column, right aligned. Attached
+    /// mentions show as chips under what the user wrote, not inline.
     private var bubble: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.s) {
-            ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
+        let marked = message.mentionParts
+        let attached = message.mentionAttachments
+        return VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+            ForEach(Array(message.parts.enumerated()), id: \.offset) { index, part in
                 switch part {
                 case .text(let value):
-                    if !value.isEmpty {
+                    if !value.isEmpty, marked[index] == nil {
                         MarkdownText(value)
                             .foregroundStyle(Color.ompText)
                     }
@@ -153,6 +160,9 @@ public struct MessageRow: View {
                 default:
                     EmptyView()
                 }
+            }
+            if !attached.isEmpty {
+                MentionAttachmentChips(attachments: attached)
             }
         }
         .padding(.horizontal, 14)
@@ -523,7 +533,7 @@ public struct MessageRow: View {
 
             if message.role == .user, actions.edit != nil {
                 iconButton("pencil", help: "编辑并重新发送") {
-                    editText = message.concatenatedText
+                    editText = message.writtenText
                     editing = true
                 }
             }
@@ -605,7 +615,7 @@ public struct MessageRow: View {
         }
         if actions.edit != nil {
             Button {
-                editText = message.concatenatedText
+                editText = message.writtenText
                 editing = true
             } label: {
                 Label("编辑重发", systemImage: "pencil")
@@ -622,6 +632,142 @@ public struct MessageRow: View {
                 Label("删除", systemImage: "trash")
             }
         }
+    }
+}
+
+extension MessageRow {
+    private func mentionNotes(_ notes: [String]) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text(notes.joined(separator: "\n"))
+                .font(.system(size: 11))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Color.ompTextTertiary)
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("message.mention.notes")
+    }
+}
+
+/// The mentions a sent message attached, one chip each (icon and name);
+/// a chip opens the content the model read with it.
+private struct MentionAttachmentChips: View {
+    let attachments: [MentionAttachment]
+    @State private var expanded: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MentionChipFlow(spacing: 6) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { index, attachment in
+                    chip(attachment, index: index)
+                }
+            }
+            if let expanded, attachments.indices.contains(expanded) {
+                ScrollView {
+                    MarkdownText(attachments[expanded].text.trimmingCharacters(in: .newlines))
+                        .foregroundStyle(Color.ompText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 320)
+                .padding(8)
+                .background(Color.ompCard.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+                .accessibilityIdentifier("message.mention.content")
+            }
+        }
+    }
+
+    private func chip(_ attachment: MentionAttachment, index: Int) -> some View {
+        let open = expanded == index
+        return Button {
+            expanded = open ? nil : index
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: Self.icon(attachment.mention?.kind))
+                    .font(.system(size: 10))
+                Text(Self.title(attachment.mention))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if attachment.truncated {
+                    Image(systemName: "scissors")
+                        .font(.system(size: 9))
+                }
+                Image(systemName: open ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(Color.ompTextSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: 240)
+            // The bubble is ompFill already: chips sit on the card surface.
+            .background(Color.ompCard, in: Capsule())
+            .overlay(Capsule().strokeBorder(open ? Color.accentColor.opacity(0.5) : Color.ompBorder, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(attachment.truncated ? "超出上限，只附上了一部分" : "查看附上的内容")
+        .accessibilityIdentifier("message.mention.chip.\(index)")
+        .accessibilityLabel(Self.title(attachment.mention))
+    }
+
+    /// File, chat and tab by name, a skill as `$name`.
+    static func title(_ mention: ComposerMention?) -> String {
+        guard let mention else { return "" }
+        return mention.kind == .skill ? mention.readable : mention.label
+    }
+
+    static func icon(_ kind: MentionKind?) -> String {
+        switch kind {
+        case .file: "doc.text"
+        case .chat: "bubble.left"
+        case .tab: "globe"
+        case .skill: "sparkles"
+        case nil: "info.circle"
+        }
+    }
+}
+
+/// Lays chips out left to right, wrapping onto new rows, as wide as its
+/// widest row, so a bubble with a short line and one chip stays narrow.
+private struct MentionChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews.map { $0.sizeThatFits(.unspecified) }, width: proposal.width ?? .infinity).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let points = arrange(sizes, width: bounds.width).points
+        for (index, subview) in subviews.enumerated() {
+            subview.place(
+                at: CGPoint(x: bounds.minX + points[index].x, y: bounds.minY + points[index].y),
+                proposal: ProposedViewSize(sizes[index])
+            )
+        }
+    }
+
+    private func arrange(_ sizes: [CGSize], width: CGFloat) -> (points: [CGPoint], size: CGSize) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for size in sizes {
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            widest = max(widest, x + size.width)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (points, CGSize(width: widest, height: sizes.isEmpty ? 0 : y + rowHeight))
     }
 }
 

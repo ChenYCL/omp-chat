@@ -91,7 +91,7 @@ public struct ChatTranscriptView: View {
 
     private func actions(for message: ChatMessage) -> MessageRow.Actions {
         MessageRow.Actions(
-            copy: { copyToPasteboard(message.concatenatedText) },
+            copy: { copyToPasteboard(message.writtenText) },
             edit: message.role == .user ? { (text: String) in
                 model.editAndResend(message.id, newText: text)
             } : nil,
@@ -133,7 +133,7 @@ public struct ChatTranscriptView: View {
             Button("复制") {
                 let text = model.selectedConversation?.messages
                     .filter { model.selectedMessageIDs.contains($0.id) }
-                    .map(\.concatenatedText)
+                    .map(\.writtenText)
                     .joined(separator: "\n\n") ?? ""
                 copyToPasteboard(text)
                 AudioFeedback.playSend(enabled: true)

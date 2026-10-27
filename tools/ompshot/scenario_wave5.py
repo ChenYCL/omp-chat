@@ -187,6 +187,8 @@ def run(relay, shots, check, live):
                           json.dumps({"title": selected["title"], "count": selected["messageCount"], "text": text[:120]},
                                      ensure_ascii=False))
                     check("新对话以任务名命名", selected["title"].startswith("场景定时"), selected["title"])
+                    check("运行出的对话行标「定时任务运行」", "automation" in selected["rowTags"],
+                          json.dumps(selected["rowTags"]))
                 check("一次性任务运行后完成", (task_named("场景定时") or {}).get("status") == "completed")
                 codex.settle()
                 relay.snap(os.path.join(shots, "04-scheduled-run.png"))
@@ -208,6 +210,8 @@ def run(relay, shots, check, live):
                 check("提示词和回复进了同一个对话", selected["messageCount"] >= count + 2,
                       f"{count} → {selected['messageCount']}")
                 check("任务记下这次运行", (task_named("场景心跳") or {}).get("lastRunConversationID") == chat)
+                check("被附加的对话行标「已附加定时任务」", "attachedHeartbeatAutomation" in selected["rowTags"],
+                      json.dumps(selected["rowTags"]))
     finally:
         for task_id in created_tasks:
             relay.act("scheduledTask", op="delete", taskID=task_id)

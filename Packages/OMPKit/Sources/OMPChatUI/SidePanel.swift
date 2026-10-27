@@ -23,6 +23,8 @@ struct SidePanel: View {
     /// Bumped by the refresh button so the 改动 tab re-reads git too.
     @State private var changesReload = 0
     @State private var picking = false
+    /// The panel is under 400pt: 选择文件夹 shows as a glyph so the tabs fit.
+    @State private var narrowTabBar = false
     @State private var saveFailure: String?
 
     private var tab: Tab {
@@ -109,7 +111,7 @@ struct SidePanel: View {
                     Text(Self.titles[item.wire] ?? item.wire.rawValue)
                         .font(.system(size: 12, weight: tab == item ? .semibold : .regular))
                         .foregroundStyle(tab == item ? Color.ompText : Color.ompTextSecondary)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, narrowTabBar ? 7 : 10)
                         .padding(.vertical, 5)
                         .background {
                             if tab == item {
@@ -120,16 +122,26 @@ struct SidePanel: View {
                 }
                 .buttonStyle(.plain)
             }
-            Spacer()
+            Spacer(minLength: 4)
             // Text label rather than a lone glyph: an 11pt icon is a tiny
             // hit target, and this is the only way to point the panel at a
-            // repository other than the app's own directory.
+            // repository other than the app's own directory. A narrow panel
+            // keeps the glyph in a full-size hit area; with the label, the
+            // tabs there were truncated to「…」.
             Button {
                 picking = true
             } label: {
-                Label("选择文件夹", systemImage: "folder")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Color.ompTextSecondary)
+                if narrowTabBar {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                } else {
+                    Label("选择文件夹", systemImage: "folder")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
             }
             .buttonStyle(.plain)
             .help("选择文件夹")
@@ -147,6 +159,7 @@ struct SidePanel: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 34)
+        .onGeometryChange(for: Bool.self, of: { $0.size.width < 400 }) { narrowTabBar = $0 }
     }
 
     private var fileList: some View {

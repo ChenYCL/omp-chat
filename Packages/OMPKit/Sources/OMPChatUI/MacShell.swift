@@ -17,6 +17,9 @@ var ompGhostHover: Color {
 
 /// Vertical drag handle between sidebar and main content; 220–320pt clamp.
 struct SidebarResizer: View {
+    /// The handle's hit area; the root layout counts it in the sidebar column.
+    static let width: CGFloat = 6
+
     @Binding var width: CGFloat
 
     @State private var hovering = false
@@ -25,7 +28,7 @@ struct SidebarResizer: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(width: 6)
+            .frame(width: Self.width)
             .contentShape(Rectangle())
             .overlay(alignment: .trailing) {
                 Rectangle()
@@ -890,6 +893,7 @@ public struct MacShellSidebar: View {
             isSelected: model.selectedConversationID == conversation.id,
             isStreamingThis: model.streamingConversationID == conversation.id,
             hasUnread: conversation.hasUnread,
+            status: model.rowStatus(for: conversation),
             menuContent: { AnyView(menu(for: conversation)) }
         )
         .onTapGesture {
@@ -925,6 +929,18 @@ public struct MacShellSidebar: View {
 
     @ViewBuilder
     private func menu(for conversation: Conversation) -> some View {
+        #if os(macOS)
+        // Scheduled tasks live and run on the Mac only.
+        if model.rowStatus(for: conversation).taskID != nil {
+            Button {
+                model.openLinkedScheduledTask(conversation.id)
+            } label: {
+                Label("打开定时任务", systemImage: "clock")
+            }
+            .accessibilityIdentifier("sidebar.row.openScheduledTask")
+            Divider()
+        }
+        #endif
         Button {
             model.togglePin(conversation.id)
         } label: {
@@ -1093,6 +1109,7 @@ private struct MacShellConversationRow: View {
     let isSelected: Bool
     var isStreamingThis: Bool = false
     var hasUnread: Bool = false
+    var status: ConversationRowStatus = .none
     var menuContent: (() -> AnyView)? = nil
 
     @State private var hovering = false
@@ -1104,6 +1121,7 @@ private struct MacShellConversationRow: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Color.ompText)
                 .lineLimit(1)
+            ConversationRowTags(status: status, scope: "sidebar")
             Spacer(minLength: 4)
             if isStreamingThis {
                 ProgressView()

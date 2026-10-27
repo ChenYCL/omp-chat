@@ -241,11 +241,16 @@ public struct RelayConversation: Codable, Sendable, Equatable {
     /// True while the host summarises the earlier turns (压缩上下文).
     /// Omitted when false.
     public var isCompacting: Bool
+    /// The row's primary `ConversationRowTag` raw value (等待批准, 系统错误…).
+    /// Omitted when the row has none; older phones ignore it, and a phone
+    /// skips values it does not know.
+    public var status: String?
 
     public init(
         id: String, title: String, updatedAt: Date, project: String?,
         isStreaming: Bool, messages: [RelayMessage],
-        queued: [RelayQueuedMessage] = [], isCompacting: Bool = false
+        queued: [RelayQueuedMessage] = [], isCompacting: Bool = false,
+        status: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -255,10 +260,11 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         self.messages = messages
         self.queued = queued
         self.isCompacting = isCompacting
+        self.status = status
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, updatedAt, project, isStreaming, messages, queued, isCompacting
+        case id, title, updatedAt, project, isStreaming, messages, queued, isCompacting, status
     }
 
     public init(from decoder: Decoder) throws {
@@ -276,6 +282,7 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         messages = try container.decodeIfPresent([RelayMessage].self, forKey: .messages) ?? []
         queued = (try? container.decodeIfPresent([RelayQueuedMessage].self, forKey: .queued)) ?? []
         isCompacting = (try? container.decodeIfPresent(Bool.self, forKey: .isCompacting)) ?? false
+        status = try? container.decodeIfPresent(String.self, forKey: .status)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -288,6 +295,12 @@ public struct RelayConversation: Codable, Sendable, Equatable {
         try container.encode(messages, forKey: .messages)
         if !queued.isEmpty { try container.encode(queued, forKey: .queued) }
         if isCompacting { try container.encode(true, forKey: .isCompacting) }
+        try container.encodeIfPresent(status, forKey: .status)
+    }
+
+    /// `status` as a tag; nil when absent or from a newer host.
+    public var rowTag: ConversationRowTag? {
+        status.flatMap(ConversationRowTag.init(rawValue:))
     }
 }
 

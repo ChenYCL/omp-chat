@@ -58,8 +58,10 @@ public enum SideChatContext {
 
     /// One labelled transcript line, or nil for messages with nothing to quote
     /// (system and tool messages, empty placeholders, image-only turns).
+    /// Attached mentions are named, not quoted: their content would crowd
+    /// the thread out of the budget.
     private static func entry(_ message: ChatMessage) -> String? {
-        let text = message.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = message.quotedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         switch message.role {
         case .user: return "用户：\(text)"

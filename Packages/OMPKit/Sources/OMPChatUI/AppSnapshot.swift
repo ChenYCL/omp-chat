@@ -61,12 +61,16 @@ public enum AppSnapshot {
 
     /// The window a bare `/debug/snapshot` means. `NSApp.mainWindow` is nil
     /// while the app is in the background, which is exactly when this is
-    /// used, so fall back to the largest visible titled window.
+    /// used, so fall back to the largest visible titled window, and then to a
+    /// minimized one: a window in the Dock is still the app's main window and
+    /// draws fine, but it used to make every bare snapshot a 404.
     static func defaultWindow(in windows: [NSWindow]) -> NSWindow? {
         if let main = windows.first(where: { $0.isMainWindow && $0.isVisible }) { return main }
-        return windows
-            .filter { $0.isVisible && $0.sheetParent == nil && !($0 is NSPanel) && $0.styleMask.contains(.titled) }
-            .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        let titled = windows.filter { $0.sheetParent == nil && !($0 is NSPanel) && $0.styleMask.contains(.titled) }
+        let largest: ([NSWindow]) -> NSWindow? = { list in
+            list.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        }
+        return largest(titled.filter(\.isVisible)) ?? largest(titled.filter(\.isMiniaturized))
     }
 
     /// Draws the window's frame view (title bar included) into a PNG at the

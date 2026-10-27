@@ -29,10 +29,13 @@ public final class ChatAppModel {
             if let oldID = selectedConversationID {
                 draftsByConversation[oldID] = draft
                 attachmentsByConversation[oldID] = draftAttachments
+                pickedMentionsByConversation[oldID] = pickedMentions
             }
         }
         didSet {
+            dictationFollowSelection()
             if let id = selectedConversationID {
+                pickedMentions = pickedMentionsByConversation[id] ?? []
                 draft = draftsByConversation[id] ?? ""
                 draftAttachments = attachmentsByConversation[id] ?? []
                 pastedTexts = []
@@ -43,13 +46,16 @@ public final class ChatAppModel {
                     persist(conversations[index])
                 }
             } else {
+                pickedMentions = []
                 draft = ""
                 draftAttachments = []
                 pastedTexts = []
             }
         }
     }
-    public var draft = ""
+    public var draft = "" {
+        didSet { prunePickedMentions() }
+    }
     /// Applies bold / italic / underline to the draft. The composer is a
     /// SwiftUI TextField, which exposes no selection, so this covers the whole
     /// draft; `MarkdownFormatting` already takes a range for when it can.
@@ -440,6 +446,7 @@ public final class ChatAppModel {
         Task { try? await store.delete(id: id) }
         draftsByConversation.removeValue(forKey: id)
         attachmentsByConversation.removeValue(forKey: id)
+        pickedMentionsByConversation.removeValue(forKey: id)
         clearSideChat(id)
         if selectedConversationID == id {
             selectedConversationID = sortedConversations.first?.id
@@ -980,7 +987,8 @@ public final class ChatAppModel {
     // MARK: Sending
 
     public func send() {
-        let text = draft
+        // The field shows mentions readably; the send path reads tokens.
+        let text = draftForSending
         let attachments = draftAttachments
         if text.trimmingCharacters(in: .whitespacesAndNewlines) == Self.compactCommand, attachments.isEmpty, pastedTexts.isEmpty,
            let id = selectedConversationID {
@@ -999,6 +1007,7 @@ public final class ChatAppModel {
         if let id = selectedConversationID {
             draftsByConversation.removeValue(forKey: id)
             attachmentsByConversation.removeValue(forKey: id)
+            pickedMentionsByConversation.removeValue(forKey: id)
         }
         Task { await sendNow(text: text, attachments: attachments, pastes: pastes) }
     }
@@ -1011,11 +1020,20 @@ public final class ChatAppModel {
             return
         }
 
+        // Mentions are read now, at send time; a phone's text goes as typed.
+        let replyToID = replyingTo?.id
+        let mentions = remote ? [] : await resolveMentions(in: text, for: conversation.id).attachments
+        if !mentions.isEmpty {
+            // Reading files or a page awaited: go on with the thread as it is
+            // now, wherever the selection went meanwhile.
+            guard let current = self.conversation(conversation.id) else { return }
+            conversation = current
+        }
         let queued = QueuedMessage(
-            text: text, attachments: attachments, pastes: pastes.map(\.text),
-            replyToID: replyingTo?.id, remote: remote
+            text: text, attachments: attachments, pastes: pastes.map(\.text), mentions: mentions,
+            replyToID: replyToID, remote: remote
         )
-        replyingTo = nil
+        if replyingTo?.id == replyToID { replyingTo = nil }
         AudioFeedback.playSend(enabled: settings.soundEffects)
         // A reply (or a compaction) is running here: the message waits for
         // the next point the model can read it instead of cancelling it.
@@ -1025,7 +1043,7 @@ public final class ChatAppModel {
         }
         conversation.messages.append(queued.message)
         if conversation.title == "新对话" {
-            let seed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let seed = queued.shownText.trimmingCharacters(in: .whitespacesAndNewlines)
             conversation.title = seed.isEmpty ? "图片消息" : String(seed.prefix(28))
         }
         conversation.updatedAt = Date()
@@ -1243,7 +1261,8 @@ public final class ChatAppModel {
 
 
     /// Truncates the conversation at `messageID`, replaces it with the edited
-    /// text (keeping its attachments) and re-runs the reply.
+    /// text (keeping its attachments, and the attached mentions the text
+    /// still names) and re-runs the reply.
     public func editAndResend(_ messageID: UUID, newText: String, remote: Bool = false) {
         guard var conversation = selectedConversation,
               let index = conversation.messages.firstIndex(where: { $0.id == messageID }),
@@ -1255,6 +1274,15 @@ public final class ChatAppModel {
         }
         var parts: [ContentPart] = []
         if !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(newText)) }
+        // The editor shows the readable `@说明.md`; a mention edited out
+        // drops its content. The note described the old text, so it goes.
+        let attached = oldMessage.mentionAttachments
+        let named = MentionDraft(text: newText, picked: attached.compactMap(\.mention)).mentions
+        var marks: [MessageMention] = []
+        for attachment in attached where attachment.mention.map(named.contains) == true {
+            marks.append(MessageMention(part: parts.count, attachment: attachment))
+            parts.append(.text(attachment.text))
+        }
         parts.append(contentsOf: attachments.map { .media($0) })
 
         var versions = oldMessage.alternativeVersions
@@ -1265,7 +1293,8 @@ public final class ChatAppModel {
             role: .user,
             parts: parts,
             alternativeVersions: versions,
-            currentVersionIndex: versions.count
+            currentVersionIndex: versions.count,
+            mentions: marks
         )
 
         conversation.messages = Array(conversation.messages.prefix(index))
@@ -1293,6 +1322,8 @@ public final class ChatAppModel {
         var newParts: [ContentPart] = [.text(newText)]
         newParts.append(contentsOf: attachments.map { .media($0) })
         message.parts = newParts
+        // A version is one text part; the marks described the parts it replaced.
+        message.mentions = []
         message.currentVersionIndex = newIndex
 
         conversation.messages[index] = message
@@ -1332,10 +1363,21 @@ public final class ChatAppModel {
             }
             lines.append(heading)
             lines.append("")
-            for part in message.parts {
+            // Attached mentions fold away under their name, the way thinking
+            // does; the note on the ones left out stays as written.
+            let marked = message.mentionParts
+            for (index, part) in message.parts.enumerated() {
                 switch part {
                 case .text(let value):
-                    lines.append(value)
+                    if let mention = marked[index]?.mention {
+                        lines.append("<details><summary>\(mention.readable)</summary>")
+                        lines.append("")
+                        lines.append(value.trimmingCharacters(in: .newlines))
+                        lines.append("")
+                        lines.append("</details>")
+                    } else {
+                        lines.append(marked[index] == nil ? value : value.trimmingCharacters(in: .newlines))
+                    }
                 case .thinking(let value):
                     lines.append("<details><summary>思考过程</summary>")
                     lines.append("")
@@ -1375,11 +1417,21 @@ public final class ChatAppModel {
         for message in conversation.messages {
             let isUser = message.role == .user
             let roleName = isUser ? "你" : "助手"
-            let text = message.concatenatedText
-                .replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-                .replacingOccurrences(of: "\n", with: "<br>")
+            func escaped(_ value: String) -> String {
+                value
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+            }
+            var text = escaped(message.writtenText).replacingOccurrences(of: "\n", with: "<br>")
+            for attachment in message.mentionAttachments {
+                let name = escaped(attachment.mention?.readable ?? "")
+                text += "<details class=\"mention\"><summary>\(name)</summary><pre>\(escaped(attachment.text.trimmingCharacters(in: .newlines)))</pre></details>"
+            }
+            let notes = message.mentionNotes
+            if !notes.isEmpty {
+                text += "<div class=\"mention-notes\">" + notes.map(escaped).joined(separator: "<br>") + "</div>"
+            }
 
             body += """
             <div class="message-row \(isUser ? "user" : "assistant")">
@@ -1408,6 +1460,10 @@ public final class ChatAppModel {
                 .bubble { padding: 12px 16px; border-radius: 14px; max-width: 80%; font-size: 14.5px; line-height: 1.6; }
                 .user .bubble { background: #007aff; color: #ffffff; }
                 .assistant .bubble { background: #f2f2f7; color: #1a1a1a; }
+                .mention { margin-top: 8px; font-size: 13px; }
+                .mention summary { cursor: pointer; opacity: 0.85; }
+                .mention pre { white-space: pre-wrap; background: rgba(0,0,0,0.12); padding: 8px; border-radius: 8px; max-height: 320px; overflow: auto; }
+                .mention-notes { margin-top: 8px; font-size: 12px; opacity: 0.75; }
                 @media print { body { padding: 0; background: #fff; } .container { box-shadow: none; padding: 0; } }
             </style>
         </head>
@@ -1532,7 +1588,7 @@ public final class ChatAppModel {
         if var conversation = conversation(conversationID) {
             if conversation.title == "新对话" || conversation.title == "图片消息" {
                 if let first = conversation.messages.first(where: { $0.role == .user }) {
-                    let seed = first.concatenatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let seed = first.writtenText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !seed.isEmpty { conversation.title = String(seed.prefix(28)) }
                 }
             }
@@ -1905,11 +1961,13 @@ public final class ChatAppModel {
     }
 
 
-    /// Chats the sidebar's 待处理 group shows: unread, still generating, or
-    /// waiting on a reply. Every other section hides these, so a chat never
-    /// appears twice (the phone drawer uses the same set).
+    /// Chats the sidebar's 待处理 group shows: unread, still generating,
+    /// waiting on a reply, an approval card or the user's input. Every other
+    /// section hides these, so a chat never appears twice (the phone drawer
+    /// uses the same set).
     public func priorityConversationIDs() -> Set<UUID> {
-        ConversationPriority.ids(in: sortedConversations, streamingID: streamingConversationID)
+        ConversationPriority.ids(in: sortedConversations, streamingID: streamingConversationID,
+                                 awaitingApprovalIDs: Set(pendingApprovals.map(\.conversationID)))
     }
 
     /// Structured mirror of the workspace for the LAN relay server.
@@ -1988,7 +2046,9 @@ public final class ChatAppModel {
                 return RelayMessage(
                     id: message.id.uuidString,
                     role: message.role == .user ? "user" : "assistant",
-                    text: message.concatenatedText,
+                    // What the user wrote: attached mentions stay on the Mac
+                    // like attachments, and the phone's 编辑 starts from this.
+                    text: message.writtenText,
                     ts: message.createdAt,
                     streaming: conversation.id == streamingConversationID && message.status == .streaming,
                     thinking: thinking,
@@ -2007,12 +2067,13 @@ public final class ChatAppModel {
                 queued: conversation.queuedMessages.map { queued in
                     RelayQueuedMessage(
                         id: queued.id.uuidString,
-                        text: queued.text,
-                        hasAttachments: !queued.attachments.isEmpty || !queued.pastes.isEmpty,
+                        text: queued.shownText,
+                        hasAttachments: !queued.attachments.isEmpty || !queued.pastes.isEmpty || !queued.mentions.isEmpty,
                         held: queued.isHeld
                     )
                 },
-                isCompacting: compactingConversationIDs.contains(conversation.id)
+                isCompacting: compactingConversationIDs.contains(conversation.id),
+                status: rowStatus(for: conversation).primary?.rawValue
             )
         }
         return RelaySnapshot(
@@ -2641,13 +2702,238 @@ public final class ChatAppModel {
         persist(conversations[conversationIndex])
     }
 
+    // MARK: - Mentions
+
+    /// Files and skills the composer's `@` / `$` lists search, listed off
+    /// the main actor and cached until a list opens again.
+    @ObservationIgnored public let mentionIndex = MentionIndex()
+    /// Absolute file targets picked from the `@` list this session. Only
+    /// these may attach a file outside the thread's working directory.
+    @ObservationIgnored private var pickedMentionTargets: Set<String> = []
+    /// Readers of a tab's live page text, one per browser pane on screen.
+    @ObservationIgnored private var browserPageReaders: [UUID: @MainActor (UUID) async -> String?] = [:]
+
+    private static let mentionFileLimit = 8
+    private static let mentionChatLimit = 5
+    private static let mentionTabLimit = 5
+
+    /// A browser pane installs its reader while it is on screen and removes
+    /// it (nil) when it goes; the reader answers nil for a tab it has no
+    /// page for.
+    public func setBrowserPageReader(_ reader: (@MainActor (UUID) async -> String?)?, owner: UUID) {
+        browserPageReaders[owner] = reader
+    }
+
+    /// Mentions picked into the draft, which shows them readably
+    /// (`@说明.md`); `MentionDraft` says when one still counts. Kept per
+    /// conversation beside the draft, and pruned as the draft is edited.
+    public private(set) var pickedMentions: [ComposerMention] = []
+    @ObservationIgnored private var pickedMentionsByConversation: [UUID: [ComposerMention]] = [:]
+
+    private var composedDraft: MentionDraft {
+        MentionDraft(text: draft, picked: pickedMentions)
+    }
+
+    /// The mentions the draft holds, for the chips above the field.
+    public var draftMentions: [ComposerMention] {
+        composedDraft.mentions
+    }
+
+    /// The `@…` / `$…` the composer's list searches for; nil right after a
+    /// mention already in the draft.
+    public var activeMentionQuery: ComposerMention.ActiveQuery? {
+        composedDraft.activeQuery
+    }
+
+    /// The draft as sent: each readable mention swapped for its token.
+    public var draftForSending: String {
+        composedDraft.tokenized
+    }
+
+    /// Replaces the draft and the mentions picked into it (a prompt recalled
+    /// from history); mentions not standing in `text` are dropped.
+    public func setDraft(_ text: String, mentions: [ComposerMention] = []) {
+        pickedMentions = MentionDraft(text: text, picked: mentions).pruned.picked
+        draft = text
+    }
+
+    /// A picked mention edited out of the draft stops counting at once.
+    private func prunePickedMentions() {
+        guard !pickedMentions.isEmpty else { return }
+        let live = composedDraft.pruned.picked
+        if live.count != pickedMentions.count { pickedMentions = live }
+    }
+
+    /// Lists the thread's folder (`@`) and reloads its skills (`$`) afresh;
+    /// nil does both. The composer calls it when a list opens.
+    public func refreshMentionIndex(for conversationID: UUID, trigger: Character? = nil) async {
+        if trigger != "$", let directory = mentionDirectory(conversationID) {
+            _ = try? await mentionIndex.refresh(directory)
+        }
+        if trigger != "@" {
+            await mentionIndex.loadSkills(for: conversationID, roots: skillRoots(for: conversationID))
+        }
+    }
+
+    /// The rows the `@` (files, chats, tabs) or `$` (skills) list shows for
+    /// `query` in conversation `conversationID`.
+    public func mentionCandidates(query: String, trigger: Character, for conversationID: UUID) async -> [MentionCandidate] {
+        await mentionSearch(query: query, trigger: trigger, for: conversationID).candidates
+    }
+
+    /// `mentionCandidates`, plus whether the file search failed.
+    public func mentionSearch(query: String, trigger: Character, for conversationID: UUID) async -> MentionSearchResult {
+        if trigger == "$" {
+            return MentionSearchResult(candidates: await skillMentionCandidates(query, for: conversationID))
+        }
+        return await atMentionSearch(query, for: conversationID)
+    }
+
+    /// Puts `mention` in the draft, readably, in place of the `@…` / `$…`
+    /// being typed or at the end. A file picked by its absolute path may
+    /// then attach from outside the working directory.
+    public func pickMention(_ mention: ComposerMention) {
+        if mention.kind == .file, mention.target.hasPrefix("/") || mention.target.hasPrefix("~/") {
+            pickedMentionTargets.insert(mention.target)
+        }
+        var composed = composedDraft
+        composed.insert(mention)
+        apply(composed)
+    }
+
+    /// A chip's ×: takes the mention out of the draft.
+    public func removeMention(_ mention: ComposerMention) {
+        var composed = composedDraft
+        composed.remove(mention)
+        apply(composed)
+    }
+
+    /// Table first, so pruning on the draft's change keeps what was picked.
+    private func apply(_ composed: MentionDraft) {
+        pickedMentions = composed.picked
+        draft = composed.text
+    }
+
+    /// The context the mentions in `text` add to a message of conversation
+    /// `conversationID`: files and skills read, chats quoted, a tab's page
+    /// text taken from its live web view — now, at send time. Never fails;
+    /// whatever cannot be attached becomes a note.
+    public func resolveMentions(in text: String, for conversationID: UUID) async -> MentionResolution {
+        let mentions = ComposerMention.mentions(in: text)
+        guard !mentions.isEmpty else { return MentionResolution() }
+        var chats: [UUID: MentionSources.Chat] = [:]
+        var tabs: [UUID: MentionSources.Tab] = [:]
+        for mention in mentions {
+            guard let id = UUID(uuidString: mention.target) else { continue }
+            if mention.kind == .chat, let chat = conversation(id) {
+                chats[id] = MentionSources.Chat(title: chat.title, messages: chat.messages, isLocked: chat.isLocked)
+            }
+            #if os(macOS)
+            if mention.kind == .tab, let tab = browserTabs.tab(id) {
+                tabs[id] = MentionSources.Tab(title: tab.displayTitle, url: tab.url, pageText: await browserPageText(id))
+            }
+            #endif
+        }
+        var skills: [Skill] = []
+        if mentions.contains(where: { $0.kind == .skill }) {
+            skills = await mentionIndex.loadSkills(for: conversationID, roots: skillRoots(for: conversationID))
+        }
+        let sources = MentionSources(
+            workingDirectory: mentionDirectory(conversationID), home: HostExecutor.realHomeDirectory(),
+            pickedTargets: pickedMentionTargets, chats: chats, tabs: tabs, skills: skills
+        )
+        return await Task.detached(priority: .userInitiated) {
+            MentionResolver.resolve(mentions, sources: sources)
+        }.value
+    }
+
+    private func mentionDirectory(_ conversationID: UUID) -> String? {
+        conversation(conversationID)?.workingDirectory.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    private func browserPageText(_ tabID: UUID) async -> String? {
+        for reader in browserPageReaders.values {
+            if let text = await reader(tabID) { return text }
+        }
+        return nil
+    }
+
+    /// Files (an absolute path typed out, then the working directory's best
+    /// matches), other chats, then open tabs. An empty query lists no files.
+    private func atMentionSearch(_ query: String, for conversationID: UUID) async -> MentionSearchResult {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = MentionSearchResult()
+        if !needle.isEmpty {
+            if let path = await mentionIndex.existingFile(needle, home: HostExecutor.realHomeDirectory()),
+               let mention = ComposerMention(kind: .file, label: (path as NSString).lastPathComponent, target: path) {
+                result.candidates.append(Self.fileCandidate(mention, shownPath: GitInfo.tildified(path)))
+            }
+            if let directory = mentionDirectory(conversationID) {
+                do {
+                    for path in try await mentionIndex.search(directory, query: needle, limit: Self.mentionFileLimit) {
+                        guard let mention = ComposerMention(kind: .file, label: (path as NSString).lastPathComponent, target: path) else { continue }
+                        result.candidates.append(Self.fileCandidate(mention, shownPath: path))
+                    }
+                } catch {
+                    result.fileSearchFailed = true
+                }
+            }
+        }
+        let others = sortedConversations.filter { $0.id != conversationID }
+        for chat in (needle.isEmpty ? others : ConversationSearch.filter(others, query: needle)).prefix(Self.mentionChatLimit) {
+            guard let mention = ComposerMention(kind: .chat, label: chat.title, target: chat.id.uuidString) else { continue }
+            let preview = chat.lastMessagePreview.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            result.candidates.append(MentionCandidate(
+                mention: mention, section: .chats, title: mention.label, detail: preview, badge: "对话", icon: "bubble.left"
+            ))
+        }
+        #if os(macOS)
+        let tabs = browserTabs.tabs.filter {
+            needle.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(needle) || $0.url.localizedCaseInsensitiveContains(needle)
+        }
+        for tab in tabs.prefix(Self.mentionTabLimit) {
+            guard let mention = ComposerMention(kind: .tab, label: tab.displayTitle, target: tab.id.uuidString) else { continue }
+            result.candidates.append(MentionCandidate(
+                mention: mention, section: .tabs, title: mention.label, detail: tab.url, badge: "标签页", icon: "globe"
+            ))
+        }
+        #endif
+        return result
+    }
+
+    private static func fileCandidate(_ mention: ComposerMention, shownPath: String) -> MentionCandidate {
+        let folder = (shownPath as NSString).deletingLastPathComponent
+        return MentionCandidate(
+            mention: mention, section: .files, title: mention.label, detail: folder, badge: "文件", icon: "doc.text"
+        )
+    }
+
+    /// Every skill of the thread, explicit-only ones included, matching
+    /// `query`; loaded once per list opening.
+    private func skillMentionCandidates(_ query: String, for conversationID: UUID) async -> [MentionCandidate] {
+        let skills: [Skill]
+        if let cached = await mentionIndex.cachedSkills(for: conversationID) {
+            skills = cached
+        } else {
+            skills = await mentionIndex.loadSkills(for: conversationID, roots: skillRoots(for: conversationID))
+        }
+        return MentionIndex.rankSkills(skills, query: query).compactMap { skill in
+            guard let mention = ComposerMention(kind: .skill, label: skill.name, target: skill.path) else { return nil }
+            return MentionCandidate(
+                mention: mention, section: .skills, title: skill.name,
+                detail: skill.shortDescription ?? skill.description, badge: skill.mentionSourceLabel, icon: "sparkles"
+            )
+        }
+    }
+
     // MARK: - Steering
 
     /// Typed into the composer, runs compaction instead of sending.
     public static let compactCommand = "/compact"
     /// Under a follow-up the running reply took in and then ended without
-    /// answering (Codex `responseError.unansweredSteering`).
-    public static let unansweredFollowUpText = "你的追问没有收到回复，请重试"
+    /// answering (Codex `responseError.unansweredSteering`). Defined in
+    /// OMPCore so row status recognises the note.
+    public static let unansweredFollowUpText = ConversationRowStatus.unansweredFollowUpNote
     /// Codex `composer.queuedSteerDuringCompaction`.
     public static let queuedDuringCompactionText = "压缩时不能插话，消息会在压缩完成后发送"
 
@@ -2697,7 +2983,10 @@ public final class ChatAppModel {
         guard let queued = queuedMessages(for: id).first(where: { $0.id == queuedID }) else { return }
         removeQueued(queuedID, in: id)
         if selectedConversationID != id { selectedConversationID = id }
-        draft = draft.isEmpty ? queued.text : draft + "\n" + queued.text
+        // Tokens come back as readable mentions, picked again.
+        var composed = composedDraft
+        composed.appendTokenized(queued.text, separator: "\n")
+        apply(composed)
         draftAttachments += queued.attachments
         pastedTexts += queued.pastes.map { PastedTextAttachment(text: $0) }
     }
@@ -3117,6 +3406,7 @@ public final class ChatAppModel {
             run = existing
         } else {
             run = Conversation(title: task.runTitle(at: now, calendar: scheduleCalendar))
+            run.scheduledTaskID = task.id
             if let projectID = task.projectID, projects.contains(where: { $0.id == projectID }) {
                 run.projectID = projectID
             }
@@ -3169,6 +3459,45 @@ public final class ChatAppModel {
         }
         schedulerStorage?.rearm()
     }
+
+    // MARK: - Row status
+
+    /// The tags conversation `id`'s sidebar row shows (Codex
+    /// `localTaskRow`). In-memory facts only; `.none` when it is gone.
+    public func rowStatus(for id: UUID) -> ConversationRowStatus {
+        guard let conversation = conversation(id) else { return .none }
+        return rowStatus(for: conversation)
+    }
+
+    /// Same, for a conversation the caller already holds, so a row needs
+    /// no lookup: a scan of the waiting cards and the tasks, both short.
+    public func rowStatus(for conversation: Conversation) -> ConversationRowStatus {
+        let id = conversation.id
+        var originLive = false
+        var attachedTaskID: UUID?
+        for task in scheduledTasks {
+            if task.id == conversation.scheduledTaskID { originLive = true }
+            if attachedTaskID == nil, case .attached(id) = task.target { attachedTaskID = task.id }
+        }
+        return ConversationRowStatus(conversation, facts: .init(
+            hasPendingApproval: pendingApprovals.contains { $0.conversationID == id },
+            isBusy: streamingConversationID == id || compactingConversationIDs.contains(id),
+            originTaskIsLive: originLive,
+            attachedTaskID: attachedTaskID
+        ))
+    }
+
+    #if os(macOS)
+    /// 「打开定时任务」: opens the editor of the task linked to conversation
+    /// `id` (the one that created it, else the one attached to it). False
+    /// when no linked task exists any more.
+    @discardableResult
+    public func openLinkedScheduledTask(_ id: UUID) -> Bool {
+        guard let taskID = rowStatus(for: id).taskID else { return false }
+        NotificationCenter.default.post(name: .ompEditScheduledTask, object: taskID)
+        return true
+    }
+    #endif
 
     // MARK: - Side chat
 
@@ -3335,11 +3664,17 @@ public final class ChatAppModel {
     /// (nearest the working directory first), the user's, then plugins'.
     /// Read from disk on each call, so edited skills show up at once.
     public func skillCatalog(for conversationID: UUID?) -> SkillCatalog {
+        SkillCatalog.load(roots: skillRoots(for: conversationID))
+    }
+
+    /// The folders `skillCatalog(for:)` reads, so the `$` list can load them
+    /// off the main actor.
+    func skillRoots(for conversationID: UUID?) -> [SkillRoot] {
         var roots: [SkillRoot] = []
         if let id = conversationID, let directory = conversation(id)?.workingDirectory, !directory.isEmpty {
             roots += SkillCatalog.repositoryRoots(workingDirectory: directory)
         }
-        return SkillCatalog.load(roots: roots + baseSkillRoots(installedPlugins))
+        return roots + baseSkillRoots(installedPlugins)
     }
 
     /// The system prompt's skills list, within 2% of the model's context
@@ -3662,6 +3997,141 @@ public final class ChatAppModel {
             DiagnosticsCenter.shared.record("mcp", .error, "secret write failed",
                 fields: ["server": serverID, "error": error.localizedDescription])
             return false
+        }
+    }
+
+    // MARK: - Dictation
+
+    /// Composer dictation, recognised on the device. Tests swap in a
+    /// controller over a fake microphone and recognizer.
+    @ObservationIgnored public internal(set) var dictation = DictationController()
+    /// The conversation the dictation belongs to: its text lands in that
+    /// conversation's draft even after switching away.
+    public private(set) var dictationConversationID: UUID?
+    @ObservationIgnored private var dictationSendsWhenDone = false
+
+    /// Where dictation is (Codex `composer.dictation.*`).
+    public var dictationState: DictationState { dictation.state }
+
+    /// The selected conversation's composer shows the dictation bar: a
+    /// session of this conversation is active or failed.
+    public var showsDictationBar: Bool {
+        dictation.isEngaged && dictationConversationID == selectedConversationID
+    }
+
+    /// 听写: listens into the selected conversation's draft. Read-aloud stops
+    /// first so the microphone does not take it down.
+    public func startDictation() {
+        guard !dictation.state.isActive else { return }
+        Speech.stop()
+        dictationConversationID = selectedConversationID
+        dictationSendsWhenDone = false
+        dictation.onTranscript = { [weak self] text in self?.deliverDictation(text) }
+        dictation.chosenLocale = settings.dictationLocale
+        dictation.start()
+    }
+
+    /// 停止 puts the text in the draft; 转写并发送 (`send`) then sends it
+    /// through the normal path.
+    public func stopDictation(send: Bool) {
+        guard dictation.state.isActive else { return }
+        dictationSendsWhenDone = send
+        dictation.stop()
+    }
+
+    /// 取消: drops what was heard.
+    public func cancelDictation() {
+        dictation.cancel()
+    }
+
+    /// 听写 ⌘⇧V: starts, stops into the draft, or cancels one still starting.
+    public func toggleDictation() {
+        switch dictation.state {
+        case .starting: cancelDictation()
+        case .listening: stopDictation(send: false)
+        case .finishing, .transcribing: break
+        default: startDictation()
+        }
+    }
+
+    /// Transcribes a recording into the selected conversation's draft with
+    /// the live recognizer and its error mapping, so dictation can be tested
+    /// without a microphone. `localeIdentifier` overrides 听写语言 and the
+    /// system's preferred languages. Returns the error text; nil when the
+    /// text landed or the transcription was cancelled.
+    public func transcribeIntoDraft(fileURL: URL, localeIdentifier: String? = nil) async -> String? {
+        guard !dictation.state.isActive else { return DictationError.startFailed.message }
+        dictationConversationID = selectedConversationID
+        dictationSendsWhenDone = false
+        dictation.onTranscript = { [weak self] text in self?.deliverDictation(text) }
+        dictation.chosenLocale = settings.dictationLocale
+        return await dictation.transcribe(fileURL: fileURL, localeIdentifier: localeIdentifier)?.message
+    }
+
+    /// Codex `dictation.recovery.*` on a failed dictation; actions the
+    /// failure does not offer are ignored. 重试 transcribes the kept audio
+    /// after a transcription failure, otherwise listens again.
+    public func applyDictationRecovery(_ action: DictationRecoveryAction) {
+        guard let recovery = dictation.state.recovery, recovery.actions.contains(action) else { return }
+        switch action {
+        case .copyText:
+            if let text = recovery.text {
+                copyToPasteboard(text)
+                statusMessage = "已复制听写的文字"
+            }
+        case .addToMessage:
+            if let text = recovery.text { mergeDictation(text) }
+            dictation.dismiss()
+        case .retry:
+            if recovery.error == .transcriptionFailed, dictation.retranscribe() { return }
+            startDictation()
+        case .dismiss:
+            dictation.dismiss()
+        }
+    }
+
+    /// 打开麦克风设置 (Codex `microphonePermissionDeniedWithSettings`).
+    public func openMicrophoneSettings() {
+        DictationSystemSettings.open(.microphone)
+    }
+
+    /// 打开语音识别设置, for the macOS 15 / iOS 18 recognizer's permission.
+    public func openSpeechRecognitionSettings() {
+        DictationSystemSettings.open(.speechRecognition)
+    }
+
+    /// Switching conversations closes the microphone; what was said still
+    /// lands in the draft of the conversation it was said in, unsent.
+    private func dictationFollowSelection() {
+        guard dictationConversationID != selectedConversationID else { return }
+        switch dictation.state {
+        case .starting:
+            dictation.cancel()
+        case .listening:
+            dictationSendsWhenDone = false
+            dictation.stop()
+        case .finishing, .transcribing:
+            dictationSendsWhenDone = false
+        default:
+            break
+        }
+    }
+
+    private func deliverDictation(_ text: String) {
+        mergeDictation(text)
+        if dictation.reachedMaxDuration { statusMessage = "已达到最长录音时长" }
+        let sends = dictationSendsWhenDone
+        dictationSendsWhenDone = false
+        if sends, dictationConversationID == selectedConversationID { send() }
+    }
+
+    /// Appends to the dictation conversation's draft: the live one when that
+    /// conversation is on screen, else the one kept for it.
+    private func mergeDictation(_ text: String) {
+        if dictationConversationID == selectedConversationID {
+            draft = DictationText.merge(text, into: draft)
+        } else if let id = dictationConversationID {
+            draftsByConversation[id] = DictationText.merge(text, into: draftsByConversation[id] ?? "")
         }
     }
 

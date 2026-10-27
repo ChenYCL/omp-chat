@@ -90,6 +90,9 @@ class Relay:
         query = f"?window={window}" if window is not None else ""
         status, body, content_type = self.call("/debug/snapshot" + query)
         if status != 200 or not content_type.startswith("image/png"):
+            # Not a check failure (the app state is what is tested), but it
+            # must not pass unnoticed: whole runs once left no screenshots.
+            print(f"  (snapshot {os.path.basename(path)} failed: HTTP {status})", flush=True)
             return None
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as handle:

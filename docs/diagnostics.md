@@ -116,8 +116,12 @@ python3 -I tools/ompshot/scenario_agent.py         # 代理运行时：工具、
 | `sideChat` | `text`，可选 `conversationID` | 侧面板 旁聊 发送；空问题返回 ok:false 和原因 |
 | `clearSideChat` / `stopSideChat` | `clearSideChat` 可选 `conversationID` | 旁聊 清空 / 停止 |
 | `send` | `text`，可选 `conversationID` | 输入框发送。立即返回，不等回复结束（回复可能停在批准卡片上）。这个对话正在回复或压缩时，消息进排队（`selected.queued`），不打断；别的对话正在回复时拒绝（`另一个对话正在回复`），和桌面输入框一样 |
+| `sendDraft` | 可选 `conversationID` | 输入框发送键作用在当前草稿上：草稿里可读的 `@名称` / `$名称` 换成提及标记并在发送时读取内容，草稿与提及标签清空。排队和拒绝规则同 `send`；草稿为空时拒绝 |
 | `queued` | `queuedID`（`selected.queued[].id`）、`op` = sendNow / edit / delete，可选 `conversationID` | 排队气泡的 立即发送（打断当前回复，马上发）/ 编辑（放回输入框）/ 删除 |
 | `compact` | 可选 `conversationID` | 压缩上下文（+ 菜单与 `/compact`）。等压缩结束才返回；失败时 `error` 是界面上的原因 |
+| `mentionSearch` | `query`、`trigger` = `@` / `$`，可选 `conversationID` | 输入框的提及列表：`detail` 是 JSON `{candidates: [{token, kind, section, title, detail, badge}], fileSearchFailed}`，`kind` 为 file / chat / tab / skill |
+| `pickMention` | `token`（`mentionSearch` 给出的），可选 `conversationID` | 在列表里选中一项：替换草稿里正在输入的 `@…` / `$…` |
+| `transcribeFile` | `path`（绝对路径的音频文件），可选 `locale`（如 zh-CN），可选 `conversationID` | 用输入框听写同一个本机识别器转写音频，结果并进草稿；不开麦克风、不弹授权；失败时 `error` 是听写栏的原因 |
 | `stop` | — | 停止键 / ⌘.：同时终止正在跑的工具、拒绝所有等待中的卡片 |
 | `approve` | `approvalID`（`state.pendingApprovals[].id`）、`decision` = allowOnce / allowAlways / deny | 批准卡片的三个按钮；控制电脑类的 allowAlways 按一次处理 |
 | `setPermissionMode` | `mode` = readOnly / ask / auto / full，缺省或 null 跟随设置默认；可选 `conversationID` | 输入栏 工具与权限 菜单 |
@@ -125,6 +129,7 @@ python3 -I tools/ompshot/scenario_agent.py         # 代理运行时：工具、
 | `setAccess` | `access` = default / chat / readOnly / ask / auto / full，可选 `conversationID` | 输入栏「工具与权限」单选：一次写好「开不开工具」和「权限」两项，菜单勾的就是按钮上写的 |
 | `sidebarOp` | `op` = toggleArchive / togglePin / rename（`title`）/ move（`groupID`，缺省或 null 为移出分组）/ createSection（`name`）/ renameGroup（`groupID`、`name`）/ deleteGroup（`groupID`）/ archiveSection（`groupID`）；对话类可选 `conversationID` | 会话行、项目、自定义分区的右键菜单；都会登记撤销 |
 | `undo` / `dismissUndo` | — | 撤销提示条的「撤销」/ 关掉提示条。`undo` 只撤最新的一条；目标已不在时返回 `{"ok":false,"error":"无法撤销：…"}`，那条也随之出栈 |
+| `toggleSidebar` | — | ⌘B 显示 / 隐藏侧栏。窗口放不下侧栏、对话（至少 520pt）和侧面板（至少 320pt）时，侧栏自动让位；此时 `toggleSidebar` 会显示侧栏并关掉侧面板 |
 | `scheduledTask` | `op` = add（`title`、`prompt`、`schedule`、可选 `target` / `workingDirectory` / `permissionMode`）/ pause / resume / delete / runNow（`taskID`） | 侧栏 定时任务 与编辑器。`schedule`、`target` 用工作区文件里同样的 JSON（例如 `{"kind":"daily","hour":9,"minute":30}`、`{"kind":"once","date":"2026-10-28T01:00:00Z"}`、`{"kind":"attached","conversationID":"…"}`）；字段不合法时 `error` 是编辑器自己的提示 |
 | `openFile` | `path`，可选 `line`（从 1 起的整数） | 消息里文件引用的「打开文件」：侧面板文件标签打开并滚到该行 |
 | `codeReview` | 可选 `conversationID` | 用 Codex 审查：给该对话的工作目录开一个只读的审查对话；没有改动、没有目录时返回原因 |
@@ -136,7 +141,7 @@ python3 -I tools/ompshot/scenario_agent.py         # 代理运行时：工具、
 
 浏览器的重新加载、复制网址、在默认浏览器中打开要用到活的网页视图，不在动作里。
 
-`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread / isPinned / isArchived / groupID / sideChat / permissionMode / toolsEnabled / access / accessLabel / lastReply / isCodeReview / reviewOutcome / queued / isCompacting / compaction / transcript`；`sideChat` 是 `role / text / status / error` 列表；`lastReply` 是最后一条用户消息之后的整段回复，一轮代理回复跨好几条助手消息，`toolCalls` 按顺序列出其中每次调用的 `id / name / arguments / result / isError`，`text` 取最后一条；`access` 是「工具与权限」菜单勾选项，`accessLabel` 是按钮上写的；`reviewOutcome` 为 running / reported / unreported；`queued` 是排队的追问 `id / text / held`，`held` 表示被停止或重启停住、只能手动发；`compaction` 是 `summary / coveredThroughID / tokensBefore / tokensAfter`；`transcript` 是全部消息的 `id / role / text`（前 400 字）`/ status / error`）、`draft`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`webSearchEnabled`、`phoneAccess`、`undoToast`（`message / offersUndo`）、`undoHistory`（还能撤销的动作，最新在前）、`groups`（项目与自定义分区，`id / name / isSection / conversationIDs`）、`scheduledTasks`（`id / title / status / summary / nextRunLabel / nextRunAt / runCount / lastRunConversationID / lastSkipReason / running`，日期为 ISO-8601）、`pendingFileRequest`（文件标签还没取走的打开请求）、`sidePanelOpen`、`sidePanelTab`、`sideChatStreaming`、`errorMessage`、`isStreaming`、`pendingApprovals`（`id / conversationID / callID / toolName / source / risk / summary`）、`runningToolCallIDs`、`mcpServers`（`id / name / origin / enabled / status / toolCount / detail / tools`，`status` 为 disabled / needsRuntime / connecting / ready / failed，`detail` 是缺的运行时或失败原因加 stderr 末尾）、`browserTabs`（`id / title / url / selected`）、`settingsOpen`、`windowTitles`（只含可见窗口）。值为空的可选键不出现在 JSON 里，脚本要用 `.get`。
+`GET /debug/state` 返回（键按字母排序）：`selectedID`、`selected`（`id / title / goal / workingDirectory / messageCount / hasUnread / isPinned / isArchived / groupID / rowTags / sideChat / permissionMode / toolsEnabled / access / accessLabel / lastReply / isCodeReview / reviewOutcome / queued / isCompacting / compaction / transcript`；`rowTags` 是会话行的状态标签 awaitingApproval / needsInput / systemError / automation / attachedHeartbeatAutomation，主标签在前；`sideChat` 是 `role / text / status / error` 列表；`lastReply` 是最后一条用户消息之后的整段回复，一轮代理回复跨好几条助手消息，`toolCalls` 按顺序列出其中每次调用的 `id / name / arguments / result / isError`，`text` 取最后一条；`access` 是「工具与权限」菜单勾选项，`accessLabel` 是按钮上写的；`reviewOutcome` 为 running / reported / unreported；`queued` 是排队的追问 `id / text / held`，`held` 表示被停止或重启停住、只能手动发；`compaction` 是 `summary / coveredThroughID / tokensBefore / tokensAfter`；`transcript` 是全部消息的 `id / role / text / status / error / attached / mentionNotes`，`text` 是气泡显示的文字（前 400 字，不含附上的提及内容，模型仍读全部），`attached` 是气泡下的提及标签，`mentionNotes` 是气泡下的提及说明）、`draft`（输入框里显示的文字，提及是可读的 `@名称`）、`draftMentions`（输入框上方的提及标签，如 `@notes.md`、`$review`）、`dictation`（idle / starting / listening / finishing / transcribing / done / failed / cancelled）与 `dictationError`、`conversationCount`、`unreadIDs`、`priorityIDs`、`sidebarGrouping`、`sidebarFilter`、`webSearchEnabled`、`phoneAccess`、`undoToast`（`message / offersUndo`）、`undoHistory`（还能撤销的动作，最新在前）、`groups`（项目与自定义分区，`id / name / isSection / conversationIDs`）、`scheduledTasks`（`id / title / status / summary / nextRunLabel / nextRunAt / runCount / lastRunConversationID / lastSkipReason / running`，日期为 ISO-8601）、`pendingFileRequest`（文件标签还没取走的打开请求）、`sidePanelOpen`、`sidePanelTab`、`sideChatStreaming`、`errorMessage`、`isStreaming`、`pendingApprovals`（`id / conversationID / callID / toolName / source / risk / summary`）、`runningToolCallIDs`、`mcpServers`（`id / name / origin / enabled / status / toolCount / detail / tools`，`status` 为 disabled / needsRuntime / connecting / ready / failed，`detail` 是缺的运行时或失败原因加 stderr 末尾）、`browserTabs`（`id / title / url / selected`）、`settingsOpen`、`windowTitles`（只含可见窗口）。值为空的可选键不出现在 JSON 里，脚本要用 `.get`。不带 `window` 的 `/debug/snapshot` 截主窗口，主窗口最小化到程序坞时也照常截。
 
 `scenario_codex.py` 只在自己新建的对话和临时 git 仓库（带一个本地 bare「上游」）里操作，结束时删掉它们，并把选中项、侧栏设置、侧面板、浏览器标签和原有的未读标记都还原。`--live` 是唯一会调用供应商的部分。
 
@@ -146,6 +151,8 @@ python3 -I tools/ompshot/scenario_agent.py         # 代理运行时：工具、
 | --- | --- | --- |
 | `scenario_undo.py` | 改名、置顶、归档、移入移出分区、删除带对话的分区、整个分区归档后逐个撤销；目标已删除时撤销给出原因 | 否 |
 | `scenario_wave5.py` | 定时任务新建 / 校验 / 暂停 / 继续 / 删除，打开文件到指定行，审查在没有改动 / 没有目录时拒绝；`--live` 再测到点自动运行、发到当前对话的立即运行、对埋了 bug 的改动审查 | `--live` 时 |
-| `scenario_steer.py` | 等批准时插话排队并在同一个回复里送达、停止后排队被停住、编辑放回输入框、立即发送打断、压缩上下文与压缩时插话 | 是 |
+| `scenario_steer.py` | 等批准时插话排队并在同一个回复里送达、停止后排队被停住、编辑放回输入框、立即发送打断、压缩上下文与压缩时插话；每一步核对会话行的「等待批准」「需要你处理」标签 | 是 |
+| `scenario_mentions.py` | 关掉工具后，`@` 文件、`$` 技能、`@` 对话、`@` 标签页（脚本自起的本地页面）各自把只有那里才有的暗号送到模型；已删除 / 二进制 / 目录外的文件变成说明且内容不外传 | 是 |
+| `scenario_dictation.py` | `say` 生成的中英文音频经本机识别器进草稿、接在原草稿后面；静音 / 文件不存在 / 不支持的语言给出原因且草稿不动；设置里的听写语言 | 否 |
 | `scenario_agent.py` / `scenario_remote_approval.py` | 代理运行时与手机批准 | 是 |
 | `scenario_mcp_catalog.py` | 7 个目录 MCP 服务器在沙盒里从零安装并连上 | 否（要下载包） |
