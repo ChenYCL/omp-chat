@@ -21,8 +21,13 @@ struct RemoteConsoleScreen: View {
     let client: (any RelayCommandSink)?
     let hostName: String
     let conversationProvider: (String) -> RelayConversation?
+    /// Approval cards the Mac is waiting on, read fresh on every render.
+    let approvals: () -> [RelayApproval]
+    /// The Mac's latest refusals of phone commands, read fresh on every render.
+    let commandFailures: () -> [RelayCommandFailure]
     let onDismiss: () -> Void
 
+    @FocusState private var inputFocused: Bool
     @State private var draft = ""
     @State private var sending = false
     @State private var stopInFlight = false
@@ -31,7 +36,7 @@ struct RemoteConsoleScreen: View {
     @State private var renaming = false
     @State private var renameText = ""
     @State private var feedbackFlash: String?
-    @FocusState private var inputFocused: Bool
+    @State private var approvalTracker = RemoteApprovalTracker()
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -88,10 +93,24 @@ struct RemoteConsoleScreen: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: feedbackFlash)
+        .onChange(of: approvals()) { _, _ in reconcileApprovals() }
+        .onChange(of: commandFailures()) { _, _ in reconcileApprovals() }
+        // An answer that hears nothing back gives up, so its card works again.
+        .task(id: approvalTracker.nextDeadline) {
+            guard let deadline = approvalTracker.nextDeadline else { return }
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            reconcileApprovals()
+        }
     }
 
     private var currentConversation: RelayConversation? {
         conversationProvider(conversationID)
+    }
+
+    /// The open conversation's approval cards, oldest first.
+    private var openApprovals: [RelayApproval] {
+        approvals().filter { $0.conversationID == conversationID }
     }
 
     // MARK: Header
@@ -169,7 +188,9 @@ struct RemoteConsoleScreen: View {
     // MARK: Transcript
 
     private func transcript(of conversation: RelayConversation) -> some View {
-        ScrollViewReader { proxy in
+        let cards = openApprovals
+        let placement = Self.place(cards, in: conversation.messages)
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(conversation.messages, id: \.id) { message in
@@ -177,6 +198,12 @@ struct RemoteConsoleScreen: View {
                             .environment(\.genUISend, remoteGenUISend)
                             .id(message.id)
                             .contextMenu { menu(for: message) }
+                        ForEach(placement.byMessage[message.id] ?? []) { approval in
+                            approvalCard(approval)
+                        }
+                    }
+                    ForEach(placement.unplaced) { approval in
+                        approvalCard(approval)
                     }
                     if let error = nil as String? {
                         Text(error).font(.system(size: 12))
@@ -193,7 +220,47 @@ struct RemoteConsoleScreen: View {
                     }
                 }
             }
+            // A new card is what the agent waits on: bring it into view.
+            .onChange(of: cards.map(\.id)) { old, new in
+                guard let fresh = new.last(where: { !old.contains($0) }) else { return }
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo(Self.cardScrollID(fresh), anchor: .bottom)
+                }
+            }
         }
+    }
+
+    /// Each card goes under the assistant message whose activity holds its
+    /// call; a card whose call is not in the mirrored messages goes last.
+    private static func place(
+        _ cards: [RelayApproval], in messages: [RelayMessage]
+    ) -> (byMessage: [String: [RelayApproval]], unplaced: [RelayApproval]) {
+        var owner: [String: String] = [:]
+        for message in messages {
+            for activity in message.activity ?? [] { owner[activity.id] = message.id }
+        }
+        var byMessage: [String: [RelayApproval]] = [:]
+        var unplaced: [RelayApproval] = []
+        for card in cards {
+            if let messageID = owner[card.callID] {
+                byMessage[messageID, default: []].append(card)
+            } else {
+                unplaced.append(card)
+            }
+        }
+        return (byMessage, unplaced)
+    }
+
+    private static func cardScrollID(_ approvalID: String) -> String { "approval-\(approvalID)" }
+
+    private func approvalCard(_ approval: RelayApproval) -> some View {
+        RemoteApprovalCard(
+            approval: approval,
+            sending: approvalTracker.isSending(approval.id),
+            error: approvalTracker.error(for: approval.id),
+            onAnswer: { answer(approval, $0) }
+        )
+        .id(Self.cardScrollID(approval.id))
     }
 
     @ViewBuilder
@@ -362,7 +429,6 @@ struct RemoteConsoleScreen: View {
             }
         }
     }
-
     private func submit(_ command: RelayCommand) {
         guard let client else { return }
         Task {
@@ -371,6 +437,25 @@ struct RemoteConsoleScreen: View {
             } catch {
                 flash("操作失败")
             }
+        }
+    }
+
+    /// Sends 允许一次 / 拒绝 for one card. The card waits for the Mac's next
+    /// snapshot to drop it (applied) or to name the request (refused).
+    private func answer(_ approval: RelayApproval, _ decision: RelayApprovalDecision) {
+        guard let client, let requestID = approvalTracker.begin(approval.id) else { return }
+        Task {
+            do {
+                try await client.submit(.approve(approvalID: approval.id, decision: decision, requestID: requestID))
+            } catch {
+                approvalTracker.sendFailed(approval.id, message: RemoteApprovalTracker.sendFailureMessage(error))
+            }
+        }
+    }
+
+    private func reconcileApprovals() {
+        for notice in approvalTracker.update(approvals: approvals(), failures: commandFailures()) {
+            flash(notice)
         }
     }
 
@@ -621,6 +706,117 @@ struct RemoteToolStatusIcon: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.ompDynamic(light: 0x055F51, dark: 0x42DEC2))
         }
+    }
+}
+
+// MARK: - Approval card
+
+/// Phone twin of the Mac's `ToolApprovalCard`: one tool call the Mac's agent
+/// is suspended on. Only 允许一次 / 拒绝 — 始终允许 stays a Mac decision. When
+/// the Mac does not let the phone allow this call, 允许一次 is off and the
+/// card says why; 拒绝 always works.
+struct RemoteApprovalCard: View {
+    let approval: RelayApproval
+    /// An answer is on its way; both buttons wait for the Mac.
+    let sending: Bool
+    /// Why the last answer did not apply.
+    let error: String?
+    let onAnswer: (RelayApprovalDecision) -> Void
+    @State private var showArguments = false
+
+    private var risk: ToolRisk? { ToolRisk(rawValue: approval.risk) }
+
+    private var riskColor: Color {
+        switch risk {
+        case .read?: Color.ompTextSecondary
+        case .control?: Color.red
+        default: Color.orange
+        }
+    }
+
+    /// The refusal text when it would only repeat the notice under the card.
+    private var shownError: String? {
+        guard let error else { return nil }
+        return !approval.canApprove && error == RemoteApprovalTracker.shellDisabledMessage ? nil : error
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: risk == .control ? "cursorarrow.click.2" : "exclamationmark.shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(riskColor)
+                Text("需要你的批准 · \(risk?.title ?? approval.risk)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.ompText)
+                Spacer(minLength: 0)
+                Text(approval.source)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .lineLimit(1)
+            }
+            Text(approval.summary.isEmpty ? approval.toolName : approval.summary)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(Color.ompText)
+                .textSelection(.enabled)
+                .lineLimit(6)
+                .accessibilityIdentifier("remote.approval.summary")
+            if !approval.argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                DisclosureGroup(isExpanded: $showArguments) {
+                    ScrollView {
+                        Text(approval.argumentsJSON)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Color.ompTextSecondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 200)
+                } label: {
+                    Text("参数")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .accessibilityIdentifier("remote.approval.arguments")
+            }
+            if !approval.canApprove {
+                Text(RemoteApprovalTracker.shellDisabledMessage)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("remote.approval.notice")
+            }
+            if let shownError {
+                Label(shownError, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("remote.approval.error")
+            }
+            HStack(spacing: 8) {
+                Button("允许一次") { onAnswer(.allowOnce) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(sending || !approval.canApprove)
+                    .accessibilityIdentifier("remote.approval.allowOnce")
+                Button("拒绝", role: .destructive) { onAnswer(.deny) }
+                    .buttonStyle(.bordered)
+                    .disabled(sending)
+                    .accessibilityIdentifier("remote.approval.deny")
+                if sending {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Spacer(minLength: 0)
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(riskColor.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.approval.card")
     }
 }
 

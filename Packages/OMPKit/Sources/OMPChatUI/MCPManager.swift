@@ -41,15 +41,39 @@ public final class MCPManager {
     /// The latest stop per server id; a relaunch of that id waits for it.
     @ObservationIgnored private var stopping: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var started = false
+    @ObservationIgnored private let preparer: MCPPackagePreparer
 
     init(
         model: ChatAppModel, http: HTTPTransport = URLSessionTransport(),
-        timeouts: MCPClient.Timeouts = MCPClient.Timeouts(), policy: MCPRestartPolicy = MCPRestartPolicy()
+        timeouts: MCPClient.Timeouts = MCPClient.Timeouts(), policy: MCPRestartPolicy = MCPRestartPolicy(),
+        packageRoot: URL? = nil, packageRunner: MCPPackagePreparer.Runner? = nil
     ) {
         self.model = model
         self.http = http
         self.timeouts = timeouts
         self.policy = policy
+        preparer = MCPPackagePreparer(root: packageRoot ?? Self.defaultPackageRoot, run: packageRunner ?? Self.shellRunner)
+    }
+
+    /// Where `npx` / `uvx` packages are installed: the app's own support
+    /// folder (its container, when sandboxed).
+    static var defaultPackageRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OMPChat/mcp-packages", isDirectory: true)
+    }
+
+    /// Runs an installer through the same shell runner the host terminal uses
+    /// (pipes drained on threads, process tree stopped on timeout).
+    static let shellRunner: MCPPackagePreparer.Runner = { argv, timeout in
+        let command = argv.map(HostExecutor.shellQuote).joined(separator: " ")
+        let run = await HostExecutor.runCommand(
+            command, cwd: HostExecutor.realHomeDirectory(), timeout: timeout,
+            outputCap: 32 * 1024, mergeStderr: true
+        )
+        var output = run.stdout
+        if let error = run.launchError { output += "\n" + error }
+        if run.timedOut { output += "\n超时（\(Int(timeout)) 秒）" }
+        return MCPPackagePreparer.Outcome(exitCode: Int32(truncatingIfNeeded: run.exitCode), output: output)
     }
 
     /// The servers the manager runs: settings first, then plugin servers
@@ -165,7 +189,13 @@ public final class MCPManager {
         let id = config.id
         launchKeys[id] = key
         tools[id] = []
-        let factory: MCPServerConnection.TransportFactory
+
+        /// What the connection will run, before any package is prepared.
+        enum Source {
+            case stdio(MCPStdioTransport.Launch, command: String)
+            case http(URL)
+        }
+        let source: Source
         if let command = config.command {
             let home = HostExecutor.realHomeDirectory()
             let environment = MCPLaunchPlanner.environment(
@@ -179,33 +209,65 @@ public final class MCPManager {
                 }
                 return
             }
-            let launch = MCPStdioTransport.Launch(
-                executable: executable, arguments: config.args, environment: environment,
-                workingDirectory: MCPLaunchPlanner.workingDirectory(for: config, home: home)
+            source = .stdio(
+                MCPStdioTransport.Launch(
+                    executable: executable, arguments: config.args, environment: environment,
+                    workingDirectory: MCPLaunchPlanner.workingDirectory(for: config, home: home)
+                ),
+                command: command
             )
-            factory = { MCPStdioTransport(launch: launch, stopTree: { HostExecutor.stopTree(of: $0, escalated: $1) }) }
         } else if let raw = config.url, let url = URL(string: raw),
                   let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-            let http = self.http
-            factory = { MCPHTTPTransport(endpoint: url, http: http) }
+            source = .http(url)
         } else {
             statuses[id] = .failed(reason: "「\(config.url ?? "")」不是 http 或 https 地址", log: [])
             return
         }
         let token = UUID()
-        let connection = MCPServerConnection(
-            config: config, timeouts: timeouts, policy: policy, makeTransport: factory
-        ) { [weak self] snapshot in
-            Task { @MainActor [weak self] in self?.apply(snapshot, token: token) }
-        }
-        connections[id] = connection
         tokens[id] = token
         statuses[id] = .connecting
         // A replaced process must be gone first: servers lock profile folders
         // and data files that two copies cannot share.
         let previous = stopping[id]
-        Task {
+        Task { [weak self] in
             await previous?.value
+            guard let self, self.tokens[id] == token else { return }
+            let factory: MCPServerConnection.TransportFactory
+            switch source {
+            case .http(let url):
+                let http = self.http
+                factory = { MCPHTTPTransport(endpoint: url, http: http) }
+            case .stdio(var launch, let command):
+                // npx / uvx servers are installed once and run through their
+                // interpreter; see MCPPackageLaunch. The first start downloads.
+                let plan = MCPPackageLaunch.plan(command: command, arguments: config.args)
+                let prepared = await self.preparer.prepare(
+                    plan, path: launch.environment["PATH"] ?? "", home: HostExecutor.realHomeDirectory()
+                )
+                // Stopped or replaced while the package was downloading.
+                guard self.tokens[id] == token else { return }
+                switch prepared {
+                case .unchanged:
+                    break
+                case .launch(let executable, let arguments):
+                    launch.executable = executable
+                    launch.arguments = arguments
+                case .needsRuntime(let runtime):
+                    self.statuses[id] = .needsRuntime(runtime)
+                    return
+                case .failure(let reason, let log):
+                    self.statuses[id] = .failed(reason: reason, log: log)
+                    return
+                }
+                let ready = launch
+                factory = { MCPStdioTransport(launch: ready, stopTree: { HostExecutor.stopTree(of: $0, escalated: $1) }) }
+            }
+            let connection = MCPServerConnection(
+                config: config, timeouts: self.timeouts, policy: self.policy, makeTransport: factory
+            ) { [weak self] snapshot in
+                Task { @MainActor [weak self] in self?.apply(snapshot, token: token) }
+            }
+            self.connections[id] = connection
             await connection.start()
         }
     }

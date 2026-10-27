@@ -394,4 +394,92 @@ final class AgentLoopModelTests: XCTestCase {
         XCTAssertNil(conversation.permissionMode)
         XCTAssertNil(conversation.toolsEnabled)
     }
+
+    // MARK: - Replies started from a phone
+
+    func testPhoneStartedReplyAsksEvenInFullModeWhileThePhoneIsNotTrusted() async throws {
+        let transport = ScriptedTransport([SSE.call("c1", "poke"), SSE.answer("没改")])
+        let probe = ProbeProvider()
+        let (model, id) = try await makeModel(transport, probe: probe, mode: .full)
+        XCTAssertFalse(model.settings.relayAllowShell, "手机访问默认关闭")
+
+        await model.handleRelayCommand(.input(conversationID: id.uuidString, text: "改一下"))
+        try await waitUntil { model.pendingApprovals.count == 1 }
+        XCTAssertTrue(probe.calls.isEmpty, "手机发起的写操作不能在没问的情况下执行")
+        let card = try XCTUnwrap(model.pendingApprovals.first)
+        XCTAssertFalse(RelayApproval.phoneMayAllow(card.risk, allowShell: false), "手机也批不了，只能在 Mac 上批")
+
+        model.resolveApproval(card.id, .deny)
+        try await waitUntil { !model.isStreaming }
+        XCTAssertTrue(probe.calls.isEmpty)
+    }
+
+    func testPhoneStartedReplyRunsUnaskedOnceThePhoneIsTrusted() async throws {
+        let transport = ScriptedTransport([SSE.call("c1", "poke"), SSE.answer("改好了")])
+        let probe = ProbeProvider()
+        let (model, id) = try await makeModel(transport, probe: probe, mode: .full)
+        var settings = model.settings
+        settings.relayAllowShell = true
+        await model.saveSettings(settings)
+
+        await model.handleRelayCommand(.input(conversationID: id.uuidString, text: "改一下"))
+        try await waitUntil { !model.isStreaming }
+        XCTAssertEqual(probe.calls, ["poke"], "用户打开了手机访问，就按对话自己的模式走")
+        XCTAssertTrue(model.pendingApprovals.isEmpty)
+    }
+
+    func testTheLimitEndsWhenTheNextReplyStartsOnTheMac() async throws {
+        let transport = ScriptedTransport([SSE.call("c1", "poke"), SSE.answer("没改"), SSE.call("c2", "poke"), SSE.answer("改好了")])
+        let probe = ProbeProvider()
+        let (model, id) = try await makeModel(transport, probe: probe, mode: .full)
+
+        await model.handleRelayCommand(.input(conversationID: id.uuidString, text: "手机发的"))
+        try await waitUntil { model.pendingApprovals.count == 1 }
+        model.resolveApproval(try XCTUnwrap(model.pendingApprovals.first).id, .deny)
+        try await waitUntil { !model.isStreaming }
+        XCTAssertTrue(probe.calls.isEmpty)
+
+        await model.sendNow(text: "Mac 上发的", attachments: [])
+        try await waitUntil { !model.isStreaming }
+        XCTAssertEqual(probe.calls, ["poke"], "Mac 自己发起的回复不再受手机限制")
+        XCTAssertTrue(model.pendingApprovals.isEmpty)
+    }
+
+    // MARK: - Reply ownership
+
+    /// A message arriving while a reply waits on a card (the phone can send
+    /// at any time) cancels the old reply. The old loop used to clear the new
+    /// reply's state as it wound down, so 停止 could no longer reach the new
+    /// reply and its card waited forever.
+    func testANewMessageWhileACardWaitsLeavesTheNewReplyStoppable() async throws {
+        let transport = ScriptedTransport([SSE.call("c1", "poke"), SSE.call("c2", "poke")])
+        let probe = ProbeProvider()
+        let (model, _) = try await makeModel(transport, probe: probe)
+
+        await model.sendNow(text: "第一条", attachments: [])
+        try await waitUntil { model.pendingApprovals.map(\.callID) == ["c1"] }
+        await model.sendNow(text: "第二条", attachments: [])
+        try await waitUntil { model.pendingApprovals.map(\.callID) == ["c2"] }
+        // Give the cancelled first loop time to wind down.
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(model.isStreaming, "旧回复收尾不能把新回复的停止按钮关掉")
+        XCTAssertEqual(model.pendingApprovals.map(\.callID), ["c2"], "旧卡片被取消，新卡片还在")
+
+        model.stop()
+        try await waitUntil { !model.isStreaming && model.pendingApprovals.isEmpty }
+        XCTAssertTrue(probe.calls.isEmpty, "两张卡片都没被批准，什么都不该执行")
+    }
+
+    func testDeletingAConversationStopsItsReplyAndCards() async throws {
+        let transport = ScriptedTransport([SSE.call("c1", "poke")])
+        let probe = ProbeProvider()
+        let (model, id) = try await makeModel(transport, probe: probe)
+
+        await model.sendNow(text: "改一下", attachments: [])
+        try await waitUntil { model.pendingApprovals.count == 1 }
+        model.deleteConversation(id)
+        try await waitUntil { !model.isStreaming && model.pendingApprovals.isEmpty }
+        XCTAssertNil(model.streamingConversationID)
+        XCTAssertTrue(probe.calls.isEmpty)
+    }
 }

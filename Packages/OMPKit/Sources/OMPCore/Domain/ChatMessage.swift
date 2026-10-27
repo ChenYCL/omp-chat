@@ -112,4 +112,26 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         }
         return copy
     }
+
+    /// The message minus its thinking seals. Seals only go back to the
+    /// provider inside the tool loop that produced them; anywhere else they
+    /// are opaque, often kilobytes long, and useless.
+    public var withoutThinkingSeals: ChatMessage {
+        var copy = self
+        copy.parts.removeAll { part in
+            if case .thinkingSeal = part { true } else { false }
+        }
+        return copy
+    }
+}
+
+public extension Conversation {
+    /// For a conversation leaving this device (JSON export / import): the
+    /// readable thinking stays, the seals do not.
+    var withoutThinkingSeals: Conversation {
+        var copy = self
+        copy.messages = messages.map(\.withoutThinkingSeals)
+        copy.alternativeReplies = alternativeReplies.map(\.withoutThinkingSeals)
+        return copy
+    }
 }

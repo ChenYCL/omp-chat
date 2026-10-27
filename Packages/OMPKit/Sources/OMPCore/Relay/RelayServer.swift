@@ -38,6 +38,10 @@ public enum RelayCommand: Sendable, Equatable {
     case toggleArchive(conversationID: String)
     case toggleLock(conversationID: String)
     case setUnread(conversationID: String, unread: Bool)
+    /// Answer one approval card the host shows. Only the host decides whether
+    /// it applies; a refusal is echoed under `requestID` in
+    /// `RelaySnapshot.commandFailures`.
+    case approve(approvalID: String, decision: RelayApprovalDecision, requestID: String?)
 }
 
 /// Errors thrown by [`RelayServer.start(port:token:)`].
@@ -162,6 +166,15 @@ public enum DebugAction: Sendable, Equatable {
     case mcpInstall(entryID: String, values: [String: [String]])
     /// Remove a server from settings (and its vault secrets).
     case mcpRemove(serverID: String)
+    /// The composer's 联网 pill.
+    case setWebSearch(enabled: Bool)
+    /// Adds a computer-use server from `ComputerUseCatalog`, enabled, without
+    /// the confirmation sheet 设置 → 电脑控制 shows. For black-box runs only
+    /// (the route is token-gated); it makes no tool call and grants nothing.
+    case computerUseAdd(serverID: String?)
+    /// 设置 → 远程控制 → 允许手机访问文件与终端. Loopback-only like every
+    /// debug action, so a phone cannot use it to grant itself access.
+    case setPhoneAccess(enabled: Bool)
 
     /// The wire name of the action.
     public var name: String {
@@ -199,6 +212,9 @@ public enum DebugAction: Sendable, Equatable {
         case .setToolsEnabled: "setToolsEnabled"
         case .mcpInstall: "mcpInstall"
         case .mcpRemove: "mcpRemove"
+        case .setWebSearch: "setWebSearch"
+        case .computerUseAdd: "computerUseAdd"
+        case .setPhoneAccess: "setPhoneAccess"
         }
     }
 
@@ -218,6 +234,13 @@ public enum DebugAction: Sendable, Equatable {
             return .some(string)
         }
 
+        /// A JSON `true` / `false`. `as? Bool` also bridges the numbers 1 and 0,
+        /// so a typo like `"enabled": 1` would flip a switch instead of 400.
+        func boolean(_ raw: Any?) -> Bool? {
+            guard let number = raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+            return number.boolValue
+        }
+
         switch name {
         case "select":
             guard let id = fields["conversationID"] as? String else { return nil }
@@ -225,7 +248,7 @@ public enum DebugAction: Sendable, Equatable {
         case "newChat":
             return .newChat
         case "sidePanel":
-            guard let open = fields["open"] as? Bool else { return nil }
+            guard let open = boolean(fields["open"]) else { return nil }
             if let rawTab = fields["tab"] {
                 // A misspelled tab is a caller error, not a default: reject
                 // instead of silently landing on 终端.
@@ -268,7 +291,7 @@ public enum DebugAction: Sendable, Equatable {
         case "markAllRead":
             return .markAllRead
         case "setUnread":
-            guard let id = fields["conversationID"] as? String, let unread = fields["unread"] as? Bool else {
+            guard let id = fields["conversationID"] as? String, let unread = boolean(fields["unread"]) else {
                 return nil
             }
             return .setUnread(conversationID: id, unread: unread)
@@ -385,8 +408,8 @@ public enum DebugAction: Sendable, Equatable {
             switch fields["enabled"] {
             case nil, is NSNull:
                 return .setToolsEnabled(conversationID: id, enabled: nil)
-            case let flag as Bool:
-                return .setToolsEnabled(conversationID: id, enabled: flag)
+            case let raw? where boolean(raw) != nil:
+                return .setToolsEnabled(conversationID: id, enabled: boolean(raw))
             default:
                 return nil
             }
@@ -406,6 +429,16 @@ public enum DebugAction: Sendable, Equatable {
         case "mcpRemove":
             guard let id = fields["serverID"] as? String else { return nil }
             return .mcpRemove(serverID: id)
+        case "setWebSearch":
+            guard let enabled = boolean(fields["enabled"]) else { return nil }
+            return .setWebSearch(enabled: enabled)
+        case "computerUseAdd":
+            // Absent means the primary pick; present must be a string.
+            guard let id = optionalString("serverID") else { return nil }
+            return .computerUseAdd(serverID: id)
+        case "setPhoneAccess":
+            guard let enabled = boolean(fields["enabled"]) else { return nil }
+            return .setPhoneAccess(enabled: enabled)
         default:
             return nil
         }
@@ -439,7 +472,9 @@ public struct DebugActionOutcome: Codable, Sendable, Equatable {
 ///   state has been idle for 15 seconds.
 /// - `POST /command` → flat [`RelayCommandWire`] body; the full action
 ///   surface (select/new/rename/delete/regenerate/edit/branch/feedback/
-///   setModel/pin/archive/lock/unread) goes through this one route.
+///   setModel/pin/archive/lock/unread/approve) goes through this one route.
+///   A body whose `command` does not parse (unknown kind, an `approve` without
+///   `approvalID` or with a decision other than `allowOnce`/`deny`) is `400`.
 /// - `POST /rpc` → [`HostRPCRequest`] JSON; answered with [`HostRPCResponse`]
 ///   JSON at `200` even when `ok` is false. Unset `onRPC` answers
 ///   `ok: false, error: "unsupported"`.
@@ -752,6 +787,14 @@ public final class RelayServer: @unchecked Sendable {
         guard request.headers["x-omp-token"] == token, !token.isEmpty else {
             send(httpResponse(status: "401 Unauthorized", contentType: "application/json",
                               body: Data("{\"error\":\"unauthorized\"}".utf8)),
+                 id: id)
+            return
+        }
+        // Automation routes act on the Mac as its owner would, so they are
+        // for local tools only; see `RelayPeer`.
+        if request.path.hasPrefix("/debug/"), !RelayPeer.isLoopback(connection.connection.endpoint) {
+            send(httpResponse(status: "403 Forbidden", contentType: "application/json",
+                              body: Data("{\"error\":\"loopback_only\"}".utf8)),
                  id: id)
             return
         }

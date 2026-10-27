@@ -30,6 +30,11 @@ public final class RelayHostController {
     /// the hub publisher run, so the phone can connect either way.
     private var hubClient: RelayHubClient?
     private var hubPublishTask: Task<Void, Never>?
+    /// Set when the approval state changed, so the hub loop publishes now
+    /// instead of finishing its sleep.
+    private var hubPublishDue = false
+    /// True while an observation of the approval state is armed.
+    private var observingApprovals = false
 
     public private(set) var isRunning = false
     public private(set) var lastError: String?
@@ -137,6 +142,7 @@ public final class RelayHostController {
         RunLoop.main.add(timer, forMode: .common)
         pushTimer = timer
         pushSnapshotIfDue(force: true)
+        observeApprovals()
     }
 
     /// Adds cross-network reachability on top of the LAN relay: register the
@@ -171,6 +177,7 @@ public final class RelayHostController {
         hubPublishTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, let client = self.hubClient, let model = self.model else { break }
+                self.hubPublishDue = false
                 do {
                     try await client.publish(model.relaySnapshot())
                     self.hubError = nil
@@ -180,10 +187,15 @@ public final class RelayHostController {
                     DiagnosticsCenter.shared.record("relay", .error, "hub publish failed",
                         fields: ["error": self.hubError ?? ""])
                 }
-                let interval = model.isStreaming ? UInt64(800_000_000) : UInt64(2_000_000_000)
-                try? await Task.sleep(nanoseconds: interval)
+                // Short steps instead of one sleep, so an approval change goes
+                // out at once while publishes stay one at a time, in order.
+                let deadline = Date().addingTimeInterval(model.isStreaming ? 0.8 : 2)
+                while !Task.isCancelled, !self.hubPublishDue, Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
             }
         }
+        observeApprovals()
     }
 
     /// Drops the hub registration; the LAN server (if running) is untouched.
@@ -222,6 +234,30 @@ public final class RelayHostController {
         guard due else { return }
         lastPushAt = Date()
         server.update(model.relaySnapshot())
+    }
+
+    /// Approval cards, the phone-access switch and refused phone answers are
+    /// what a phone user waits on, so a change there pushes at once instead
+    /// of on the next throttle tick (LAN) or hub interval. Conversations are
+    /// not observed: streaming deltas keep their throttle.
+    private func observeApprovals() {
+        guard !observingApprovals, let model else { return }
+        observingApprovals = true
+        withObservationTracking {
+            _ = model.pendingApprovals
+            _ = model.relayCommandFailures
+            _ = model.settings.relayAllowShell
+        } onChange: { [weak self] in
+            // Fires before the new value is stored; act on the next turn.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.observingApprovals = false
+                guard self.isRunning || self.hubClient != nil else { return }
+                self.observeApprovals()
+                self.pushSnapshotIfDue(force: true)
+                self.hubPublishDue = true
+            }
+        }
     }
 
     private func relayErrorDescription(_ error: Error) -> String {

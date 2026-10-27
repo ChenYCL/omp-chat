@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hub RPC correlation test.
+"""Hub RPC correlation and command forwarding test.
 
 Starts relay_hub on a free port, opens a fake host SSE stream, and checks:
 
@@ -8,6 +8,8 @@ Starts relay_hub on a free port, opens a fake host SSE stream, and checks:
 - no host online is 409
 - a host that never answers is 504 (timeout shortened via RPC_TIMEOUT_SECONDS)
 - a host that disconnects mid-wait is 409
+- an `approve` command reaches the host with every field; one with a missing
+  id, an unknown decision or `allowAlways` is 400 and never reaches it
 
 Run: python3 tools/relay-hub/test_rpc.py
 """
@@ -321,6 +323,39 @@ def run(port: int) -> None:
     # The unanswered call is still sitting in the host buffer.
     name, data = host.next_event()
     assert json.loads(data)["id"] == "slow"
+
+    # approve: forwarded verbatim, with or without a requestID.
+    allow = {"kind": "approve", "approvalID": "A1", "decision": "allowOnce", "requestID": "r-1"}
+    status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", allow)
+    assert status == 200, (status, body)
+    name, data = host.next_event()
+    assert name == "command", name
+    assert json.loads(data) == allow, data
+    deny = {"kind": "approve", "approvalID": "A1", "decision": "deny"}
+    status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", deny)
+    assert status == 200, (status, body)
+    name, data = host.next_event()
+    assert json.loads(data) == deny, data
+    print(f"approve forwarded: {allow['decision']}, {deny['decision']}")
+
+    # A phone never grants allowAlways, and a malformed approve is refused here.
+    for bad in [
+        {"kind": "approve", "approvalID": "A1", "decision": "allowAlways", "requestID": "r-2"},
+        {"kind": "approve", "decision": "deny"},
+        {"kind": "approve", "approvalID": "", "decision": "deny"},
+        {"kind": "approve", "approvalID": "A1"},
+        {"kind": "approve", "approvalID": "A1", "decision": ["deny"]},
+        {"kind": "approve", "approvalID": "A1", "decision": "deny", "requestID": 7},
+    ]:
+        status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", bad)
+        assert status == 400 and body == {"error": "bad command"}, (bad, status, body)
+    # None of them reached the host: the next event is this marker.
+    marker = {"kind": "stop", "conversationID": "marker"}
+    status, body = http(port, "POST", f"/v1/client/command?room={ROOM}", marker)
+    assert status == 200, (status, body)
+    name, data = host.next_event()
+    assert json.loads(data) == marker, data
+    print("bad approve 400, never forwarded")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,8 @@ public struct RemoteScreen: View {
                     client: activeSink,
                     hostName: hostName,
                     conversationProvider: currentConversation,
+                    approvals: { snapshot?.approvals ?? [] },
+                    commandFailures: { snapshot?.commandFailures ?? [] },
                     onDismiss: { selectedItem = nil }
                 )
                 .environment(model)
@@ -188,11 +190,15 @@ public struct RemoteScreen: View {
                             .padding(.top, 48)
                     }
                     if let snapshot {
+                        let waiting = Set(snapshot.approvals?.map(\.conversationID) ?? [])
                         ForEach(sorted(snapshot.conversations), id: \.id) { conversation in
                             Button {
                                 selectedItem = ConversationSheetItem(id: conversation.id)
                             } label: {
-                                RemoteConversationRow(conversation: conversation)
+                                RemoteConversationRow(
+                                    conversation: conversation,
+                                    waitingApproval: waiting.contains(conversation.id)
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -500,6 +506,8 @@ public struct RemoteScreen: View {
 
 struct RemoteConversationRow: View {
     let conversation: RelayConversation
+    /// The Mac's agent in this conversation is waiting on an approval card.
+    var waitingApproval = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -509,7 +517,9 @@ struct RemoteConversationRow: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.ompText)
                         .lineLimit(1)
-                    if conversation.isStreaming {
+                    if waitingApproval {
+                        approvalBadge
+                    } else if conversation.isStreaming {
                         streamingBadge
                     }
                 }
@@ -553,6 +563,22 @@ struct RemoteConversationRow: View {
         .padding(.vertical, 3)
         .background(Color.yellow.opacity(0.14), in: Capsule())
         .fixedSize()
+    }
+
+    /// Same capsule as 生成中, in the approval card's orange.
+    private var approvalBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.shield")
+                .font(.system(size: 8, weight: .bold))
+            Text("待批准")
+                .font(.system(size: 9.5, weight: .semibold))
+        }
+        .foregroundStyle(Color.orange)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.orange.opacity(0.14), in: Capsule())
+        .fixedSize()
+        .accessibilityIdentifier("remote.row.waitingApproval")
     }
 }
 

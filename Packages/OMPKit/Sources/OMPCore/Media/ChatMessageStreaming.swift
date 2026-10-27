@@ -11,6 +11,10 @@ public extension ChatMessage {
         case .thinkingDelta(let delta):
             self = appendingThinking(delta)
             if status != .streaming { status = .streaming }
+        case .thinkingSeal(let seal):
+            // A part of its own: the next thinking delta starts a new block
+            // instead of growing the text this seal was issued for.
+            parts.append(.thinkingSeal(seal))
         case .toolCallDelta(let index, let id, let name, let argumentsDelta):
             applyToolDelta(index: index, id: id, name: name, argumentsDelta: argumentsDelta)
         case .usage(let value):

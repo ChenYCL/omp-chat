@@ -30,7 +30,7 @@ OMPChat 采用同样的拓扑，但转发的是结构化会话状态而不是视
 
 - Mac 打开并保持长连接。Hub 在该房间标记「主机在线」。
 - Hub 通过此流下发指令：`event: command\ndata: {"kind":"input","conversationID":"…","text":"…"}\n\n`
-  kind 取值 `input` / `stop`。
+  kind 取值见「客户端指令上行」。
 - Hub 每 15 秒发 `: ping` 心跳。
 
 ### 2. 主机状态上行（Mac → Hub）
@@ -51,9 +51,16 @@ OMPChat 采用同样的拓扑，但转发的是结构化会话状态而不是视
 ### 4. 客户端指令上行（iOS → Hub）
 
 `POST /v1/client/command?room=CODE`
-body：`{"kind":"input","conversationID":"…"|null,"text":"…"}` 或 `{"kind":"stop","conversationID":"…"}`
+body：`{"kind":"input","conversationID":"…"|null,"text":"…"}`、`{"kind":"stop","conversationID":"…"}`，或批准卡片答复
+`{"kind":"approve","approvalID":"<RelayApproval.id>","decision":"allowOnce"|"deny","requestID":"<手机自定>"}`。
 
 - Hub 转发到该房间的主机流；成功 `200 {"ok":true}`；无主机在线 `409`。
+- `approve` 允许一次 / 拒绝 Mac 上等待批准的工具调用；`requestID` 缺省可省。手机没有
+  `allowAlways`（持续放行留在 Mac 上决定）：Hub 校验 `approvalID` 非空、`decision` 只能是
+  `allowOnce`/`deny`，其余 `400 {"error":"bad command"}`，不下发。
+- Mac 拒绝时在下一份快照的 `commandFailures`（`requestID` + `error`）里回报，`error` 为
+  `not_found`（卡片不存在或已处理）或 `shell_disabled`（非读取类调用需要 Mac 打开
+  「允许手机访问文件与终端」）。
 
 ### 拉全量
 

@@ -210,3 +210,97 @@ enum ANSIStripping {
         return output
     }
 }
+
+/// Phone-side state of the answers to the Mac's approval cards.
+///
+/// A relay command gets no reply over the LAN route or the hub, so the
+/// outcome is read from later snapshots: the card leaves `approvals` once the
+/// Mac applied the answer, or `commandFailures` names the request when the
+/// Mac refused it. An answer that hears neither within `timeout` is given up
+/// on, so the buttons never stay disabled for good.
+struct RemoteApprovalTracker: Equatable {
+    /// How long an answer may stay unconfirmed before the card is usable again.
+    static let timeout: TimeInterval = 15
+    /// Why 允许一次 is off when the Mac's phone-access switch is off.
+    static let shellDisabledMessage = "在 Mac 的 设置 → 远程控制 里打开「允许手机访问文件与终端」才能在手机上批准"
+
+    private struct Answer: Equatable {
+        let requestID: String
+        let sentAt: Date
+    }
+
+    /// Answers on their way, by approval id.
+    private var pending: [String: Answer] = [:]
+    /// Why the last answer to a card did not apply, by approval id.
+    private var errors: [String: String] = [:]
+
+    /// True while an answer to the card is on its way.
+    func isSending(_ approvalID: String) -> Bool { pending[approvalID] != nil }
+
+    /// Why the last answer to the card did not apply; nil otherwise.
+    func error(for approvalID: String) -> String? { errors[approvalID] }
+
+    /// When the oldest unconfirmed answer gives up; nil when none is pending.
+    var nextDeadline: Date? {
+        pending.values.map { $0.sentAt.addingTimeInterval(Self.timeout) }.min()
+    }
+
+    /// Starts answering a card. Returns the request id to send with the
+    /// command, or nil while an answer to that card is already on its way.
+    mutating func begin(_ approvalID: String, requestID: String = UUID().uuidString, now: Date = Date()) -> String? {
+        guard pending[approvalID] == nil else { return nil }
+        pending[approvalID] = Answer(requestID: requestID, sentAt: now)
+        errors[approvalID] = nil
+        return requestID
+    }
+
+    /// The command never reached the Mac; the card is usable again.
+    mutating func sendFailed(_ approvalID: String, message: String) {
+        pending[approvalID] = nil
+        errors[approvalID] = message
+    }
+
+    /// Reconciles with the latest snapshot. Returns what to tell the user about
+    /// refused answers whose card is already gone (answered on the Mac first).
+    mutating func update(
+        approvals: [RelayApproval], failures: [RelayCommandFailure], now: Date = Date()
+    ) -> [String] {
+        let listed = Set(approvals.map(\.id))
+        let refusals = Dictionary(failures.map { ($0.requestID, $0.error) }) { _, latest in latest }
+        var notices: [String] = []
+        for (approvalID, answer) in pending {
+            if let refusal = refusals[answer.requestID] {
+                pending[approvalID] = nil
+                if listed.contains(approvalID) {
+                    errors[approvalID] = Self.message(for: refusal)
+                } else {
+                    notices.append(Self.message(for: refusal))
+                }
+            } else if !listed.contains(approvalID) {
+                pending[approvalID] = nil
+            } else if now.timeIntervalSince(answer.sentAt) >= Self.timeout {
+                pending[approvalID] = nil
+                errors[approvalID] = "Mac 没有回应，请重试"
+            }
+        }
+        errors = errors.filter { listed.contains($0.key) }
+        return notices
+    }
+
+    /// What a refusal code in `commandFailures` should say to a person.
+    static func message(for error: String) -> String {
+        switch error {
+        case "shell_disabled": shellDisabledMessage
+        case "not_found": "这张卡片已经在别处处理了"
+        default: "Mac 没有执行这次批准（\(error)）"
+        }
+    }
+
+    /// What to say when the answer never reached the Mac. A `400` means the
+    /// Mac or the hub predates answering approvals from the phone.
+    static func sendFailureMessage(_ error: Error) -> String {
+        if case .http(400)? = error as? RelayClientError { return "这台 Mac 还不支持在手机上批准，请先更新" }
+        if case .http(400)? = error as? RelayHubError { return "这台 Mac 或中继还不支持在手机上批准，请先更新" }
+        return "发送失败，稍后重试"
+    }
+}

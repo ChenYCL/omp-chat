@@ -11,6 +11,8 @@ public enum FinishReason: String, Codable, Hashable, Sendable {
 public enum StreamEvent: Hashable, Sendable {
     case textDelta(String)
     case thinkingDelta(String)
+    /// Closes the thinking block just streamed (or stands for a redacted one).
+    case thinkingSeal(ThinkingSeal)
     case toolCallDelta(index: Int, id: String?, name: String?, argumentsDelta: String?)
     case usage(TokenUsage)
     case finished(FinishReason)

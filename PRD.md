@@ -67,16 +67,18 @@
 - 输入栏线程目标（双端，随请求进系统提示词）与块级格式（标题 1-3 / 段落 / 列表 / 链接，作用于草稿最后一段）
 - 侧面板：浏览器多标签、重新加载 / 复制网址 / 默认浏览器打开；文件与改动跟随线程目录；改动可暂存 / 取消暂存 / 丢弃 / 提交 / 推送；新增「旁聊」（就当前对话提问，问答不进对话）；面板状态入模型，可由 `/debug/action` 后台驱动
 - 设置 → 用量（累计 / 7 天 / 30 天 / 14 天图 / 用量最多的对话 / 按对话模型，推理计在输出里）与 数据控制 → 导入 JSON 对话
-- 自动化接口：`POST /debug/action`（选中、新建、侧面板、设置分区、草稿与格式、目标、整理侧栏、已读、继续于、分叉、链接、删除、改动面板的 git 写操作、浏览器标签、旁聊、发送 / 停止 / 批准、权限与工具开关、MCP 安装 / 移除）与 `GET /debug/state`；`ompshot.py state / act`；后台黑盒场景 `scenario_codex.py`（68 项）与 `scenario_agent.py`（实机代理运行时 32 项）
+- 自动化接口：`POST /debug/action`（选中、新建、侧面板、设置分区、草稿与格式、目标、整理侧栏、已读、继续于、分叉、链接、删除、改动面板的 git 写操作、浏览器标签、旁聊、发送 / 停止 / 批准、权限与工具开关、联网开关、手机访问开关、MCP 安装 / 移除、电脑控制添加）与 `GET /debug/state`，只接受本机连接；`ompshot.py state / act`；后台黑盒场景 `scenario_codex.py`（68 项）、`scenario_agent.py`（实机代理运行时，含联网 + 工具同请求）、`scenario_remote_approval.py`（手机批准 36 项）、`scenario_mcp_catalog.py`（7 个目录服务器从零安装 23 项）、`scenario_computer_use.py`（只握手，结论见 `docs/computer-use.md`）
 - 设置窗口跟随 外观 → 主题 与强调色 `769ddba`
 
 ### 2.5.2 代理运行时（Codex 内核，开源拼装，仅 macOS）
 
-- 工具调用循环：内置 `read_file` / `list_dir` / `write_file` / `edit_file` / `shell`，每条消息最多 25 轮模型调用；工具结果与调用同存一条助手消息，发给模型时编码成 `role: tool`；DeepSeek 思考模式下回传 `reasoning_content`
+- 工具调用循环：内置 `read_file` / `list_dir` / `write_file` / `edit_file` / `shell`，每条消息最多 25 轮模型调用；工具结果与调用同存一条助手消息，发给模型时编码成 `role: tool`；DeepSeek 思考模式下回传 `reasoning_content`；Anthropic 扩展思考在工具轮按原顺序回传带 `signature` 的思考块与 `redacted_thinking`（签名存为 `ContentPart.thinkingSeal`，不进中继快照与 JSON 导出），最新用户消息之前的思考不发；缺签名或思考正文被改过就不发该条思考，工具轮开不了头时关掉这次请求的思考
 - 批准：风险分 读取 / 修改文件 / 运行命令 / 控制电脑，权限模式 只读 / 每次询问 / 自动 / 完全访问（对话级，可跟随设置默认）；批准卡片在对应调用旁，允许一次 / 本次会话始终允许 / 拒绝；控制电脑永远逐次询问；停止同时杀掉工具进程树、拒绝等待中的卡片
+- 手机批准：Mac 的批准卡片随快照同步到手机（局域网与房间码），手机可允许一次 / 拒绝，永远不能给始终允许；写 / 命令 / 控制类卡片只有 Mac 上开了「允许手机访问文件与终端」才能在手机上允许；该开关关着时，手机发起的回复一律按「每次询问」运行。`/debug/*` 只接受本机连接。已在模拟器配对真实 Mac 点按验证（允许与拒绝）
 - MCP 客户端：stdio + Streamable HTTP，崩溃重启，设置 → MCP 服务器（状态、工具开关、日志、JSON 导入、7 个钉死版本的开源目录）
 - 插件与技能：Codex 格式插件（文件夹 / git 安装，安装前确认要运行的命令）、SKILL.md 渐进披露、AGENTS.md、插件钩子（默认不信任）
-- 电脑控制：设置 → 电脑控制（权限状态、选定的开源服务器与风险说明）；本机实跑待授权
+- 电脑控制：设置 → 电脑控制（权限状态、选定的开源服务器与风险说明）。**当前沙盒下运行不起来**（实测，见 `docs/computer-use.md`）：沙盒进程不能执行沙盒进程创建的可执行文件，包里的原生 App 启动即 `spawn EPERM`
+- 沙盒的实际代价（实测）：沙盒 App 及其子进程创建的文件都带 `com.apple.quarantine`，脚本不能直接执行（`./x.sh` → Operation not permitted，`bash x.sh` / `node x.js` 可以），原生可执行文件根本不能执行。已处理：`npx` / `uvx` 的 MCP 服务器由 App 自己安装并以 node / python 运行（`MCPPackageLaunch`），7 个目录服务器从零安装均连上；已写进代理的系统提示词。未处理：电脑控制所需的原生 App，以及代理在沙盒里新编译出的程序。取舍见 `docs/computer-use.md`「What would change this」
 - 输入栏「工具与权限」菜单、「本对话的工具」清单
 
 ### 2.5 设置

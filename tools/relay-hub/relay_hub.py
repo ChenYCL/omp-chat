@@ -31,6 +31,9 @@ KNOWN_RPC_OPS = {"info", "fs.list", "fs.read", "fs.write", "exec", "exec.cancel"
 # exec.cancel and exec.poll stay forwardable at the pending cap: a poll is
 # what drains a background exec, and blocking it would stall the run it reads.
 CAP_EXEMPT_RPC_OPS = {"exec.cancel", "exec.poll"}
+# A phone answers an approval card with these only; allowAlways (a lasting
+# grant) stays a decision made at the Mac, so the hub refuses it outright.
+APPROVE_DECISIONS = {"allowOnce", "deny"}
 
 
 def new_room_code() -> str:
@@ -44,6 +47,19 @@ def normalize_room(raw: str | None) -> str | None:
     if len(code) != ROOM_LENGTH or any(ch not in ROOM_ALPHABET for ch in code):
         return None
     return code
+
+
+def valid_approve(command: dict[str, Any]) -> bool:
+    approval_id = command.get("approvalID")
+    decision = command.get("decision")
+    request_id = command.get("requestID")
+    return (
+        isinstance(approval_id, str)
+        and bool(approval_id)
+        and isinstance(decision, str)
+        and decision in APPROVE_DECISIONS
+        and (request_id is None or isinstance(request_id, str))
+    )
 
 
 @dataclass
@@ -323,10 +339,15 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                 "input", "stop", "select", "newConversation", "rename", "delete",
                 "regenerate", "deleteMessage", "editAndResend", "branch",
                 "feedback", "setModel", "togglePin", "toggleArchive",
-                "toggleLock", "setUnread",
+                "toggleLock", "setUnread", "approve",
             }
             if command.get("kind") not in allowed:
                 writer.write(response("400 Bad Request", {"error": "bad kind"}))
+                await writer.drain()
+                writer.close()
+                return
+            if command.get("kind") == "approve" and not valid_approve(command):
+                writer.write(response("400 Bad Request", {"error": "bad command"}))
                 await writer.drain()
                 writer.close()
                 return

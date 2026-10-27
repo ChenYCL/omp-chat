@@ -191,17 +191,34 @@ def run(relay, shots, check):
         drive(relay, conversation_id, note_outside)
         check("目录外读取弹出卡片且不是普通读取",
               any(c["toolName"] == "read_file" and c["risk"] != "read" for c in outside),
-              json.dumps(outside, ensure_ascii=False))
+              json.dumps({"cards": outside, "reply": last_reply(relay)}, ensure_ascii=False)[:500])
 
         print("等待批准时停止")
         stopped = os.path.join(work, "stop.txt")
         relay.act("send", text="用 shell 工具运行 `echo stopped > stop.txt`。")
         cards = drive(relay, conversation_id, lambda card: "stop")
         state = relay.state()
-        check("停止后有过卡片", bool(cards))
+        check("停止后有过卡片", bool(cards), json.dumps(last_reply(relay), ensure_ascii=False)[:500])
         check("停止后没有等待中的卡片", not [c for c in state["pendingApprovals"] if c["conversationID"] == conversation_id])
         check("停止后不再生成", not state["isStreaming"])
         check("停止后命令没有运行", not os.path.exists(stopped))
+
+        print("联网 + 工具：同一个请求里带 web_search 和函数工具")
+        relay.act("setWebSearch", enabled=True)
+        try:
+            check("联网已打开", relay.state()["webSearchEnabled"])
+            relay.act("send", text="用 read_file 工具读取 notes.txt，然后只回复文件里的那一行内容。")
+            drive(relay, conversation_id, lambda card: "allowOnce")
+            state = relay.state()
+            reply = last_reply(relay)
+            check("同一请求没有被网关拒绝", reply.get("status") == "complete" and not reply.get("error")
+                  and not state.get("errorMessage"),
+                  json.dumps({"reply": reply, "banner": state.get("errorMessage")}, ensure_ascii=False)[:400])
+            check("联网打开时模型仍能调用函数工具",
+                  any("alpha-7319" in (c["result"] or "") for c in calls_named(reply, "read_file")),
+                  json.dumps(reply, ensure_ascii=False)[:300])
+        finally:
+            relay.act("setWebSearch", enabled=False)
 
         print("MCP：从目录安装 Filesystem 服务器并让模型调用")
         before_ids = {s["id"] for s in relay.state()["mcpServers"]}

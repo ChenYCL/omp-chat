@@ -135,22 +135,52 @@ grants differs:
   `npx -y @opensymph/open-computer-use@1.3.0 doctor`, which opens its
   onboarding window.
 
-**The integrator must verify on the installed, sandboxed build. This review
-could not:**
+**Measured on the installed, sandboxed build (2026-10-27)**, with
+`tools/ompshot/scenario_computer_use.py --allow-handshake` (adds the pinned
+server, waits for `initialize` + `tools/list`, removes it; no tool is called and
+no macOS permission is granted):
 
-1. Whether a child of the sandboxed OMPChat can use the AX API on other apps
-   at all. Children inherit the App Sandbox, and the sandbox may block AX
-   messaging even when TCC is granted. If it does, munim cannot work from
-   OMPChat.
-2. Whether open-computer-use's proxy works from a sandboxed parent. The CLI
-   creates its agent socket under `FileManager.temporaryDirectory`, which for
-   a sandboxed child is inside OMPChat's container, and passes that path to the
-   unsandboxed app it launches. macOS app-container protection may block or
-   prompt for that. Upstream issue
-   [#5](https://github.com/opensymph/open-computer-use/issues/5) also reports
-   multiple app copies fighting over one socket.
-3. That OMPChat's own Screen Recording / Accessibility rows match what the
-   server experiences (TCC attribution to the responsible process).
+1. **open-computer-use cannot start from the sandboxed app.** Its npm launcher
+   (a node script) runs, then `spawn`s the native `Open Computer Use.app` and
+   gets `Error: spawn EPERM`. The cause is not this package: every file a
+   sandboxed process creates carries `com.apple.quarantine`, and a sandboxed
+   process cannot `exec` such a file. Checked in the app with a copy of
+   `/bin/echo` made by the sandboxed shell: `operation not permitted`, with no
+   signature involved. The package is extracted by the app's own `npm`, so its
+   native binary is quarantined too. An interpreter can still *read* quarantined
+   files, which is why npm and uv servers (scripts) work and a native binary
+   does not.
+2. **Because it never starts, the other two questions are still open:** whether
+   a child of the sandboxed OMPChat could use the AX API on other apps at all
+   (children inherit the sandbox), and whether OMPChat's own Screen Recording /
+   Accessibility rows match what the server would experience.
+3. The upstream issue
+   [#5](https://github.com/opensymph/open-computer-use/issues/5) (several app
+   copies fighting over one socket) was not reached either.
+
+What would change this, each a decision for the owner of the build:
+
+- **Run the app without the App Sandbox.** Then nothing it or its children
+  create is quarantined, children are not sandboxed, and the permissions belong
+  to the app itself. It costs the Mac App Store (already given up by the
+  `absolute-path` exception) and moves the data out of
+  `~/Library/Containers/com.ace.ompchat`; the store folder must be pinned to
+  the old location so nothing is lost. The same switch removes every limit that
+  comes from the sandbox: crontab, terminal Claude sessions in 「CLI 会话」, and
+  scripts the agent writes.
+- **Install the package outside the app** (in Terminal, so its files are not
+  quarantined) and point a custom server at that copy. It would start, but it
+  would still be a child of the sandboxed app, so question 2 above remains.
+- **A separate unsandboxed helper** that owns the grants and talks to OMPChat
+  over a local socket. The most work, and the only one that keeps the sandbox.
+
+Where this stands in the app: the 电脑控制 pane still lists the two vetted
+servers and the permissions, and 添加 works, but the server then shows
+「连接失败」. Nothing in the pane claims it runs. What does work from the
+sandboxed app is everything script-based: the seven catalog servers install
+from nothing and connect (`scenario_mcp_catalog.py`), because the app installs
+each package itself and runs it through `node` / `python` instead of `npx` /
+`uvx`.
 
 ## Supply-chain risks
 

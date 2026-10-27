@@ -42,4 +42,18 @@ final class ApprovalPolicyTests: XCTestCase {
         }
         XCTAssertEqual(ApprovalPolicy.decide(mode: .readOnly, risk: .control, alwaysAllowed: true), .deny)
     }
+
+    /// A phone prompting a conversation must not get commands run unasked just
+    /// because the conversation was left on 自动 / 完全访问 for use at the Mac.
+    func testPhoneStartedRepliesAreHeldToAskUnlessThePhoneIsTrusted() {
+        for mode in PermissionMode.allCases {
+            XCTAssertEqual(mode.limited(remoteDriven: false, phoneMayTouchMac: false), mode, "Mac 自己发起的不受限：\(mode)")
+            XCTAssertEqual(mode.limited(remoteDriven: true, phoneMayTouchMac: true), mode, "开了手机访问就是用户的授权：\(mode)")
+        }
+        XCTAssertEqual(PermissionMode.full.limited(remoteDriven: true, phoneMayTouchMac: false), .ask)
+        XCTAssertEqual(PermissionMode.auto.limited(remoteDriven: true, phoneMayTouchMac: false), .ask)
+        XCTAssertEqual(PermissionMode.ask.limited(remoteDriven: true, phoneMayTouchMac: false), .ask)
+        XCTAssertEqual(PermissionMode.readOnly.limited(remoteDriven: true, phoneMayTouchMac: false), .readOnly,
+                       "只读比每次询问更严，不能被放宽")
+    }
 }

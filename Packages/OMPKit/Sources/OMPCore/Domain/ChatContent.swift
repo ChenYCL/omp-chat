@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum MediaKind: String, Codable, Hashable, Sendable {
@@ -73,15 +74,67 @@ public struct ToolResult: Codable, Hashable, Sendable {
     }
 }
 
+/// The opaque proof a provider attaches to a reasoning block so the block can
+/// be replayed verbatim later. Anthropic hands back a `signature` with every
+/// `thinking` block and a `redacted_thinking` block's encrypted `data`, and it
+/// rejects a tool-use turn whose thinking comes back unsigned or altered.
+///
+/// Stored as its own part right after the `.thinking` text it closes (or on
+/// its own when the provider streamed no text), so `.thinking` stays the
+/// readable transcript for every provider and screen.
+public struct ThinkingSeal: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Hashable, Sendable {
+        /// `value` is the signature of the thinking text before it.
+        case signature
+        /// `value` is a `redacted_thinking` block's `data`; it has no text.
+        case redacted
+    }
+
+    public var kind: Kind
+    public var value: String
+    /// SHA-256 (hex) of the thinking text the signature was issued for, so a
+    /// text that changed after the fact is never sent with a stale signature.
+    public var textDigest: String?
+
+    public init(kind: Kind, value: String, textDigest: String? = nil) {
+        self.kind = kind
+        self.value = value
+        self.textDigest = textDigest
+    }
+
+    public static func signature(_ signature: String, sealing text: String) -> ThinkingSeal {
+        ThinkingSeal(kind: .signature, value: signature, textDigest: digest(text))
+    }
+
+    public static func redacted(_ data: String) -> ThinkingSeal {
+        ThinkingSeal(kind: .redacted, value: data)
+    }
+
+    /// Whether this is a signature issued for exactly `text`.
+    public func seals(_ text: String) -> Bool {
+        kind == .signature && textDigest == Self.digest(text)
+    }
+
+    static func digest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 /// One renderable slice of a message.
 ///
 /// Encoded as a single-key object `{"text": "…"}` / `{"toolCall": {…}}` so the
 /// document stays readable and hand-editable. The synthesized encoding nests
 /// associated values under `_0`, which made externally written documents fail
 /// to decode and silently wipe the workspace.
+///
+/// `thinkingSeal` is the one exception: `{"thinking": "", "thinkingSeal": {…}}`,
+/// so builds that predate it decode it as empty thinking instead of failing
+/// the whole conversation.
 public enum ContentPart: Codable, Hashable, Sendable {
     case text(String)
     case thinking(String)
+    /// Opaque, invisible; closes the `.thinking` part before it.
+    case thinkingSeal(ThinkingSeal)
     case media(MediaRef)
     case toolCall(ToolCall)
     case toolResult(ToolResult)
@@ -90,6 +143,7 @@ public enum ContentPart: Codable, Hashable, Sendable {
         switch self {
         case .text(let value): value
         case .thinking(let value): value
+        case .thinkingSeal: ""
         case .media(let ref): ref.originalName ?? ref.relativePath
         case .toolCall(let call): "\(call.name)(\(call.argumentsJSON))"
         case .toolResult(let result): result.outputText
@@ -97,20 +151,25 @@ public enum ContentPart: Codable, Hashable, Sendable {
     }
 
     private enum Key: String, CodingKey {
-        case text, thinking, media, toolCall, toolResult
+        case text, thinking, thinkingSeal, media, toolCall, toolResult
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
-        if let value = try container.decodeIfPresent(String.self, forKey: .text) {
+        // `try?`: a legacy `{"text": {"_0": …}}` is a type mismatch here and
+        // must fall through to `decodeLegacy` instead of failing the document.
+        if let value = try? container.decodeIfPresent(String.self, forKey: .text) {
             self = .text(value)
-        } else if let value = try container.decodeIfPresent(String.self, forKey: .thinking) {
+        } else if let value = try? container.decodeIfPresent(ThinkingSeal.self, forKey: .thinkingSeal) {
+            // Checked before `thinking`, which rides along as an empty string.
+            self = .thinkingSeal(value)
+        } else if let value = try? container.decodeIfPresent(String.self, forKey: .thinking) {
             self = .thinking(value)
-        } else if let value = try container.decodeIfPresent(MediaRef.self, forKey: .media) {
+        } else if let value = try? container.decodeIfPresent(MediaRef.self, forKey: .media) {
             self = .media(value)
-        } else if let value = try container.decodeIfPresent(ToolCall.self, forKey: .toolCall) {
+        } else if let value = try? container.decodeIfPresent(ToolCall.self, forKey: .toolCall) {
             self = .toolCall(value)
-        } else if let value = try container.decodeIfPresent(ToolResult.self, forKey: .toolResult) {
+        } else if let value = try? container.decodeIfPresent(ToolResult.self, forKey: .toolResult) {
             self = .toolResult(value)
         } else {
             // Legacy synthesized encoding: {"text": {"_0": "…"}}.
@@ -123,6 +182,9 @@ public enum ContentPart: Codable, Hashable, Sendable {
         switch self {
         case .text(let value): try container.encode(value, forKey: .text)
         case .thinking(let value): try container.encode(value, forKey: .thinking)
+        case .thinkingSeal(let value):
+            try container.encode("", forKey: .thinking)
+            try container.encode(value, forKey: .thinkingSeal)
         case .media(let value): try container.encode(value, forKey: .media)
         case .toolCall(let value): try container.encode(value, forKey: .toolCall)
         case .toolResult(let value): try container.encode(value, forKey: .toolResult)

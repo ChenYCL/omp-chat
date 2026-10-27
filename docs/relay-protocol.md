@@ -72,6 +72,46 @@
 - `detail` 是 `ToolCall.argumentsJSON` 与 `ToolResult.outputText` 用换行拼接的原文（都非空才拼接），UTF-8 字节级截断、不切开多字节字符。快照由 hub 整体重发，为控制流量**只有每会话最后 5 条 assistant 消息带 detail**，其余只有 summary 行。
 - Swift 侧：`RelayMessage.thinking`（上限 `RelayMessage.maxThinkingBytes = 8192`）与 `RelayMessage.activity: [RelayActivity]?`（上限 `RelayActivity.maxPerMessage = 50`、`RelayActivity.maxDetailBytes = 4096`），全部 `decodeIfPresent` 解码，缺失即 `nil`。填充在 `ChatAppModel.relaySnapshot()`，渲染在 `RemoteConsoleScreen`（思考行 + 「N 个操作」折叠组，26pt 行高 / 13pt 文本 / 官方 diff 色）。
 
+## 待批准卡片与手机答复（v1 增量字段，向后兼容）
+
+Mac 的 agent 等用户批准工具调用时，快照顶层带可选 `approvals` 数组；没有待批准时整个字段不出现，
+老客户端照常解码。每张卡片：
+
+```json
+{
+  "id": "卡片 UUID（= ToolApprovalRequest.id）",
+  "conversationID": "UUID字符串",
+  "callID": "ToolCall.id",
+  "toolName": "shell",
+  "source": "内置 | MCP · <服务器> | 技能 · <名称>",
+  "risk": "read|write|execute|control",
+  "summary": "运行命令：git status",
+  "argumentsJSON": "调用参数原文（≤ 4096 UTF-8 字节，超长按字符边界截断并以换行 + 「…（参数过长，已截断）」结尾）",
+  "canApprove": false
+}
+```
+
+- 只镜像快照里也有的对话：锁定、归档、临时对话的卡片留在 Mac 上，不发给手机。
+- `canApprove` 由 Mac 算好：`read` 恒 `true`；`write`/`execute`/`control` 只有 Mac 打开
+  设置 → 远程控制 → 「允许手机访问文件与终端」才 `true`（该开关就是「手机可以碰这台 Mac 的
+  文件与终端」的授权，与 `fs.*`/`exec` 同一把锁）。
+- 待批准集合变化（出现或消失）会推新快照（rev+1），手机按常规 rev-poke 拉取。
+
+### 手机答复：`approve`
+
+- 局域网：`POST /command`，body `{"kind":"approve","approvalID":"<卡片id>","decision":"allowOnce"|"deny","requestID":"<手机自定>"}`。
+- 中继：`POST /v1/client/command?room=…`，同一份 body（见 docs/relay-hub.md）。
+- 只有 `allowOnce` / `deny`；`allowAlways`（本次会话始终允许）是 Mac 上的决定，两种途径都按
+  坏命令 `400` 拒绝，不会静默降级。
+- `/command` 没有 per-request 应答：Mac 应用后在下一份快照的 `approvals` 里去掉该卡片；拒绝时把
+  `{requestID, error}` 追加进快照顶层可选 `commandFailures`（`error`: `not_found` 卡片不存在或已
+  答过 / `shell_disabled` 需要先开「允许手机访问文件与终端」），最多保留 20 条，手机按 `requestID`
+  对账。`deny` 不受开关限制，任何卡片都能拒。
+- Swift：`RelayApproval`、`RelayCommandFailure`（RelayModels.swift）、`RelayCommand.approve`
+  （RelayServer.swift）；Mac 端 `ChatAppModel.relayApprovals()` / `answerRemoteApproval(_:requestID:)`，
+  手机端 `RemoteApprovalTracker` + `RemoteApprovalCard`（RemoteConsoleScreen.swift），
+  会话列表行显示「待批准」角标。
+
 ## 实时通知（SSE）
 
 `GET /state` → `text/event-stream`：
@@ -86,6 +126,8 @@
 - `POST /input` `{"conversationID":"UUID或null","text":"..."}` → `{"ok":true,"conversationID":"UUID"}`。
   `null` 表示在 Mac 上新建对话发送。主机端串行执行，复用 `ChatAppModel.sendNow`。
 - `POST /stop` `{"conversationID":"UUID"}` → `{"ok":true}`，等价于主机端 `stop()`。
+- `POST /command` 还接受完整指令面（选会话、重命名、置顶、模型切换等）与 `approve`
+  批准卡片答复，见上文「待批准卡片与手机答复」；解析不了的 body 是 `400`。
 
 ## Swift 命名契约（双端必须一致）
 

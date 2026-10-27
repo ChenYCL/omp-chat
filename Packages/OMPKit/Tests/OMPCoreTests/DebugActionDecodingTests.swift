@@ -209,6 +209,29 @@ final class DebugActionDecodingTests: XCTestCase {
         XCTAssertNil(decode(#"{"action":"git"}"#))
     }
 
+    func testWebSearchNeedsABoolean() {
+        XCTAssertEqual(decode(#"{"action":"setWebSearch","enabled":true}"#), .setWebSearch(enabled: true))
+        XCTAssertEqual(decode(#"{"action":"setWebSearch","enabled":false}"#), .setWebSearch(enabled: false))
+        XCTAssertNil(decode(#"{"action":"setWebSearch"}"#))
+        XCTAssertNil(decode(#"{"action":"setWebSearch","enabled":"true"}"#), "字符串不是布尔值")
+        XCTAssertNil(decode(#"{"action":"setWebSearch","enabled":1}"#), "数字也不是")
+    }
+
+    func testPhoneAccessNeedsAnExactBoolean() {
+        XCTAssertEqual(decode(#"{"action":"setPhoneAccess","enabled":true}"#), .setPhoneAccess(enabled: true))
+        XCTAssertEqual(decode(#"{"action":"setPhoneAccess","enabled":false}"#), .setPhoneAccess(enabled: false))
+        XCTAssertNil(decode(#"{"action":"setPhoneAccess"}"#))
+        XCTAssertNil(decode(#"{"action":"setPhoneAccess","enabled":1}"#), "1 不能当成打开：这是安全开关")
+        XCTAssertNil(decode(#"{"action":"setPhoneAccess","enabled":"true"}"#))
+    }
+
+    func testComputerUseAddDefaultsToThePrimaryPick() {
+        XCTAssertEqual(decode(#"{"action":"computerUseAdd"}"#), .computerUseAdd(serverID: nil))
+        XCTAssertEqual(decode(#"{"action":"computerUseAdd","serverID":"munim-computer-use"}"#),
+                       .computerUseAdd(serverID: "munim-computer-use"))
+        XCTAssertNil(decode(#"{"action":"computerUseAdd","serverID":7}"#), "写了就必须是字符串，不能当成没写")
+    }
+
     func testMCPActions() {
         XCTAssertEqual(
             decode(#"{"action":"mcpInstall","entryID":"filesystem","values":{"directories":["/tmp/a","/tmp/b"]}}"#),
@@ -293,6 +316,9 @@ final class DebugActionDecodingTests: XCTestCase {
             #"{"action":"setToolsEnabled","enabled":true}"#,
             #"{"action":"mcpInstall","entryID":"x"}"#,
             #"{"action":"mcpRemove","serverID":"x"}"#,
+            #"{"action":"setWebSearch","enabled":true}"#,
+            #"{"action":"computerUseAdd"}"#,
+            #"{"action":"setPhoneAccess","enabled":true}"#,
         ]
         for body in bodies {
             let action = try XCTUnwrap(decode(body), body)

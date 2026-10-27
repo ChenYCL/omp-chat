@@ -227,6 +227,31 @@ enum DebugActions {
             settings.mcpServers.removeAll { $0.id == serverID }
             await model.saveSettings(settings)
             return .success
+
+        case .setWebSearch(let enabled):
+            model.webSearchEnabled = enabled
+            return .success
+
+        case .setPhoneAccess(let enabled):
+            var settings = model.settings
+            settings.relayAllowShell = enabled
+            await model.saveSettings(settings)
+            return .success
+
+        case .computerUseAdd(let raw):
+            let server = raw.map { ComputerUseCatalog.server(id: $0) } ?? ComputerUseCatalog.servers.first
+            guard let server else { return .failure("no such computer-use server") }
+            var settings = model.settings
+            guard !settings.mcpServers.contains(where: { $0.id == server.id }) else {
+                return .failure("already added")
+            }
+            // Same config the pane's 添加 stores, enabled; the server still
+            // has no macOS permission and nothing here calls one of its tools.
+            var config = server.config
+            config.enabled = true
+            settings.mcpServers.append(config)
+            await model.saveSettings(settings)
+            return .success
         }
     }
 
@@ -337,6 +362,9 @@ enum DebugActions {
             var priorityIDs: [String]
             var sidebarGrouping: String
             var sidebarFilter: String
+            var webSearchEnabled: Bool
+            /// 设置 → 远程控制 → 允许手机访问文件与终端.
+            var phoneAccess: Bool
             var sidePanelOpen: Bool
             var sidePanelTab: String?
             var sideChatStreaming: Bool
@@ -398,6 +426,8 @@ enum DebugActions {
             priorityIDs: model.priorityConversationIDs().map(\.uuidString).sorted(),
             sidebarGrouping: model.settings.sidebarGrouping,
             sidebarFilter: model.settings.sidebarFilter,
+            webSearchEnabled: model.webSearchEnabled,
+            phoneAccess: model.settings.relayAllowShell,
             sidePanelOpen: model.sidePanelOpen,
             sidePanelTab: model.sidePanelOpen ? model.sidePanelTab.rawValue : nil,
             sideChatStreaming: model.sideChatStreamingID != nil,

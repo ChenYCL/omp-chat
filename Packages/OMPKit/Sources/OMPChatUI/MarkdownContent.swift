@@ -291,18 +291,17 @@ public struct MarkdownText: View {
                     segments.append(Segment(id: segments.count, kind: .bulletList(items)))
                     continue
                 }
-                if let firstDot = content.firstIndex(of: "."), content.distance(from: content.startIndex, to: firstDot) <= 2,
-                   content[content.startIndex..<firstDot].allSatisfy({ $0.isNumber }) {
+                // Entry and loop use the same test, so the first line is
+                // always consumed. They used to differ: `...`, `.gitignore`,
+                // `3.14` or a bare `1.` entered the branch, matched no item,
+                // and the loop re-read the same line forever while appending
+                // empty lists (28 GB before the app was killed).
+                if Self.numberedItem(content) != nil {
                     flushText()
                     var items: [String] = []
-                    while i < allLines.count {
-                        let row = allLines[i].trimmingCharacters(in: .whitespaces)
-                        guard let dot = row.firstIndex(of: "."),
-                              row.distance(from: row.startIndex, to: dot) <= 2,
-                              row[row.startIndex..<dot].allSatisfy({ $0.isNumber }),
-                              row.index(after: dot) < row.endIndex,
-                              row[row.index(after: dot)] == " " else { break }
-                        items.append(String(row[row.index(dot, offsetBy: 2)...]))
+                    while i < allLines.count,
+                          let item = Self.numberedItem(allLines[i].trimmingCharacters(in: .whitespaces)) {
+                        items.append(item)
                         i += 1
                     }
                     segments.append(Segment(id: segments.count, kind: .numberedList(items)))
@@ -326,6 +325,17 @@ public struct MarkdownText: View {
             }
             flushText()
             return segments
+        }
+
+        /// The text of a numbered list item: one or two digits, `.`, a space,
+        /// then the item. Nil for anything else.
+        static func numberedItem(_ row: String) -> String? {
+            guard let dot = row.firstIndex(of: ".") else { return nil }
+            let digits = row[row.startIndex..<dot]
+            guard (1...2).contains(digits.count), digits.allSatisfy(\.isNumber) else { return nil }
+            let afterDot = row.index(after: dot)
+            guard afterDot < row.endIndex, row[afterDot] == " " else { return nil }
+            return String(row[row.index(after: afterDot)...])
         }
     }
 }

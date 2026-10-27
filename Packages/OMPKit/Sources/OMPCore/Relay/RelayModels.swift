@@ -247,6 +247,117 @@ public struct RelayConversation: Codable, Sendable, Equatable {
     }
 }
 
+/// What a phone may answer on an approval card. 始终允许 is deliberately
+/// absent: a persistent grant stays a decision made at the Mac.
+public enum RelayApprovalDecision: String, Codable, Sendable, CaseIterable {
+    case allowOnce
+    case deny
+}
+
+/// One tool call waiting for the user on the host, mirrored so a paired
+/// phone can answer it. The host computes `canApprove` from its own policy;
+/// the phone only renders it.
+public struct RelayApproval: Codable, Sendable, Equatable, Identifiable {
+    /// Hard cap for `argumentsJSON` (UTF-8 bytes, marker included).
+    public static let maxArgumentsBytes = 4096
+    /// Ends `argumentsJSON` when the cap cut it, so the phone shows it is partial.
+    public static let truncationMarker = "\n…（参数过长，已截断）"
+
+    /// Stable identifier; mirrors the host's `ToolApprovalRequest.id`.
+    public var id: String
+    public var conversationID: String
+    /// The model's call id, so the phone can put the card beside its activity row.
+    public var callID: String
+    public var toolName: String
+    /// Where the tool comes from: "内置", "MCP · playwright", "技能 · deploy".
+    public var source: String
+    /// `ToolRisk` raw value: `read`, `write`, `execute` or `control`.
+    public var risk: String
+    /// One human line, e.g. "运行命令：git status".
+    public var summary: String
+    /// The call's arguments, capped at `maxArgumentsBytes`.
+    public var argumentsJSON: String
+    /// Whether the host accepts 允许一次 from the phone. 拒绝 is always accepted.
+    public var canApprove: Bool
+
+    public init(
+        id: String, conversationID: String, callID: String, toolName: String,
+        source: String, risk: String, summary: String, argumentsJSON: String, canApprove: Bool
+    ) {
+        self.id = id
+        self.conversationID = conversationID
+        self.callID = callID
+        self.toolName = toolName
+        self.source = source
+        self.risk = risk
+        self.summary = summary
+        self.argumentsJSON = Self.capped(argumentsJSON)
+        self.canApprove = canApprove
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, conversationID, callID, toolName, source, risk, summary, argumentsJSON, canApprove
+    }
+
+    // Every key is optional: one odd card must not fail the whole snapshot.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID) ?? ""
+        callID = try container.decodeIfPresent(String.self, forKey: .callID) ?? ""
+        toolName = try container.decodeIfPresent(String.self, forKey: .toolName) ?? ""
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+        risk = try container.decodeIfPresent(String.self, forKey: .risk) ?? ToolRisk.execute.rawValue
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        argumentsJSON = Self.capped(try container.decodeIfPresent(String.self, forKey: .argumentsJSON) ?? "")
+        canApprove = try container.decodeIfPresent(Bool.self, forKey: .canApprove) ?? false
+    }
+
+    /// Whether a phone may allow a call of `risk`: a read always; anything that
+    /// writes, runs or drives the Mac only while 允许手机访问文件与终端 is on,
+    /// the user's consent for the phone to touch this Mac's files and shell.
+    public static func phoneMayAllow(_ risk: ToolRisk, allowShell: Bool) -> Bool {
+        risk == .read || allowShell
+    }
+
+    /// Enforces the wire cap on a character boundary; a cut value ends with
+    /// `truncationMarker` and still fits the cap.
+    static func capped(_ arguments: String) -> String {
+        guard arguments.utf8.count > maxArgumentsBytes else { return arguments }
+        let budget = maxArgumentsBytes - truncationMarker.utf8.count
+        return relayCappedUTF8(arguments, maxBytes: budget) + truncationMarker
+    }
+}
+
+/// A phone command the host refused. Commands get no reply over the LAN
+/// route or the hub, so the host echoes refusals in the snapshot and the
+/// phone matches them to what it sent by `requestID`.
+public struct RelayCommandFailure: Codable, Sendable, Equatable {
+    /// How many refusals the host keeps; the oldest go first.
+    public static let maxKept = 20
+
+    /// The `requestID` the phone put on the command.
+    public var requestID: String
+    /// `not_found`: no such card on the phone's side of the mirror, or it was
+    /// already answered. `shell_disabled`: allowing it needs 允许手机访问文件与终端.
+    public var error: String
+
+    public init(requestID: String, error: String) {
+        self.requestID = requestID
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestID, error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decodeIfPresent(String.self, forKey: .requestID) ?? ""
+        error = try container.decodeIfPresent(String.self, forKey: .error) ?? ""
+    }
+}
+
 /// Full structured mirror of the host chat state.
 ///
 /// The remote controller pulls this on pair/snapshot and replaces its local
@@ -259,16 +370,27 @@ public struct RelaySnapshot: Codable, Sendable, Equatable {
     /// Selected conversation on the host, or `nil`.
     public var selectedID: String?
     public var conversations: [RelayConversation]
+    /// Approval cards waiting on the host, oldest first; `nil` when there are
+    /// none. Optional and omitted on the wire when empty, so older clients keep working.
+    public var approvals: [RelayApproval]?
+    /// The host's latest refusals of phone commands, oldest first; `nil` when
+    /// there are none. Omitted on the wire when empty.
+    public var commandFailures: [RelayCommandFailure]?
 
-    public init(rev: Int, host: String, selectedID: String?, conversations: [RelayConversation]) {
+    public init(
+        rev: Int, host: String, selectedID: String?, conversations: [RelayConversation],
+        approvals: [RelayApproval]? = nil, commandFailures: [RelayCommandFailure]? = nil
+    ) {
         self.rev = rev
         self.host = host
         self.selectedID = selectedID
         self.conversations = conversations
+        self.approvals = approvals.flatMap { $0.isEmpty ? nil : $0 }
+        self.commandFailures = commandFailures.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rev, host, selectedID, conversations
+        case rev, host, selectedID, conversations, approvals, commandFailures
     }
 
     public init(from decoder: Decoder) throws {
@@ -277,6 +399,10 @@ public struct RelaySnapshot: Codable, Sendable, Equatable {
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         selectedID = try container.decodeIfPresent(String.self, forKey: .selectedID)
         conversations = try container.decodeIfPresent([RelayConversation].self, forKey: .conversations) ?? []
+        approvals = try container.decodeIfPresent([RelayApproval].self, forKey: .approvals)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        commandFailures = try container.decodeIfPresent([RelayCommandFailure].self, forKey: .commandFailures)
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -285,6 +411,8 @@ public struct RelaySnapshot: Codable, Sendable, Equatable {
         try container.encode(host, forKey: .host)
         try container.encodeIfPresent(selectedID, forKey: .selectedID)
         try container.encode(conversations, forKey: .conversations)
+        try container.encodeIfPresent(approvals.flatMap { $0.isEmpty ? nil : $0 }, forKey: .approvals)
+        try container.encodeIfPresent(commandFailures.flatMap { $0.isEmpty ? nil : $0 }, forKey: .commandFailures)
     }
 }
 
@@ -299,6 +427,13 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
     public var value: Int?
     public var modelID: String?
     public var unread: Bool?
+    /// `approve`: the card's `RelayApproval.id`.
+    public var approvalID: String?
+    /// `approve`: a `RelayApprovalDecision` raw value; anything else is a bad command.
+    public var decision: String?
+    /// `approve`: chosen by the phone, echoed in `RelaySnapshot.commandFailures`
+    /// when the host refuses the command.
+    public var requestID: String?
 
     public init(
         kind: String,
@@ -308,7 +443,10 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
         title: String? = nil,
         value: Int? = nil,
         modelID: String? = nil,
-        unread: Bool? = nil
+        unread: Bool? = nil,
+        approvalID: String? = nil,
+        decision: String? = nil,
+        requestID: String? = nil
     ) {
         self.kind = kind
         self.conversationID = conversationID
@@ -318,6 +456,9 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
         self.value = value
         self.modelID = modelID
         self.unread = unread
+        self.approvalID = approvalID
+        self.decision = decision
+        self.requestID = requestID
     }
 
     public init(_ command: RelayCommand) {
@@ -354,6 +495,8 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
             self.init(kind: "toggleLock", conversationID: conversationID)
         case .setUnread(let conversationID, let unread):
             self.init(kind: "setUnread", conversationID: conversationID, unread: unread)
+        case .approve(let approvalID, let decision, let requestID):
+            self.init(kind: "approve", approvalID: approvalID, decision: decision.rawValue, requestID: requestID)
         }
     }
 
@@ -390,6 +533,11 @@ public struct RelayCommandWire: Codable, Sendable, Equatable {
         case "setUnread":
             guard let conversationID, let unread else { return nil }
             return .setUnread(conversationID: conversationID, unread: unread)
+        case "approve":
+            // `allowAlways` lands here too: a phone may not grant it.
+            guard let approvalID, !approvalID.isEmpty,
+                  let decision = self.decision.flatMap(RelayApprovalDecision.init(rawValue:)) else { return nil }
+            return .approve(approvalID: approvalID, decision: decision, requestID: requestID)
         default: return nil
         }
     }

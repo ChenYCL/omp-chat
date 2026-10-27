@@ -690,7 +690,7 @@ public struct HostExecutor: Sendable {
 
     #if os(macOS)
     /// Single-quotes a path for `zsh -c`, so spaces and quotes survive.
-    private static func shellQuote(_ value: String) -> String {
+    static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 

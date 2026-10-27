@@ -392,7 +392,7 @@ public struct MessageRow: View {
                     .foregroundStyle(Color.ompText)
                     .environment(\.genUISend, genUISend)
             }
-        case .thinking:
+        case .thinking, .thinkingSeal:
             EmptyView()
         case .media(let ref):
             MediaAttachmentView(ref: ref, library: mediaLibrary)

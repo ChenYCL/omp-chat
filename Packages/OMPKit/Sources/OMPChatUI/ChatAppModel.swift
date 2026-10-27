@@ -67,6 +67,9 @@ public final class ChatAppModel {
     /// The composer's 联网 pill. When on, the next request asks the gateway
     /// to search the web server-side (`tools: [{type: web_search}]`).
     public var webSearchEnabled = false
+    /// Conversations whose current reply a paired phone started; see
+    /// `effectivePermissionMode(for:)`.
+    @ObservationIgnored private var remoteDrivenConversations: Set<UUID> = []
     public var draftAttachments: [MediaRef] = []
     /// Long pastes folded into chips (ChatGPT `composer.pastedTextAttachment`).
     public var pastedTexts: [PastedTextAttachment] = []
@@ -315,6 +318,10 @@ public final class ChatAppModel {
         for provider in providers {
             apiKeys[provider.id] = (try? secrets.secret(for: provider.keychainAccount)) ?? ""
         }
+        // A reply cannot be running yet; one saved mid-stream was cut off.
+        for index in conversations.indices where conversations[index].closeInterruptedReplies() {
+            try? await store.save(conversations[index])
+        }
         if conversations.isEmpty {
             let conversation = Conversation(providerID: settings.defaultProviderID, modelID: settings.defaultModelID)
             conversations = [conversation]
@@ -423,6 +430,10 @@ public final class ChatAppModel {
     }
 
     public func deleteConversation(_ id: UUID) {
+        // A reply (or an approval card) of a deleted chat would otherwise run
+        // on with nothing to show it, keeping the stop button and the cards
+        // alive for a conversation that no longer exists.
+        if streamingConversationID == id { stop() }
         conversations.removeAll { $0.id == id }
         Task { try? await store.delete(id: id) }
         draftsByConversation.removeValue(forKey: id)
@@ -705,7 +716,7 @@ public final class ChatAppModel {
         Task { await sendNow(text: text, attachments: attachments, pastes: pastes) }
     }
 
-    public func sendNow(text: String, attachments: [MediaRef], pastes: [PastedTextAttachment] = []) async {
+    public func sendNow(text: String, attachments: [MediaRef], pastes: [PastedTextAttachment] = [], remote: Bool = false) async {
         guard var conversation = selectedConversation else { return }
         guard resolveProvider(for: conversation) != nil else {
             errorMessage = "先在设置中添加供应商"
@@ -730,14 +741,21 @@ public final class ChatAppModel {
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
-        await startReply(conversationID: conversation.id)
+        await startReply(conversationID: conversation.id, remote: remote)
     }
 
     /// Appends an assistant placeholder and streams the reply for the
     /// conversation's current tail of messages. With tools on offer the reply
     /// is an agent loop (`runReply`): the turn's tool calls run and the model
     /// is called again, until it answers or `AgentLoop.maxModelTurns`.
-    private func startReply(conversationID: UUID) async {
+    private func startReply(conversationID: UUID, remote: Bool = false) async {
+        // Remembered for the whole loop: effectivePermissionMode reads it on
+        // every tool call.
+        if remote {
+            remoteDrivenConversations.insert(conversationID)
+        } else {
+            remoteDrivenConversations.remove(conversationID)
+        }
         guard let conversation = conversation(conversationID) else { return }
         guard let provider = resolveProvider(for: conversation), resolveModel(for: conversation, provider: provider) != nil else {
             errorMessage = "先在设置中添加供应商并选择模型"
@@ -756,15 +774,22 @@ public final class ChatAppModel {
         streamingConversationID = conversationID
         errorMessage = nil
         streamTask?.cancel()
+        let replyID = UUID()
+        currentReplyID = replyID
         let generation = stopGeneration
         let registry = await toolRegistry(for: conversationID)
+        // Another send claimed the reply while the tools were looked up and
+        // owns the state now; appending a placeholder here would leave one
+        // spinning forever.
+        guard currentReplyID == replyID else { return }
         guard generation == stopGeneration, let first = prepareTurn(conversationID: conversationID, registry: registry) else {
+            currentReplyID = nil
             isStreaming = false
             streamingConversationID = nil
             return
         }
         streamTask = Task { [weak self] in
-            await self?.runReply(conversationID: conversationID, first: first)
+            await self?.runReply(conversationID: conversationID, first: first, replyID: replyID)
         }
     }
 
@@ -835,7 +860,7 @@ public final class ChatAppModel {
         }
     }
 
-    public func regenerateLast() {
+    public func regenerateLast(remote: Bool = false) {
         guard !isStreaming, var conversation = selectedConversation else { return }
         if let last = conversation.messages.last, last.role == .assistant {
             conversation.alternativeReplies.append(last)
@@ -848,7 +873,7 @@ public final class ChatAppModel {
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
-        Task { await startReply(conversationID: conversation.id) }
+        Task { await startReply(conversationID: conversation.id, remote: remote) }
     }
 
     /// Swaps the current assistant reply with a previously regenerated one.
@@ -918,7 +943,7 @@ public final class ChatAppModel {
 
     /// Truncates the conversation at `messageID`, replaces it with the edited
     /// text (keeping its attachments) and re-runs the reply.
-    public func editAndResend(_ messageID: UUID, newText: String) {
+    public func editAndResend(_ messageID: UUID, newText: String, remote: Bool = false) {
         guard var conversation = selectedConversation,
               let index = conversation.messages.firstIndex(where: { $0.id == messageID }),
               conversation.messages[index].role == .user else { return }
@@ -947,7 +972,7 @@ public final class ChatAppModel {
         conversation.updatedAt = Date()
         replace(conversation)
         persist(conversation)
-        Task { await startReply(conversationID: conversation.id) }
+        Task { await startReply(conversationID: conversation.id, remote: remote) }
     }
 
     public func switchUserPromptVersion(_ messageID: UUID, delta: Int) {
@@ -1015,6 +1040,8 @@ public final class ChatAppModel {
                     lines.append("")
                     lines.append(value)
                     lines.append("</details>")
+                case .thinkingSeal:
+                    continue
                 case .media(let ref):
                     lines.append("![附件](media/\(ref.relativePath))")
                 case .toolCall(let call):
@@ -1031,7 +1058,7 @@ public final class ChatAppModel {
     public func exportJSON(_ conversation: Conversation) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(conversation),
+        guard let data = try? encoder.encode(conversation.withoutThinkingSeals),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
         }
@@ -1184,7 +1211,7 @@ public final class ChatAppModel {
     /// Ends a reply after its last turn: the stop button goes away, the
     /// completion sound and notification play for an answer, and the title
     /// and unread state settle.
-    private func finishReply(conversationID: UUID, answered: Bool) {
+    private func finishReply(conversationID: UUID, answered: Bool, replyID: UUID) {
         if answered {
             AudioFeedback.playComplete(enabled: settings.soundEffects)
             if settings.completionNotifications, selectedConversationID != conversationID {
@@ -1192,10 +1219,14 @@ public final class ChatAppModel {
                 CompletionNotifier.notify(title: title)
             }
         }
-        isStreaming = false
-        streamingConversationID = nil
-        streamTask = nil
-        runningToolCallIDs = []
+        // A superseded reply only settles its own conversation below.
+        if currentReplyID == replyID {
+            currentReplyID = nil
+            isStreaming = false
+            streamingConversationID = nil
+            streamTask = nil
+            runningToolCallIDs = []
+        }
         if var conversation = conversation(conversationID) {
             if conversation.title == "新对话" || conversation.title == "图片消息" {
                 if let first = conversation.messages.first(where: { $0.role == .user }) {
@@ -1673,7 +1704,9 @@ public final class ChatAppModel {
             rev: 0,
             host: Self.relayHostName,
             selectedID: selectedConversationID?.uuidString,
-            conversations: conversations
+            conversations: conversations,
+            approvals: relayApprovals(),
+            commandFailures: relayCommandFailures
         )
     }
 
@@ -1693,7 +1726,7 @@ public final class ChatAppModel {
             } else {
                 _ = newConversation()
             }
-            await sendNow(text: text, attachments: [])
+            await sendNow(text: text, attachments: [], remote: true)
 
         case .stop(let conversationID):
             if let id = uuid(conversationID), id == streamingConversationID {
@@ -1720,7 +1753,7 @@ public final class ChatAppModel {
         case .regenerate(let conversationID):
             guard let id = uuid(conversationID) else { return }
             selectedConversationID = id
-            regenerateLast()
+            regenerateLast(remote: true)
 
         case .deleteMessage(let conversationID, let messageID):
             guard let conversation = uuid(conversationID),
@@ -1734,7 +1767,7 @@ public final class ChatAppModel {
                   conversations.contains(where: { $0.id == conversation }),
                   let message = uuid(messageID) else { return }
             selectedConversationID = conversation
-            editAndResend(message, newText: text)
+            editAndResend(message, newText: text, remote: true)
 
         case .branch(let conversationID, let messageID):
             guard let conversation = uuid(conversationID),
@@ -1777,6 +1810,9 @@ public final class ChatAppModel {
         case .setUnread(let conversationID, let unread):
             guard let id = uuid(conversationID) else { return }
             setUnread(id, unread: unread)
+
+        case .approve(let approvalID, let decision, let requestID):
+            answerRemoteApproval(approvalID, decision, requestID: requestID)
         }
     }
 
@@ -1954,6 +1990,13 @@ public final class ChatAppModel {
     @ObservationIgnored private var offeredToolCounts: [UUID: Int] = [:]
     /// Bumped by `stop()`, so a reply still looking up its tools knows not to start.
     @ObservationIgnored private var stopGeneration = 0
+    /// The reply that owns `isStreaming`, `streamingConversationID`,
+    /// `streamTask` and `runningToolCallIDs`. A message sent while a reply runs
+    /// (from the phone; the composer waits) cancels the old one, and the old
+    /// loop must not clear the new reply's state when it winds down: it used
+    /// to, which left the new reply running with no stop button and its
+    /// approval cards unreachable by 停止.
+    @ObservationIgnored private var currentReplyID: UUID?
     @ObservationIgnored private var readableRootsByOwner: [String: [String]] = [:]
     @ObservationIgnored private var reportedToolProblems: Set<String> = []
 
@@ -1961,6 +2004,17 @@ public final class ChatAppModel {
     public func permissionMode(for id: UUID) -> PermissionMode {
         if let raw = conversation(id)?.permissionMode, let mode = PermissionMode(rawValue: raw) { return mode }
         return PermissionMode(rawValue: settings.defaultPermissionMode) ?? .ask
+    }
+
+    /// The mode a reply actually runs under. A reply a paired phone started
+    /// is held to 每次询问 unless 「允许手机访问文件与终端」 is on, so a phone
+    /// cannot reach the Mac's files and shell by prompting a conversation whose
+    /// mode is 自动 or 完全访问; the cards then wait on the Mac.
+    func effectivePermissionMode(for id: UUID) -> PermissionMode {
+        permissionMode(for: id).limited(
+            remoteDriven: remoteDrivenConversations.contains(id),
+            phoneMayTouchMac: settings.relayAllowShell
+        )
     }
 
     /// Sets the conversation's mode; nil follows the settings default again.
@@ -2054,13 +2108,16 @@ public final class ChatAppModel {
         let place = conversation.workingDirectory.flatMap { $0.isEmpty ? nil : "工作目录：\($0)，相对路径以它为准。" }
             ?? "本对话没有工作目录，文件路径请用绝对路径。"
         let rule: String
-        switch permissionMode(for: conversation.id) {
+        switch effectivePermissionMode(for: conversation.id) {
         case .readOnly: rule = "当前是只读模式：只能读取，写文件和运行命令会被拒绝。"
         case .ask: rule = "读取会直接执行；写文件、运行命令、访问工作目录以外的位置要先经用户批准。"
         case .auto: rule = "读写工作目录里的文件会直接执行；运行命令、访问工作目录以外的位置要先经用户批准。"
         case .full: rule = "文件和命令会直接执行；控制桌面要先经用户批准。"
         }
-        return "【工具】你可以调用工具完成任务。\(place)\(rule)调用被拒绝时换个做法或询问用户，不要重复同一个调用。优先小步、可撤销的操作：先读后改，改动范围尽量小，不做用户没要求的破坏性操作。"
+        // Measured in the installed app: scripts created by the sandboxed app
+        // or its commands cannot be exec'd, but an interpreter reads them.
+        let sandbox = "命令运行在应用沙盒里：这里新建的脚本（包括 npm install 装出的 .bin 命令）不能直接执行，会报 Operation not permitted；用解释器去跑，例如 bash x.sh、node x.js、python3 x.py、node node_modules/.bin/xxx 指向的 js 文件。"
+        return "【工具】你可以调用工具完成任务。\(place)\(rule)\(sandbox)调用被拒绝时换个做法或询问用户，不要重复同一个调用。优先小步、可撤销的操作：先读后改，改动范围尽量小，不做用户没要求的破坏性操作。"
     }
 
     /// Mutable state of one running reply, shared with the loop's callbacks.
@@ -2076,7 +2133,7 @@ public final class ChatAppModel {
 
     /// The whole reply: model turns and their tool calls, through `AgentLoop`.
     /// `isStreaming` stays true throughout, so the stop button shows.
-    private func runReply(conversationID: UUID, first: PreparedTurn) async {
+    private func runReply(conversationID: UUID, first: PreparedTurn, replyID: UUID) async {
         let progress = ReplyProgress(first: first)
         let fallback = AgentLoop.Environment(mode: .readOnly, context: AgentToolContext(conversationID: conversationID, workingDirectory: nil))
         let host = AgentLoop.Host(
@@ -2106,7 +2163,7 @@ public final class ChatAppModel {
                 message.errorText = "已达到每条消息 \(AgentLoop.maxModelTurns) 轮模型调用的上限，已停止。发送新消息可以让它继续。"
             }
         }
-        finishReply(conversationID: conversationID, answered: ending == .answered)
+        finishReply(conversationID: conversationID, answered: ending == .answered, replyID: replyID)
     }
 
     private func agentModelTurn(_ turn: Int, conversationID: UUID, progress: ReplyProgress) async -> AgentLoop.TurnOutcome {
@@ -2147,7 +2204,7 @@ public final class ChatAppModel {
     }
 
     private func agentEnvironment(_ conversationID: UUID) -> AgentLoop.Environment {
-        AgentLoop.Environment(mode: permissionMode(for: conversationID), context: toolContext(for: conversationID))
+        AgentLoop.Environment(mode: effectivePermissionMode(for: conversationID), context: toolContext(for: conversationID))
     }
 
     /// Shows the card and waits for `resolveApproval`. Cancelling the reply
@@ -2695,6 +2752,73 @@ public final class ChatAppModel {
                 fields: ["server": serverID, "error": error.localizedDescription])
             return false
         }
+    }
+
+    // MARK: - Remote approvals
+
+    /// Phone commands this Mac refused, oldest first, capped at
+    /// `RelayCommandFailure.maxKept`. Commands get no reply over the LAN route
+    /// or the hub, so the snapshot echoes these and the phone matches them by
+    /// `requestID`. Session-only.
+    public private(set) var relayCommandFailures: [RelayCommandFailure] = []
+
+    /// The approval cards a paired phone sees, oldest first. Only cards of
+    /// conversations the snapshot mirrors: a locked, archived or temporary
+    /// chat's tool call never leaves this Mac.
+    public func relayApprovals() -> [RelayApproval] {
+        let mirrored = Set(sortedConversations.map(\.id))
+        return pendingApprovals.filter { mirrored.contains($0.conversationID) }.map { request in
+            RelayApproval(
+                id: request.id.uuidString,
+                conversationID: request.conversationID.uuidString,
+                callID: request.callID,
+                toolName: request.toolName,
+                source: request.source,
+                risk: request.risk.rawValue,
+                summary: request.summary,
+                argumentsJSON: request.argumentsJSON,
+                canApprove: RelayApproval.phoneMayAllow(request.risk, allowShell: settings.relayAllowShell)
+            )
+        }
+    }
+
+    /// Answers an approval card for a paired phone. The phone can only answer
+    /// cards `relayApprovals()` mirrors; 拒绝 always applies, 允许一次 beyond a
+    /// read needs 允许手机访问文件与终端. Returns nil when applied, else the
+    /// refusal code — `not_found` (unknown or already answered) or
+    /// `shell_disabled` — which is also kept in `relayCommandFailures` under
+    /// `requestID` when the phone sent one.
+    @discardableResult
+    public func answerRemoteApproval(
+        _ approvalID: String, _ decision: RelayApprovalDecision, requestID: String? = nil
+    ) -> String? {
+        let card = relayApprovals().first { $0.id.caseInsensitiveCompare(approvalID) == .orderedSame }
+        let error: String?
+        if let card, let id = UUID(uuidString: card.id) {
+            if decision == .allowOnce, !card.canApprove {
+                error = "shell_disabled"
+            } else {
+                resolveApproval(id, decision == .allowOnce ? .allowOnce : .deny)
+                error = nil
+            }
+        } else {
+            error = "not_found"
+        }
+        var fields = ["decision": decision.rawValue, "tool": card?.toolName ?? ""]
+        if let error { fields["error"] = error }
+        DiagnosticsCenter.shared.record("relay", error == nil ? .info : .warn, "remote approval", fields: fields)
+        if let error, let requestID, !requestID.isEmpty {
+            relayCommandFailures.append(RelayCommandFailure(requestID: requestID, error: error))
+            relayCommandFailures.removeFirst(max(0, relayCommandFailures.count - RelayCommandFailure.maxKept))
+        }
+        return error
+    }
+
+    /// Raises `request` as an approval card and waits for its answer, the way
+    /// the agent loop does. Internal: tests use it for cards the loop's policy
+    /// never raises (a read) and without a model round trip.
+    func presentApproval(_ request: ToolApprovalRequest) async -> ToolApprovalDecision {
+        await awaitApproval(request)
     }
 }
 
