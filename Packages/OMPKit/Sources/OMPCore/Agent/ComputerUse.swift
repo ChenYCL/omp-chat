@@ -89,7 +89,7 @@ public enum ComputerUseCatalog {
         ],
         config: MCPServerConfig(
             id: "computer-use-sandbox", name: "电脑控制沙盒（VPS Docker）",
-            url: "http://127.0.0.1:8766",
+            command: "nc", args: ["127.0.0.1", "8766"],
             enabled: false, risk: .control, origin: "catalog"
         ),
         package: "@opensymph/open-computer-use（容器内）",
@@ -109,7 +109,7 @@ public enum ComputerUseCatalog {
     /// covers the native code; the postinstall script only prints help.
     public static let openComputerUse = ComputerUseServer(
         name: "Open Computer Use",
-        summary: "通过辅助功能读取应用界面并截图，在后台点击、输入、滚动，不抢你的鼠标和键盘。",
+        summary: "通过辅助功能读取应用界面并截图，在后台点击、输入、滚动。⚠️ 在当前的 App Sandbox 下无法直接启动（原生可执行文件带隔离标记，启动即 spawn EPERM）；详见 docs/computer-use.md。推荐使用上方的电脑控制沙盒。",
         capabilities: [
             "列出正在运行的应用和窗口，读取它们的界面结构并截图",
             "截取整块屏幕（含菜单栏和程序坞）",
@@ -140,7 +140,7 @@ public enum ComputerUseCatalog {
     /// a Chrome extension OMPChat does not install, so they are hidden.
     public static let munimComputerUse = ComputerUseServer(
         name: "Munim Computer Use",
-        summary: "通过辅助功能读取应用界面，把点击和按键直接发给目标应用，可在后台操作。",
+        summary: "通过辅助功能读取应用界面，把点击和按键直接发给目标应用。⚠️ 在当前的 App Sandbox 下无法直接启动（下载的原生可执行文件无法在沙盒中执行）；详见 docs/computer-use.md。推荐使用上方的电脑控制沙盒。",
         capabilities: [
             "列出应用和显示器，读取应用界面结构，截取屏幕或放大截取一块区域",
             "在任意应用里点击、右键、悬停、拖拽、滚动、输入文字、按快捷键、选中文字、改控件的值",

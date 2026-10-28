@@ -12,7 +12,7 @@ final class ComputerUseTests: XCTestCase {
                 semver.firstMatch(in: version, range: NSRange(version.startIndex..., in: version)),
                 "\(server.id): \(version) is not an exact version"
             )
-            if server.config.command != nil {
+            if server.id != "computer-use-sandbox" {
                 XCTAssertTrue(server.config.args.contains(server.packageSpec),
                               "\(server.id) does not run its pinned package spec")
                 // A second, unpinned mention of the package would let npx pick
@@ -61,10 +61,11 @@ final class ComputerUseTests: XCTestCase {
         }
     }
 
-    func testTheDockerSandboxIsHTTPOnlyAndLocal() {
+    func testTheDockerSandboxBridgesOverTunnelViaNC() {
         let server = ComputerUseCatalog.dockerSandbox
-        XCTAssertNil(server.config.command, "没有本地命令：真正的服务在容器里")
-        XCTAssertEqual(server.config.url, "http://127.0.0.1:8766", "只指向本机隧道")
+        XCTAssertEqual(server.config.command, "nc")
+        XCTAssertEqual(server.config.args, ["127.0.0.1", "8766"])
+        XCTAssertNil(server.config.url)
         XCTAssertEqual(server.permissionHolder, .hostApp)
         XCTAssertFalse(server.capabilities.isEmpty)
     }
