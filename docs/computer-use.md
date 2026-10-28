@@ -182,6 +182,55 @@ from nothing and connect (`scenario_mcp_catalog.py`), because the app installs
 each package itself and runs it through `node` / `python` instead of `npx` /
 `uvx`.
 
+## The chosen path: a Docker sandbox on the VPS (working)
+
+The sandboxed app cannot run the native package (above), so the desktop the
+model controls is not this Mac: it is a throwaway Linux desktop in a Docker
+container on the netcup VPS, and OMPChat talks to it over an SSH tunnel. The
+model can see and click only what is inside the container — nothing on this
+Mac — which is a strictly smaller blast radius than either native option.
+
+`tools/computer-use-docker/` holds the image: debian-slim + Xvfb (1280×800),
+openbox, two xterms, a GTK app (only GTK/Qt apps register over AT-SPI, which
+is what the server drives), dbus + at-spi2-core, and the pinned
+`@opensymph/open-computer-use@1.3.0` native Linux binary bridged to TCP by
+socat. Resource-capped at 2 cores / 2 GB / 256 MB shm; idles at ~35 MB, and
+the container port is published on the host bound to 127.0.0.1 only.
+
+Measured end to end (2026-10-28), Mac → SSH tunnel → container:
+`initialize` answers, `tools/list` returns the 14 desktop tools (click, drag,
+type_text, press_key, scroll, set_value, list_apps, get_app_state, …),
+`list_apps` shows the GTK app, `get_app_state` returns the accessibility
+tree with element indexes, and `click` accepts them.
+
+Operation:
+
+    # on the VPS (already deployed to /opt/omp-computer-use, restart unless-stopped)
+    docker build -t omp-computer-use:1.3.0 . && docker run -d --name omp-computer-use \
+      --restart unless-stopped --memory 2g --cpus 2 --shm-size 256m \
+      -p 127.0.0.1:8766:8766 omp-computer-use:1.3.0
+
+    # on the Mac (tunnel; the ssh config's fake-ip DNS breaks direct dials,
+    # the netcup ControlMaster connection may be gone after 30 min idle)
+    IP=$(awk '/^Host netcup/{f=1} f&&/HostName/{print $2; exit}' ~/.ssh/config)
+    ssh -o ControlMaster=no -f -N -L 127.0.0.1:8766:127.0.0.1:8766 root@$IP
+
+    # probe: python3 tools/computer-use-docker/probe.py 127.0.0.1 8766
+
+Then point OMPChat's MCP client at `http://127.0.0.1:8766` (Streamable HTTP)
+or keep using the probe while the stdio dialect is wired up. Gotchas baked
+into the image, in case they regress: Xvfb needs a stale `/tmp/.X99-lock`
+removed at start; the Linux binary wants newline-delimited JSON (not
+Content-Length framing); every X client needs
+`DBUS_SESSION_BUS_ADDRESS`/`XDG_RUNTIME_DIR` and the at-spi registry running
+before they start; only GTK/Qt apps are visible to the server; and the
+container's socat must bind 0.0.0.0 because docker-proxy connects from the
+container gateway address.
+
+Still true: every server action goes through OMPChat's approval flow —
+电脑控制-class tools are always 逐次询问, and the phone can never auto-allow
+them.
+
 ## Supply-chain risks
 
 A computer-use server holds the strongest grants a Mac app can have. With

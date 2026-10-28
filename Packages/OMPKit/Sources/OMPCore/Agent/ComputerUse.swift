@@ -61,6 +61,7 @@ public struct ComputerUseServer: Identifiable, Sendable, Hashable {
     public func configJSON() -> Data {
         var entry: [String: Any] = ["args": config.args]
         if let command = config.command { entry["command"] = command }
+        if let url = config.url { entry["url"] = url }
         if !config.env.isEmpty { entry["env"] = config.env }
         let object: [String: Any] = ["mcpServers": [config.id: entry]]
         return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted])) ?? Data()
@@ -70,7 +71,38 @@ public struct ComputerUseServer: Identifiable, Sendable, Hashable {
 public enum ComputerUseCatalog {
     /// The primary pick first, then the fallback. Added only from the 电脑控制
     /// pane, never from the MCP catalog, so the warning cannot be skipped.
-    public static let servers: [ComputerUseServer] = [openComputerUse, munimComputerUse]
+    public static let servers: [ComputerUseServer] = [dockerSandbox, openComputerUse, munimComputerUse]
+
+    /// The Docker sandbox on the VPS (`tools/computer-use-docker/`): a
+    /// throwaway Linux desktop the model controls over the SSH tunnel. It is
+    /// the only entry that actually works from the sandboxed app (measured
+    /// 2026-10-28, see docs/computer-use.md); the native ones cannot start
+    /// here. Added as a Streamable-HTTP server pointing at the tunnel.
+    public static let dockerSandbox = ComputerUseServer(
+        name: "电脑控制沙盒（VPS Docker）",
+        summary: "控制 netcup VPS 上 Docker 容器里的 Linux 桌面（Xvfb + GTK 应用），经 SSH 隧道连接，碰不到这台 Mac。",
+        capabilities: [
+            "列出容器里运行的应用和窗口，读取它们的界面结构",
+            "在容器桌面里点击、拖拽、滚动、输入文字、按快捷键、改控件的值",
+            "启动容器内的应用、切换窗口",
+            "所有操作都只影响容器，不影响这台 Mac 的任何窗口",
+        ],
+        config: MCPServerConfig(
+            id: "computer-use-sandbox", name: "电脑控制沙盒（VPS Docker）",
+            url: "http://127.0.0.1:8766",
+            enabled: false, risk: .control, origin: "catalog"
+        ),
+        package: "@opensymph/open-computer-use（容器内）",
+        pinnedVersion: "1.3.0",
+        pinnedCommit: "e551c13e7082ce4c097234137582fbf4a1bc647a",
+        requirement: "VPS 上的容器已启动（/opt/omp-computer-use），本机已开 SSH 隧道 127.0.0.1:8766",
+        license: "MIT",
+        homepage: URL(string: "https://github.com/opensymph/open-computer-use")!,
+        permissionHolder: .hostApp,
+        permissionAppName: nil,
+        permissionSetupCommand: nil,
+        verifiedDate: "2026-10-28"
+    )
 
     /// opensymph/open-computer-use v1.3.0 (MIT). The npm tarball carries the
     /// Developer ID signed macOS runtime itself, so npm's integrity hash

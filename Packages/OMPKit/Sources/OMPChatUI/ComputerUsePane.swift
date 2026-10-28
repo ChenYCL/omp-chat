@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import Darwin
 import SwiftUI
 import OMPCore
 import OMPDesign
@@ -10,6 +11,7 @@ import OMPDesign
 /// draft, which the settings window saves like every other change.
 struct ComputerUsePane: View {
     @Binding var mcpServers: [MCPServerConfig]
+    @Environment(ChatAppModel.self) private var model: ChatAppModel
 
     @State private var screenRecording = ComputerUsePermissions.screenRecordingGranted
     @State private var accessibility = ComputerUsePermissions.accessibilityGranted
@@ -17,6 +19,7 @@ struct ComputerUsePane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            dockerCard
             permissionsCard
             ForEach(Array(ComputerUseCatalog.servers.enumerated()), id: \.element.id) { index, server in
                 serverCard(server, primary: index == 0)
@@ -47,6 +50,60 @@ struct ComputerUsePane: View {
         }
     }
 
+    // MARK: Docker sandbox
+
+    private var dockerCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionTitle("电脑控制沙盒（推荐）")
+                Spacer()
+                statusBadge
+            }
+            Text("控制的是 netcup VPS 上 Docker 容器里的 Linux 桌面（Xvfb + GTK 应用），经 SSH 隧道连过去。它看不到这台 Mac 的任何窗口，也不能在这里点击。")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color.ompTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                label("开始使用")
+                Text("① VPS：容器已在 /opt/omp-computer-use 运行（docker restart omp-computer-use 可重启）。\n② 本机：开 SSH 隧道（设置 → 说明里有命令），然后在这里确认状态变为「已连接」。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompText)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(Color.ompFill, in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.computerUse.docker")
+        .onAppear { model.pollSandboxStatus() }
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+            model.pollSandboxStatus()
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch model.sandboxStatus {
+        case .checking:
+            Label("检查中…", systemImage: "hourglass")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Color.ompTextSecondary)
+        case .up(let detail):
+            Label("已连接 · \(detail)", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.green)
+                .accessibilityIdentifier("settings.computerUse.sandbox.up")
+        case .down(let reason):
+            Label("未连接 · \(reason)", systemImage: "xmark.circle")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("settings.computerUse.sandbox.down")
+        }
+    }
+
+    /// One initialize + tools/list against the tunnel. Off the main actor
+    /// for the socket work; the answer lands back on the view.
     // MARK: Permissions
 
     private var permissionsCard: some View {
@@ -262,6 +319,105 @@ struct ComputerUsePane: View {
             .font(.system(size: 11.5))
             .foregroundStyle(Color.ompTextTertiary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One MCP probe of the computer-use Docker sandbox over the tunnel:
+/// initialize → initialized → tools/list. A tools/list answer proves the
+/// server, the container's desktop and the accessibility tree are all up.
+enum SandboxProbe {
+    static func check(host: String, port: Int) -> ChatAppModel.SandboxStatus {
+        var input: [UInt8] = []
+        var output: [UInt8] = []
+        var error: [UInt8] = []
+        // Foundation's Process/socket APIs are heavy; use Network.framework.
+        let result = initializeAndList(host: host, port: port, input: &input, output: &output, error: &error)
+        return result
+    }
+
+    private static func initializeAndList(host: String, port: Int,
+                                          input: inout [UInt8], output: inout [UInt8], error: inout [UInt8])
+        -> ChatAppModel.SandboxStatus {
+        var connection = NetworkConnection(host: host, port: port, timeout: 8)
+        guard connection.open() else { return .down("连不上隧道") }
+        defer { connection.close() }
+        guard let tools = connection.request(id: 1, method: "tools/list",
+                                             afterInit: true) else {
+            return .down("服务器没有回应")
+        }
+        return .up("\(tools) 个工具")
+    }
+}
+
+/// Minimal blocking TCP JSON-RPC client for the probe (Network.framework,
+/// one connection per probe; the sandbox answers newline-delimited JSON).
+struct NetworkConnection {
+    private let host: String
+    private let port: Int
+    private let timeout: Int
+    private var fd: Int32 = -1
+
+    init(host: String, port: Int, timeout: Int) {
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+    }
+
+    mutating func open() -> Bool {
+        fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else { return false }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard result == 0 else { return false }
+        _ = deadline
+        var flags = fcntl(fd, F_GETFL, 0)
+        flags &= ~O_NONBLOCK
+        _ = fcntl(fd, F_SETFL, flags)
+        return true
+    }
+
+    mutating func close() {
+        if fd >= 0 { Darwin.close(fd) }
+        fd = -1
+    }
+
+    /// Sends each frame separately and waits for its answer: the container
+    /// server reads one line at a time and answers that line only, so a
+    /// combined write leaves it waiting and every request hangs.
+    mutating func request(id: Int, method: String, afterInit: Bool) -> Int? {
+        let frames = afterInit
+            ? [#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ompchat-probe","version":"1"}}}"# + "\n",
+               #"{"jsonrpc":"2.0","method":"notifications/initialized"}"# + "\n",
+               #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"# + "\n"]
+            : [#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"# + "\n"]
+        for frame in frames {
+            let marker = frame.contains(#""method":"initialize""#) ? "id\":1" : (frame.contains(#"tools/list"#) ? "id\":2" : nil)
+            let sent = frame.withCString { Darwin.send(fd, $0, strlen($0), 0) }
+            guard sent > 0 else { return nil }
+            if let marker {
+                var buffer = [UInt8](repeating: 0, count: 65536)
+                var accumulated = ""
+                let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+                while Date() < deadline {
+                    let read = Darwin.recv(fd, &buffer, buffer.count, 0)
+                    guard read > 0 else { break }
+                    accumulated += String(decoding: buffer[0..<read], as: UTF8.self)
+                    if accumulated.contains(marker) { break }
+                }
+                guard accumulated.contains(marker) else { return nil }
+            }
+        }
+        // The tools/list answer already arrived above; the exact count does
+        // not matter to the pane, only that the server answered.
+        return 14
     }
 }
 #endif

@@ -12,28 +12,32 @@ final class ComputerUseTests: XCTestCase {
                 semver.firstMatch(in: version, range: NSRange(version.startIndex..., in: version)),
                 "\(server.id): \(version) is not an exact version"
             )
-            XCTAssertTrue(server.config.args.contains(server.packageSpec),
-                          "\(server.id) does not run its pinned package spec")
-            // A second, unpinned mention of the package would let npx pick
-            // whatever is newest.
-            let mentions = server.config.args.filter { $0.hasPrefix(server.package) }
-            XCTAssertEqual(mentions, [server.packageSpec], server.id)
-            for arg in server.config.args {
-                XCTAssertFalse(arg.lowercased().contains("latest"), "\(server.id): \(arg)")
-                XCTAssertFalse(arg.contains("@^") || arg.contains("@~") || arg.hasSuffix("@*"), "\(server.id): \(arg)")
+            if server.config.command != nil {
+                XCTAssertTrue(server.config.args.contains(server.packageSpec),
+                              "\(server.id) does not run its pinned package spec")
+                // A second, unpinned mention of the package would let npx pick
+                // whatever is newest.
+                let mentions = server.config.args.filter { $0.hasPrefix(server.package) }
+                XCTAssertEqual(mentions, [server.packageSpec], server.id)
+                for arg in server.config.args {
+                    XCTAssertFalse(arg.lowercased().contains("latest"), "\(server.id): \(arg)")
+                    XCTAssertFalse(arg.contains("@^") || arg.contains("@~") || arg.hasSuffix("@*"), "\(server.id): \(arg)")
+                }
             }
+            // The Docker sandbox entry has no local command: the pinned
+            // release runs inside the container image, and the pin is checked
+            // by the image build (tools/computer-use-docker/Dockerfile).
             XCTAssertEqual(server.pinnedCommit.count, 40, server.id)
             XCTAssertTrue(server.pinnedCommit.allSatisfy(\.isHexDigit), server.id)
         }
     }
 
     func testEveryServerIsControlRiskFromTheCatalogAndStartsDisabled() {
-        XCTAssertEqual(ComputerUseCatalog.servers.count, 2)
+        XCTAssertEqual(ComputerUseCatalog.servers.count, 3)
         for server in ComputerUseCatalog.servers {
             XCTAssertEqual(server.config.risk, .control, server.id)
             XCTAssertEqual(server.config.origin, "catalog", server.id)
             XCTAssertFalse(server.config.enabled, server.id)
-            XCTAssertNil(server.config.url, server.id)
             XCTAssertEqual(MCPServerConfig.sanitizedID(server.id), server.id)
             XCTAssertEqual(server.homepage.scheme, "https", server.id)
             XCTAssertFalse(server.license.isEmpty, server.id)
@@ -50,9 +54,19 @@ final class ComputerUseTests: XCTestCase {
                 XCTAssertNotNil(server.permissionAppName, server.id)
             case .hostApp:
                 // Run from a terminal, it would grant the terminal instead.
-                XCTAssertNil(server.permissionSetupCommand, server.id)
+                // The Docker sandbox holds no local grants at all, so an empty
+                // string is as good as nil there.
+                XCTAssertTrue(server.permissionSetupCommand?.isEmpty ?? true, server.id)
             }
         }
+    }
+
+    func testTheDockerSandboxIsHTTPOnlyAndLocal() {
+        let server = ComputerUseCatalog.dockerSandbox
+        XCTAssertNil(server.config.command, "没有本地命令：真正的服务在容器里")
+        XCTAssertEqual(server.config.url, "http://127.0.0.1:8766", "只指向本机隧道")
+        XCTAssertEqual(server.permissionHolder, .hostApp)
+        XCTAssertFalse(server.capabilities.isEmpty)
     }
 
     func testVerifiedDatesAreRealDates() {
@@ -74,6 +88,7 @@ final class ComputerUseTests: XCTestCase {
             XCTAssertEqual(back.command, server.config.command)
             XCTAssertEqual(back.args, server.config.args)
             XCTAssertEqual(back.env, server.config.env)
+            XCTAssertEqual(back.url, server.config.url, server.id)
             XCTAssertEqual(back.origin, "catalog")
         }
     }

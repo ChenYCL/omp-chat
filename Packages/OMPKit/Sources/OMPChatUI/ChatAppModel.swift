@@ -4879,6 +4879,28 @@ public final class ChatAppModel {
         }
     }
 
+    // MARK: - Computer-use sandbox status
+
+    /// Live state of the VPS computer-use Docker sandbox, polled by the
+    /// settings pane and readable by /debug/state.
+    public enum SandboxStatus: Equatable, Sendable {
+        case checking, up(String), down(String)
+    }
+
+    public private(set) var sandboxStatus: SandboxStatus = .checking
+
+    /// One probe, off the main actor, then the answer back on it. The probe
+    /// lives in the macOS-only pane file; on iOS there is no tunnel and the
+    /// status stays `.down` with the reason.
+    public func pollSandboxStatus(host: String = "127.0.0.1", port: Int = 8766) {
+        #if os(macOS)
+        Task.detached(priority: .utility) { [weak self] in
+            let outcome = SandboxProbe.check(host: host, port: port)
+            await MainActor.run { self?.sandboxStatus = outcome }
+        }
+        #endif
+    }
+
     // MARK: - Link destination
 
     /// 设置 → 浏览器 → 链接打开位置 (official linkDestinationPrompt).
