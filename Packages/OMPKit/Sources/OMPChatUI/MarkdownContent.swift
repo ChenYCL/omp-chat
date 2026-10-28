@@ -65,6 +65,11 @@ public struct MarkdownText: View {
                     }
                 case .importedTool(let row):
                     ImportToolRowView(row: row)
+                case .importedToolGroup(let rows):
+                    // One folded activity card for a run of calls: a 40-call
+                    // reply otherwise floods the transcript with near
+                    // identical lines (the ms03 thread read as「一直重复」).
+                    ImportToolGroupView(rows: rows)
                 case .heading(let level, let text):
                     let inline = rendered(text)
                     Text(inline?.text ?? AttributedString(text))
@@ -235,6 +240,8 @@ public struct MarkdownText: View {
         enum Kind: Equatable {
             case text(String)
             case importedTool(ImportToolRow)
+            /// A run of neighbouring imported calls, folded into one card.
+            case importedToolGroup([ImportToolRow])
             case heading(level: Int, text: String)
             case bulletList([String])
             case numberedList([String])
@@ -311,7 +318,33 @@ public struct MarkdownText: View {
                         detail += "\n" + allLines[i]
                         i += 1
                     }
-                    segments.append(Segment(id: segments.count, kind: .importedTool(ImportToolRow(name: call.name, detail: detail))))
+                    var run = [ImportToolRow(name: call.name, detail: detail)]
+                    // A blank line then another marker: same activity run,
+                    // fold it into one card. Any prose (CJK-led line, code
+                    // fence) ends the run.
+                    while i < allLines.count {
+                        var cursor = i
+                        if allLines[cursor].trimmingCharacters(in: .whitespaces).isEmpty { cursor += 1 }
+                        guard cursor < allLines.count,
+                              isImportedToolLine(allLines[cursor].trimmingCharacters(in: .whitespaces)),
+                              let next = importedToolCall(allLines[cursor].trimmingCharacters(in: .whitespaces)) else {
+                            // The separator blank before the prose belongs to
+                            // the run, not to the next text segment.
+                            if i < allLines.count, allLines[i].trimmingCharacters(in: .whitespaces).isEmpty { i += 1 }
+                            break
+                        }
+                        if cursor != i { i = cursor }
+                        var nextDetail = next.detail
+                        i += 1
+                        while i < allLines.count, toolCallContinuation(allLines[i]) {
+                            nextDetail += "\n" + allLines[i]
+                            i += 1
+                        }
+                        run.append(ImportToolRow(name: next.name, detail: nextDetail))
+                    }
+                    segments.append(run.count == 1
+                        ? Segment(id: segments.count, kind: .importedTool(run[0]))
+                        : Segment(id: segments.count, kind: .importedToolGroup(run)))
                     continue
                 }
                 if line.hasPrefix("```") {
@@ -984,6 +1017,57 @@ public struct ImportToolRow: Equatable, Identifiable {
         if ["search", "grep", "glob"].contains(where: lowered.contains) { return "magnifyingglass" }
         if ["task", "todo", "agent"].contains(where: lowered.contains) { return "checklist" }
         return "terminal"
+    }
+}
+
+/// A run of imported tool calls folded into one card: the header counts the
+/// calls (「4 个操作」, mixed kinds 「6 个操作 · Bash ×3 · Write ×2」), the
+/// body lists one row per call, collapsible to a single line like Codex's
+/// activity card. A 40-call reply otherwise floods the transcript.
+struct ImportToolGroupView: View {
+    let rows: [ImportToolRow]
+
+    @State private var expanded = false
+
+    private var summary: String {
+        let counts = Dictionary(grouping: rows, by: \.name).map { "\($0.key) ×\($0.value.count)" }
+        return "\(rows.count) 个操作 · " + counts.joined(separator: "、")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(Theme.Motion.quick) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Image(systemName: "terminal")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.ompTextTertiary)
+                    Text(summary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("transcript.importedToolGroup")
+            .accessibilityLabel(summary)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows) { row in
+                        ImportToolRowView(row: row)
+                    }
+                }
+                .padding(.leading, 10)
+            }
+        }
     }
 }
 

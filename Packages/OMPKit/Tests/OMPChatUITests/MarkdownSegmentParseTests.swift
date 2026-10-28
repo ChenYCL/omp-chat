@@ -74,16 +74,15 @@ final class MarkdownSegmentParseTests: XCTestCase {
         // summary is covered by testImportedToolCallParsing.
         let raw = "开工。\n〔调用工具 Bash〕cd /tmp && ls\n〔调用工具 Read〕屏幕截图 2026-08-10.png\n继续干活。"
         let kinds = try XCTUnwrap(parse(raw, limit: 10))
-        XCTAssertEqual(kinds.count, 4)
+        XCTAssertEqual(kinds.count, 3)
         XCTAssertEqual(kinds[0], .text("开工。"))
-        guard case .importedTool(let first) = kinds[1] else { return XCTFail("\(kinds[1])") }
-        XCTAssertEqual(first.name, "Bash")
-        XCTAssertEqual(first.detail, "cd /tmp && ls")
-        XCTAssertEqual(first.symbol, "terminal")
-        guard case .importedTool(let second) = kinds[2] else { return XCTFail("\(kinds[2])") }
-        XCTAssertEqual(second.name, "Read")
-        XCTAssertEqual(second.symbol, "doc.text")
-        XCTAssertEqual(kinds[3], .text("继续干活。"))
+        // Two adjacent calls fold into one group card.
+        guard case .importedToolGroup(let rows) = kinds[1] else { return XCTFail("\(kinds[1])") }
+        XCTAssertEqual(rows.map(\.name), ["Bash", "Read"])
+        XCTAssertEqual(rows[0].detail, "cd /tmp && ls")
+        XCTAssertEqual(rows[0].symbol, "terminal")
+        XCTAssertEqual(rows[1].symbol, "doc.text")
+        XCTAssertEqual(kinds[2], .text("继续干活。"))
     }
 
     func testBodyMentioningTheLabelStaysText() throws {
@@ -97,14 +96,13 @@ final class MarkdownSegmentParseTests: XCTestCase {
         let raw = "〔调用工具 Bash〕uname -sm; ls | head Check…\n" + "\"" + "Diff Something\"" + "\n"
             + "〔调用工具 Read〕/tmp/a.png\n正文总结。"
         let kinds = try XCTUnwrap(parse(raw, limit: 10))
-        XCTAssertEqual(kinds.count, 3, "调用的后续行并进折叠行，不留在正文")
-        guard case .importedTool(let first) = kinds[0] else { return XCTFail("\(kinds[0])") }
-        XCTAssertEqual(first.name, "Bash")
-        XCTAssertTrue(first.detail.contains("Check…"), first.detail)
-        XCTAssertTrue(first.detail.contains("Diff Something"), "截断命令的后半段在展开内容里")
-        guard case .importedTool(let second) = kinds[1] else { return XCTFail("\(kinds[1])") }
-        XCTAssertEqual(second.name, "Read")
-        XCTAssertEqual(kinds[2], .text("正文总结。"), "中文开头的正文不受影响")
+        XCTAssertEqual(kinds.count, 2, "相邻调用并成一张卡，后续行并进各自折叠行")
+        guard case .importedToolGroup(let rows) = kinds[0] else { return XCTFail("\(kinds[0])") }
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows[0].detail.contains("Check…"), rows[0].detail)
+        XCTAssertTrue(rows[0].detail.contains("Diff Something"), "截断命令的后半段在展开内容里")
+        XCTAssertEqual(rows[1].name, "Read")
+        XCTAssertEqual(kinds[1], .text("正文总结。"), "中文开头的正文不受影响")
     }
 
     func testProseIsNotFoldedIntoTheRow() throws {
@@ -117,11 +115,21 @@ final class MarkdownSegmentParseTests: XCTestCase {
     func testCodeContinuationsFoldButTheNextCallDoesNot() throws {
         let raw = "〔调用工具 Bash〕mkdir -p w && cat > w/s.py <<'EOF'\nimport json\nprint(1)\nEOF\n〔调用工具 Bash〕ls w\n结论。"
         let kinds = try XCTUnwrap(parse(raw, limit: 10))
-        XCTAssertEqual(kinds.count, 3, "heredoc 正文折进第一个调用，第二个调用单独成行，中文结论留正文")
-        guard case .importedTool(let first) = kinds[0] else { return XCTFail("\(kinds[0])") }
-        XCTAssertTrue(first.detail.contains("import json") && first.detail.contains("EOF"), first.detail)
-        guard case .importedTool(let second) = kinds[1] else { return XCTFail("\(kinds[1])") }
-        XCTAssertEqual(second.name, "Bash")
-        XCTAssertEqual(kinds[2], .text("结论。"))
+        XCTAssertEqual(kinds.count, 2, "heredoc 正文折进第一个调用；两个相邻调用并成一张卡；中文结论留正文")
+        guard case .importedToolGroup(let rows) = kinds[0] else { return XCTFail("\(kinds[0])") }
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows[0].detail.contains("import json") && rows[0].detail.contains("EOF"), rows[0].detail)
+        XCTAssertEqual(rows[1].name, "Bash")
+        XCTAssertEqual(kinds[1], .text("结论。"))
+    }
+
+    func testARunOfCallsWithBlankLinesFoldsIntoOneGroup() throws {
+        // The real ms03 shape: marker, blank, marker, blank … then prose.
+        let raw = "〔调用工具 Bash〕a\n\n〔调用工具 Bash〕b\n\n〔调用工具 Write〕/tmp/x\n\n结论正文。"
+        let kinds = try XCTUnwrap(parse(raw, limit: 10))
+        XCTAssertEqual(kinds.count, 2, "空行分隔的相邻调用也并成一张卡")
+        guard case .importedToolGroup(let rows) = kinds[0] else { return XCTFail("\(kinds[0])") }
+        XCTAssertEqual(rows.map(\.name), ["Bash", "Bash", "Write"])
+        XCTAssertEqual(kinds[1], .text("结论正文。"))
     }
 }
