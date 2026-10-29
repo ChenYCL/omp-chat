@@ -65,11 +65,14 @@ struct ComputerUsePane: View {
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 3) {
                 label("开始使用")
-                Text("① VPS：容器已在 /opt/omp-computer-use 运行（docker restart omp-computer-use 可重启）。\n② 本机：开 SSH 隧道（设置 → 说明里有命令），然后在这里确认状态变为「已连接」。")
+                Text("① VPS：容器已在 /opt/omp-computer-use 运行（docker restart omp-computer-use 可重启）。\n② 本机：装一次隧道代理（见下方或 设置 → 说明），之后睡眠、断线都会自动重连，这里会自己变成「已连接」。")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.ompText)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .down = model.sandboxStatus {
+                tunnelInstallFootnote
             }
         }
         .padding(14)
@@ -79,6 +82,25 @@ struct ComputerUsePane: View {
         .onAppear { model.pollSandboxStatus() }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             model.pollSandboxStatus()
+        }
+    }
+
+    /// Shown only while disconnected: the one-line command that installs the
+    /// self-healing LaunchAgent (`tools/computer-use-docker/tunnel.sh`), so a
+    /// stuck user does not have to find the doc first.
+    private var tunnelInstallFootnote: some View {
+        let command = "bash tools/computer-use-docker/tunnel.sh install"
+        return HStack(spacing: 6) {
+            Text(command)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Color.ompTextSecondary)
+                .textSelection(.enabled)
+            Button("复制命令") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("settings.computerUse.copyTunnelCommand")
         }
     }
 

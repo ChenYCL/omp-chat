@@ -2101,6 +2101,13 @@ public final class ChatAppModel {
                 let (thinking, activity) = isAssistant
                     ? relayActivity(for: message, includeDetail: detailIndexes.contains(index))
                     : (nil, nil)
+                // Mentions attached to a sent user message: the phone shows
+                // the same chip labels as the desktop, resolved content stays
+                // on the Mac (RemoteConsoleScreen.swift renders them).
+                let attached: [RelayMentionAttachment]? = isAssistant ? nil : message.mentionAttachments
+                    .filter { $0.mention != nil }
+                    .map { RelayMentionAttachment(kind: $0.mention?.kind.rawValue, title: $0.mention?.readable ?? "", truncated: $0.truncated) }
+                let mentionNotes: [String]? = isAssistant ? nil : message.mentionNotes
                 return RelayMessage(
                     id: message.id.uuidString,
                     role: message.role == .user ? "user" : "assistant",
@@ -2110,7 +2117,9 @@ public final class ChatAppModel {
                     ts: message.createdAt,
                     streaming: conversation.id == streamingConversationID && message.status == .streaming,
                     thinking: thinking,
-                    activity: activity
+                    activity: activity,
+                    attached: attached,
+                    mentionNotes: mentionNotes
                 )
             }
             return RelayConversation(

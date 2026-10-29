@@ -1030,7 +1030,15 @@ struct ShellDrawer: View {
 
 // MARK: - Composer (official iOS pill)
 
-/// 贴底胶囊输入条: 40pt single-line / ≤132pt multi-line, radius 22,
+// MARK: - Mention metrics (phone parity with the desktop ComposerBar)
+/// 发送候选列表的行高与状态，随桌面 `ComposerBar` 的官方尺寸。
+private extension PaseoComposerBar {
+    static let mentionRowHeight: CGFloat = 34
+    static let mentionHeaderHeight: CGFloat = 24
+    static let mentionListMaxHeight: CGFloat = 240
+}
+
+ /// 贴底胶囊输入条: 40pt single-line / ≤132pt multi-line, radius 22,
 /// ompSurface fill + 0.5pt border; left `+` menu, right 32pt circular send key.
 struct PaseoComposerBar: View {
     @Environment(ChatAppModel.self) private var model
@@ -1038,6 +1046,16 @@ struct PaseoComposerBar: View {
     @State private var importingFile = false
     @State private var showGoalAlert = false
     @State private var goalDraft = ""
+    // The phone's mention list state; the desktop keeps the same in
+    // ComposerBar. See the MARK: - Mentions extension below the struct.
+    @State private var mentionResults: [MentionCandidate] = []
+    @State private var mentionSearching = false
+    /// Thread and trigger of the list that is open; a new one refreshes the
+    /// index.
+    @State private var openedMention: String?
+    /// The trigger whose list the 关闭 button dismissed; it stays closed
+    /// while that query is typed on.
+    @State private var dismissedMentionOffset: Int?
 
     var body: some View {
         @Bindable var model = model
@@ -1067,6 +1085,12 @@ struct PaseoComposerBar: View {
             }
             QueuedMessagesStrip()
                 .padding(.horizontal, 12)
+            mentionChipStrip
+                .padding(.horizontal, 12)
+            if let query = visibleMentionQuery {
+                mentionList(query)
+                    .padding(.horizontal, 12)
+            }
             if model.showsDictationBar {
                 dictationRow
             } else {
@@ -1096,6 +1120,8 @@ struct PaseoComposerBar: View {
             .accessibilityIdentifier("composer.goal.save")
             Button("取消", role: .cancel) {}
         }
+        .task(id: mentionSearchKey) { await runMentionSearch() }
+        .onChange(of: model.draft) { _, _ in syncDismissalWithDraft() }
     }
 
     /// Opens the goal editor seeded with the current goal.
@@ -1246,6 +1272,247 @@ struct PaseoComposerBar: View {
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .padding(.bottom, 8)
+    }
+}
+
+// MARK: - Mentions
+
+extension PaseoComposerBar {
+    /// The `@` / `$` query being typed, unless the 关闭 button dismissed its
+    /// list. Same grammar as the desktop (`ComposerMention.activeQuery`).
+    private var visibleMentionQuery: ComposerMention.ActiveQuery? {
+        guard model.selectedConversationID != nil, let query = model.activeMentionQuery,
+              query.triggerOffset != dismissedMentionOffset else { return nil }
+        return query
+    }
+
+    private var mentionSearchKey: String {
+        guard let query = visibleMentionQuery, let id = model.selectedConversationID else { return "" }
+        return "\(id.uuidString)|\(query.trigger)|\(query.triggerOffset)|\(query.query)"
+    }
+
+    private func runMentionSearch() async {
+        guard let query = visibleMentionQuery, let id = model.selectedConversationID else {
+            openedMention = nil
+            mentionResults = []
+            mentionSearching = false
+            return
+        }
+        let opening = "\(id.uuidString)|\(query.trigger)|\(query.triggerOffset)"
+        if openedMention != opening {
+            // A list that just opened lists the folder (or the skills) afresh.
+            openedMention = opening
+            mentionResults = []
+            mentionSearching = true
+            await model.refreshMentionIndex(for: id, trigger: query.trigger)
+        } else {
+            // Typing on: let the burst settle before searching.
+            try? await Task.sleep(for: .milliseconds(80))
+        }
+        guard !Task.isCancelled else { return }
+        mentionSearching = true
+        let result = await model.mentionSearch(query: query.query, trigger: query.trigger, for: id)
+        guard !Task.isCancelled else { return }
+        mentionResults = result.candidates
+        mentionSearching = false
+    }
+
+    /// Tapping a row picks it — the phone has no arrow keys.
+    private func pickMention(_ candidate: MentionCandidate) {
+        model.pickMention(candidate.mention)
+        dismissedMentionOffset = nil
+    }
+
+    private enum MentionListEntry: Hashable {
+        case header(String)
+        case status(String)
+        case row(Int)
+    }
+
+    /// What the sheet shows, top to bottom, with the official headers:
+    /// 文件和对话 / 文件 / 对话, 标签页; 技能 for `$`. A section the model
+    /// never returns on this device simply does not appear.
+    private func mentionEntries(_ query: ComposerMention.ActiveQuery) -> [MentionListEntry] {
+        let indices = Array(mentionResults.indices)
+        if query.trigger == "$" {
+            guard !indices.isEmpty else { return [.header("技能"), .status(mentionSearching ? "正在加载技能…" : "没有找到技能")] }
+            return [.header("技能")] + indices.map(MentionListEntry.row)
+        }
+        var entries: [MentionListEntry] = []
+        if query.query.trimmingCharacters(in: .whitespaces).isEmpty {
+            entries.append(.status("输入以搜索文件或对话"))
+        }
+        let files = indices.filter { mentionResults[$0].section == .files }
+        let chats = indices.filter { mentionResults[$0].section == .chats }
+        let tabs = indices.filter { mentionResults[$0].section == .tabs }
+        if !files.isEmpty || !chats.isEmpty {
+            entries.append(.header(files.isEmpty ? "对话" : chats.isEmpty ? "文件" : "文件和对话"))
+            entries += (files + chats).map(MentionListEntry.row)
+        }
+        if !tabs.isEmpty {
+            entries.append(.header("标签页"))
+            entries += tabs.map(MentionListEntry.row)
+        }
+        if entries.isEmpty {
+            entries.append(.status(mentionSearching ? "正在搜索文件…" : "没有结果"))
+        }
+        return entries
+    }
+
+    private func mentionList(_ query: ComposerMention.ActiveQuery) -> some View {
+        let entries = mentionEntries(query)
+        let height = entries.reduce(CGFloat(30)) { total, entry in
+            if case .header = entry { return total + Self.mentionHeaderHeight }
+            return total + Self.mentionRowHeight
+        }
+        return VStack(spacing: 0) {
+            HStack {
+                Text(query.trigger == "$" ? "技能" : "提及")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.ompTextTertiary)
+                Spacer()
+                // Escape has no keyboard equivalent here; 关闭 does its job.
+                Button {
+                    if let active = visibleMentionQuery { dismissedMentionOffset = active.triggerOffset }
+                } label: {
+                    Text("关闭")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.ompTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer.mention.dismiss")
+            }
+            .padding(.horizontal, 10)
+            .frame(height: Self.mentionHeaderHeight)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(entries, id: \.self) { entry in
+                        switch entry {
+                        case .header(let title):
+                            Text(title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.ompTextTertiary)
+                                .padding(.horizontal, 10)
+                                .frame(height: Self.mentionHeaderHeight, alignment: .bottomLeading)
+                        case .status(let text):
+                            Text(text)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.ompTextTertiary)
+                                .padding(.horizontal, 10)
+                                .frame(height: Self.mentionRowHeight)
+                                .accessibilityIdentifier("composer.mention.status")
+                        case .row(let index):
+                            mentionRow(mentionResults[index], index: index)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+            .frame(height: min(height, Self.mentionListMaxHeight))
+        }
+        .background(Color.ompCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.ompBorder.opacity(0.8), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.06), radius: 8, y: 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composer.mention.list")
+    }
+
+    private func mentionRow(_ item: MentionCandidate, index: Int) -> some View {
+        Button {
+            pickMention(item)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: Self.mentionIcon(item.mention.kind))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.ompTextSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ompText)
+                        .lineLimit(1)
+                    if !item.detail.isEmpty {
+                        Text(item.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.ompTextTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text(item.badge)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.ompTextTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 120, alignment: .trailing)
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: Self.mentionRowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("composer.mention.item.\(index)")
+        .accessibilityLabel(item.title)
+    }
+
+    private static func mentionIcon(_ kind: MentionKind) -> String {
+        switch kind {
+        case .file: "doc.text"
+        case .chat: "bubble.left"
+        case .tab: "globe"
+        case .skill: "sparkles"
+        }
+    }
+
+    /// The draft's mentions as chips — the field holds the readable form —
+    /// each with × to take it out of the draft.
+    @ViewBuilder
+    private var mentionChipStrip: some View {
+        let mentions = model.draftMentions
+        if !mentions.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(mentions.enumerated()), id: \.element) { index, mention in
+                        HStack(spacing: 5) {
+                            Image(systemName: Self.mentionIcon(mention.kind))
+                                .font(.system(size: 10))
+                            Text(mention.readable)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                            Button {
+                                model.removeMention(mention)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("composer.mention.chip.\(index).remove")
+                            .accessibilityLabel("移除 \(mention.readable)")
+                        }
+                        .foregroundStyle(Color.ompTextSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.ompFill, in: Capsule())
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("composer.mention.chip.\(index)")
+                    }
+                }
+            }
+            .accessibilityIdentifier("composer.mention.chips")
+        }
+    }
+
+    /// A dismissal dies once the draft no longer holds that query, so a new
+    /// trigger opens the list again.
+    private func syncDismissalWithDraft() {
+        if model.activeMentionQuery?.triggerOffset != dismissedMentionOffset {
+            dismissedMentionOffset = nil
+        }
     }
 }
 #endif

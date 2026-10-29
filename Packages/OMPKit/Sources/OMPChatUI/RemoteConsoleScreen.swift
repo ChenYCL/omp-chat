@@ -550,18 +550,28 @@ struct RemoteConsoleBubble: View {
     var body: some View {
         Group {
             if message.role == "user" {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 48)
-                    Text(message.text)
-                        .font(.system(size: 15))
-                        .foregroundStyle(Color.ompText)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            Color.ompUserBubble,
-                            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        )
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 48)
+                        Text(message.text)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.ompText)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                Color.ompUserBubble,
+                                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            )
+                    }
+                    let chips = RemoteMentionMapper.chips(for: message)
+                    if !chips.isEmpty {
+                        RemoteMentionChipsView(chips: chips)
+                    }
+                    let notes = RemoteMentionMapper.notes(for: message)
+                    if !notes.isEmpty {
+                        RemoteMentionNotesView(notes: notes)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {

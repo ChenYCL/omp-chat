@@ -102,6 +102,24 @@ public struct RelayActivity: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Wire twin of one `MentionAttachment` chip: the label and kind the phone
+/// can render without the full resolved content, which stays on the Mac.
+public struct RelayMentionAttachment: Codable, Sendable, Equatable {
+    /// `MentionKind.rawValue` ("file", "chat", "tab", "skill"); `nil` for the
+    /// trailing 提及说明 note, which `mentionNotes` carries instead.
+    public var kind: String?
+    /// What the chip shows: the mention's `readable` text.
+    public var title: String
+    /// Cut short by its own cap or the message's total.
+    public var truncated: Bool
+
+    public init(kind: String?, title: String, truncated: Bool) {
+        self.kind = kind
+        self.title = title
+        self.truncated = truncated
+    }
+}
+
 /// Wire representation of one chat message mirrored to a remote controller.
 public struct RelayMessage: Codable, Sendable, Equatable {
     /// Hard cap for the mirrored thinking text (UTF-8 bytes).
@@ -123,10 +141,17 @@ public struct RelayMessage: Codable, Sendable, Equatable {
     /// Tool operations for collapsible activity cards, capped at
     /// `RelayActivity.maxPerMessage`; `nil` when the message has none.
     public var activity: [RelayActivity]?
+    /// The mentions this (user) message attached, one chip each; `nil` when
+    /// empty. The resolved content stays on the Mac — the phone shows only
+    /// the label, same as the desktop chip before it is expanded.
+    public var attached: [RelayMentionAttachment]?
+    /// The 提及说明 lines: mentions left out or cut short; `nil` when empty.
+    public var mentionNotes: [String]?
 
     public init(
         id: String, role: String, text: String, ts: Date, streaming: Bool,
-        thinking: String? = nil, activity: [RelayActivity]? = nil
+        thinking: String? = nil, activity: [RelayActivity]? = nil,
+        attached: [RelayMentionAttachment]? = nil, mentionNotes: [String]? = nil
     ) {
         self.id = id
         self.role = role
@@ -134,10 +159,12 @@ public struct RelayMessage: Codable, Sendable, Equatable {
         self.ts = ts
         self.streaming = streaming
         (self.thinking, self.activity) = Self.normalized(thinking: thinking, activity: activity)
+        self.attached = (attached?.isEmpty ?? true) ? nil : attached
+        self.mentionNotes = (mentionNotes?.isEmpty ?? true) ? nil : mentionNotes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, ts, streaming, thinking, activity
+        case id, role, text, ts, streaming, thinking, activity, attached, mentionNotes
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,6 +183,10 @@ public struct RelayMessage: Codable, Sendable, Equatable {
             thinking: try container.decodeIfPresent(String.self, forKey: .thinking),
             activity: try container.decodeIfPresent([RelayActivity].self, forKey: .activity)
         )
+        let decodedAttached = try container.decodeIfPresent([RelayMentionAttachment].self, forKey: .attached)
+        attached = (decodedAttached?.isEmpty ?? true) ? nil : decodedAttached
+        let decodedNotes = try container.decodeIfPresent([String].self, forKey: .mentionNotes)
+        mentionNotes = (decodedNotes?.isEmpty ?? true) ? nil : decodedNotes
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -167,6 +198,8 @@ public struct RelayMessage: Codable, Sendable, Equatable {
         try container.encode(streaming, forKey: .streaming)
         try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(activity, forKey: .activity)
+        try container.encodeIfPresent(attached, forKey: .attached)
+        try container.encodeIfPresent(mentionNotes, forKey: .mentionNotes)
     }
 
     /// Applies the wire caps in one place; used by both initializers and the

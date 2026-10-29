@@ -210,12 +210,39 @@ Operation:
       --restart unless-stopped --memory 2g --cpus 2 --shm-size 256m \
       -p 127.0.0.1:8766:8766 omp-computer-use:1.3.0
 
-    # on the Mac (tunnel; the ssh config's fake-ip DNS breaks direct dials,
-    # the netcup ControlMaster connection may be gone after 30 min idle)
+    # on the Mac: self-healing tunnel (primary path)
+    #
+    # tools/computer-use-docker/tunnel.sh re-dials whenever 127.0.0.1:8766
+    # stops answering (dead ControlMaster socket after ~30 min idle, Mac
+    # waking from sleep, …), by resolving the raw IP for `Host netcup` from
+    # ~/.ssh/config itself — dialing the hostname directly gets hijacked by
+    # this machine's fake-ip DNS (198.18.x.x). Install once as a LaunchAgent
+    # and it keeps the forward up without anyone re-running the ssh command
+    # by hand:
+
+    bash tools/computer-use-docker/tunnel.sh install
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ompchat.tunnel.plist
+    launchctl enable gui/$(id -u)/com.ompchat.tunnel
+    launchctl kickstart -k gui/$(id -u)/com.ompchat.tunnel
+
+    # logs: ~/Library/Logs/ompchat-tunnel.log (rotated at 1 MB, one backup kept)
+    # status: launchctl print gui/$(id -u)/com.ompchat.tunnel
+    # restart: launchctl kickstart -k gui/$(id -u)/com.ompchat.tunnel
+    # uninstall: bash tools/computer-use-docker/tunnel.sh uninstall
+
+    # fallback: one-shot manual tunnel (no auto-recovery; the ssh config's
+    # fake-ip DNS breaks direct dials, so the raw IP must be resolved by hand,
+    # and the netcup ControlMaster connection may be gone after 30 min idle)
     IP=$(awk '/^Host netcup/{f=1} f&&/HostName/{print $2; exit}' ~/.ssh/config)
     ssh -o ControlMaster=no -f -N -L 127.0.0.1:8766:127.0.0.1:8766 root@$IP
 
     # probe: python3 tools/computer-use-docker/probe.py 127.0.0.1 8766
+
+Once the LaunchAgent is installed, the 电脑控制 pane's sandbox badge recovers
+on its own after a VPS reboot, a dead ControlMaster socket, or the Mac
+waking from sleep — no one needs to re-run the tunnel command. If the badge
+still shows 未连接, its footnote offers the one-line install command with a
+复制命令 button.
 
 Then point OMPChat's MCP client at `http://127.0.0.1:8766` (Streamable HTTP)
 or keep using the probe while the stdio dialect is wired up. Gotchas baked

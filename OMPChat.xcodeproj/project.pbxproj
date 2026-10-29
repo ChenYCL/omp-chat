@@ -15,6 +15,7 @@
 		3981CFCF8D9E62773D6B1E14 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */; };
 		50F968C61F4012EB0E471103 /* OMPCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0FF631BA1332E6394354C5A7 /* OMPCore */; };
 		5352736A0947BFEDC187E0B5 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 9F83DF7DC8DC788D829018A6 /* OMPDesign */; };
+		57ADD9E0F5FDD080E77480E5 /* PhoneMentionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5415A2C342D3531380C47B3 /* PhoneMentionUITests.swift */; };
 		618F843E0DEE2728DDA2C57D /* DevicesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */; };
 		6572891E4DE64A001C6E8834 /* OMPDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 71C378D712852DA4990BE826 /* OMPDesign */; };
 		6A0A4F0477F5895F0D5B3037 /* OMPChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A28AFEA8439E281774F3A040 /* OMPChatApp.swift */; };
@@ -62,6 +63,7 @@
 		86693CC7FEDAB34696B5DBB4 /* DevicesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesUITests.swift; sourceTree = "<group>"; };
 		9DF8AF1DD236308B3E9BFCCC /* OMPChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OMPChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A28AFEA8439E281774F3A040 /* OMPChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OMPChatApp.swift; sourceTree = "<group>"; };
+		B5415A2C342D3531380C47B3 /* PhoneMentionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneMentionUITests.swift; sourceTree = "<group>"; };
 		C3548C4B79E02B1CB2B42C9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D76CE3C86BE12307212872C4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D8083C42B6E37C880F88C131 /* ExportMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMenuUITests.swift; sourceTree = "<group>"; };
@@ -161,6 +163,7 @@
 				E8EA379B331F272B4059F698 /* GoalAndUnreadUITests.swift */,
 				0C7B5E3FF1D3EB00B2D6ABFE /* IOSShellUITests.swift */,
 				5178BA79FA51814953DC9EC7 /* LockedChatsUITests.swift */,
+				B5415A2C342D3531380C47B3 /* PhoneMentionUITests.swift */,
 				340CB594D324926FCC2C18FE /* ProjectsSheetUITests.swift */,
 				ECE86B30C417CA8B6A1DEC09 /* SettingsSectionsUITests.swift */,
 			);
@@ -376,6 +379,7 @@
 				6DEB5194B5793434D086D42D /* GoalAndUnreadUITests.swift in Sources */,
 				BEF5AC36285FC81601D8CCFB /* IOSShellUITests.swift in Sources */,
 				0A86B37163AE346E5698374C /* LockedChatsUITests.swift in Sources */,
+				57ADD9E0F5FDD080E77480E5 /* PhoneMentionUITests.swift in Sources */,
 				EC05558BD7AF4B090C6F9AED /* ProjectsSheetUITests.swift in Sources */,
 				07A7685C6105EF440E89EEA7 /* SettingsSectionsUITests.swift in Sources */,
 			);
